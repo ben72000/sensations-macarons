@@ -2275,3 +2275,58 @@ mais je ne l'aurais pas su.
 
 *(Et le test avait lui-même le bug qu'il cherchait : ma regex comptait `onclick="if(...)"` comme un
 appel de fonction fantôme. Un faux positif dans le détecteur de faux appels.)*
+
+---
+
+## v1358 — ÉTIQUETTES → BOÎTES → RANGEMENT, EN UN GESTE
+
+Ben : *« J'aimerais pouvoir choisir autant de boîtes que nécessaire pour chaque parfum. […] En
+remplissant ces cases ça recréerait automatiquement les boîtes qui vont avec ! Le rangement serait
+aussi ajouté à côté de chaque ligne. […] Dans le cas de lignes ayant plusieurs impressions (3×20),
+demander confirmation que les 3 boîtes vont au même endroit. Si non, proposer un dispatch individuel. »*
+
+### Ce que ça change
+L'écran d'étiquettes n'imprime plus seulement — **il range**. C'est le même geste physique (on
+étiquette la boîte au moment où on la remplit), donc c'est le même geste dans l'app.
+
+| Avant | Après |
+|---|---|
+| 1 ligne = 1 lot = N étiquettes | **N lignes par lot**, chacune = une série de boîtes |
+| Pas de boîte créée | **Boîte créée automatiquement** si la capacité n'existe pas (réutilisée sinon) |
+| Pas d'emplacement | **Emplacement par ligne** |
+| — | **3 boîtes → confirmation** « toutes au même endroit ? » → sinon **dispatch individuel** |
+
+### Ce que je RÉUTILISE, et pourquoi c'est capital
+- **`p.placements[]`** — le modèle prévoyait **déjà** le multi-boîtes : l'app affiche « ⊟ dispatché »
+  dès que `placements.length > 1` (ligne 8981). **Le besoin de Ben n'était pas une nouveauté du
+  modèle — il était juste inaccessible depuis cet écran.**
+- **`doMoveEmplacement()`** — porte les règles de **sécurité alimentaire** (anti-recongélation, chaîne
+  du froid). Un `db.productions.update({emplacement})` direct les aurait **contournées en silence**.
+
+> **RÈGLE (v1358) : UN SECOND CHEMIN VERS LA MÊME ÉCRITURE FINIT TOUJOURS PAR DIVERGER DU PREMIER.**
+> Un bug de données se corrige. Une recongélation, non.
+
+### Le garde-fou : ne jamais ranger plus que le lot ne contient
+Si les lignes dépassent `qteRestante`, l'app **refuse**. Sinon elle enregistrerait des coques qui
+n'existent pas — et Ben irait chercher des boîtes qui ne sont **nulle part**.
+*(Sa décision, v1358 : le reste non rangé **reste en attente**, l'app ne l'oblige pas à tout ranger.)*
+
+### ⚠️ LA VARIABLE FANTÔME — la même famille que db.lots et modal()
+`window._lbProds` était **lu 4 fois, écrit 0 fois**. Sans lui, `qteRestante` aurait toujours valu **0**
+— et **le garde-fou n'aurait JAMAIS mordu**. Ben aurait pu enregistrer 200 coques rangées sur un lot
+de 120.
+
+**Quatrième bug de plomberie de la session**, quatrième cause différente :
+
+| Vague | Bug |
+|---|---|
+| v1351 | `db.lots` — table inexistante |
+| v1352 | `case` manquant dans le dispatch |
+| v1357 | `modal()` au lieu de `openModal()` |
+| **v1358** | **`_lbProds` — variable lue, jamais écrite** |
+
+### Et mon test était décoratif (encore)
+Premier jet : `SRC.includes('window._lbProds = lots;')` — qui reste **vrai même commenté**
+(`// window._lbProds = lots;`). **Le test validait sa propre existence, pas celle du code.**
+C'est la leçon v1352 (*« un test qui ne mord pas ne vaut rien »*), enfreinte par celui qui l'a écrite.
+Durci : les commentaires sont retirés avant recherche. **Vérifié : il mord.**

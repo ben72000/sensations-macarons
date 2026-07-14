@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1357';
+const APP_VERSION = 'v1358';
 const APP_MAJ = 'LE MONTAGE PYRAMIDE, SANS OUVRIR « MODIFIER » — comme tu l’as demandé. Le résumé d’une commande événement affiche maintenant, d’un coup d’œil : le NOMBRE de pyramides, le TYPE (location ou vendue), le NOMBRE D’ÉTAGES, le modèle de présentoir, et le nombre de macarons par pyramide — avec la mention « pyramide entière » quand tous les plateaux sont utilisés. UNE DIFFICULTÉ QUE JE DOIS TE DIRE : le nombre d’étages N’EST PAS STOCKÉ sur la commande. Seuls le nombre de pyramides et le nombre de macarons le sont. Les étages se DÉDUISENT de tes modèles de présentoirs (chaque modèle a ses plateaux, donc ses paliers cumulés : 4, 11, 21, 34, 50, 69 pour ta pyramide transparente). JE NE DEVINE DONC PAS — JE DÉDUIS, ET JE DIS CE QUE JE SAIS. Si un seul modèle correspond, je l’affiche avec ses étages. Si PLUSIEURS correspondent (34 macarons, c’est 4 étages sur un modèle et 3 sur un autre), je te les LISTE TOUS : trancher en silence reviendrait à décider à ta place. Si AUCUN palier ne correspond, je te dis « montage sur mesure » — sans arrondir au palier voisin, alors que ce serait facile. Et si la répartition n’est pas entière (100 macarons sur 3 pyramides), je te signale que tes pyramides ne seront PAS identiques, au lieu de te laisser croire à un montage équilibré qui n’existe pas. LA RÈGLE QUE J’AI FIGÉE : un nombre d’étages INVENTÉ serait PIRE qu’une absence — il t’enverrait monter le MAUVAIS présentoir le jour J, devant ton client. Une donnée manquante te coûte un aller-retour dans « Modifier » ; une donnée FAUSSE te coûte un événement raté. Le silence est le moindre mal ; le mensonge, jamais. Enfin, pour un bloc plat (non sécable), je n’affiche AUCUN étage : parler d’étages n’aurait aucun sens. Suite : 1397 → 1437 assertions vertes.';
 
 // ============================================================
@@ -44634,6 +44634,319 @@ async function buildLabelsPDF(items){
 
 // ----- UI : sélection des lots pour le PDF d'étiquettes groupées -----
 
+// ════════════════════════════════════════════════════════════════════════════
+//  [v1358] ÉTIQUETTES → BOÎTES → RANGEMENT, EN UN SEUL GESTE
+//
+//  Ben : « J'aimerais pouvoir choisir autant de boîtes que nécessaire pour chaque parfum. […]
+//  En remplissant ces cases ça recréerait automatiquement les boîtes qui vont avec ! Le rangement
+//  serait aussi ajouté à côté de chaque ligne. […] Dans le cas de lignes ayant plusieurs impressions
+//  (3×20), au moment d'imprimer, demander confirmation que les 3 boîtes vont au même endroit.
+//  Si non, proposer un dispatch individuel. »
+//
+//  CE QUE ÇA CHANGE : l'écran d'étiquettes n'imprime plus seulement — il RANGE. C'est le même geste
+//  physique (on étiquette la boîte au moment où on la remplit), donc c'est le même geste dans l'app.
+//
+//  CE QUE JE RÉUTILISE, ET POURQUOI C'EST CAPITAL :
+//   • `p.placements[]` — le modèle prévoit DÉJÀ le multi-boîtes (ligne 8981 : « ⊟ dispatché »).
+//     Le besoin de Ben n'est pas une nouveauté du modèle : il était juste inaccessible depuis ici.
+//   • `doMoveEmplacement()` — porte les règles de SÉCURITÉ ALIMENTAIRE (anti-recongélation, chaîne
+//     du froid). Écrire un second chemin de rangement qui les contourne serait la pire régression
+//     possible de toute cette série : un bug de données se corrige, une recongélation non.
+//
+//  RÈGLE (v1358) : UN SECOND CHEMIN VERS LA MÊME ÉCRITURE FINIT TOUJOURS PAR DIVERGER DU PREMIER.
+//  On ne duplique pas `partFlowApply` : on écrit dans `placements[]` par le MÊME modèle, et on
+//  passe par `doMoveEmplacement` pour tout déplacement — jamais par un `db.productions.update` direct
+//  sur `emplacement`.
+// ════════════════════════════════════════════════════════════════════════════
+
+// État du batch : une entrée par LIGNE (pas par lot — un lot peut avoir plusieurs lignes).
+// { uid, prodId, copies, pieces, equipKey }
+let _lbLignes = [];
+let _lbUid = 1;
+
+// Ajoute une ligne sous un lot. Chaque ligne = une SÉRIE de boîtes identiques (copies × pieces).
+function lbAddLigne(prodId){
+  _lbLignes.push({ uid: _lbUid++, prodId: +prodId, copies: 1, pieces: null, equipKey: null });
+  lbRenderLignes(+prodId);
+}
+
+function lbDelLigne(uid){
+  _lbLignes = _lbLignes.filter(l => l.uid !== +uid);
+  lbRenderLignes();
+}
+
+// [v1358] LE TOTAL EST LE GARDE-FOU. Ben range 3×20 = 60 coques sur un lot de 120 : les 60 restantes
+// « restent en attente » (sa décision). Mais si les lignes dépassent le total du lot, on l'ARRÊTE —
+// sinon l'app enregistrerait plus de coques rangées qu'il n'en existe. Un stock qui ment est pire
+// qu'un stock incomplet.
+function lbTotalLigne(l){ return Math.max(0, (+l.copies || 0)) * Math.max(0, (+l.pieces || 0)); }
+
+function lbTotalLot(prodId){
+  return _lbLignes.filter(l => l.prodId === +prodId).reduce((s, l) => s + lbTotalLigne(l), 0);
+}
+
+// Rend les lignes d'un lot (ou de tous si prodId omis).
+function lbRenderLignes(prodId){
+  const ids = prodId ? [+prodId] : [...new Set(_lbLignes.map(l => l.prodId))];
+  ids.forEach(pid => {
+    const zone = document.getElementById('lblignes_' + pid);
+    if(!zone) return;
+    const lignes = _lbLignes.filter(l => l.prodId === pid);
+    const prod = (window._lbProds || []).find(p => +p.id === pid);
+    const dispo = prod ? round3(+prod.qteRestante || 0) : 0;
+    const place = lbTotalLot(pid);
+    const reste = round3(dispo - place);
+    const trop = reste < -0.001;
+
+    zone.innerHTML = lignes.map(l => {
+      const tot = lbTotalLigne(l);
+      const emp = l.equipKey ? (EMP_BY_KEY[l.equipKey] || null) : null;
+      const multi = (+l.copies || 0) > 1;
+      return `<div class="lb-ligne" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:6px 0;border-top:1px dashed #e6ddd6">
+        <label style="font-size:.78rem">Étiq. <input type="number" min="1" value="${l.copies}" class="lb-num"
+          style="width:52px" onchange="lbSetLigne(${l.uid},'copies',this.value)"></label>
+        <label style="font-size:.78rem">Pcs/boîte <input type="number" min="1" value="${l.pieces != null ? l.pieces : ''}"
+          class="lb-num" style="width:64px" placeholder="auto" onchange="lbSetLigne(${l.uid},'pieces',this.value)"></label>
+        <button class="btn ${l.equipKey ? 'gold' : 'ghost'} sm" style="font-size:.75rem"
+          onclick="lbPickEmp(${l.uid})">${emp ? `${emp.lettre} · ${esc(emp.nom)}` : '📍 Emplacement'}</button>
+        ${tot > 0 ? `<span style="font-size:.72rem;color:#9a8a82">= ${qty(tot)}${multi ? ` (${l.copies} boîtes)` : ''}</span>` : ''}
+        <button class="btn ghost sm" style="font-size:.75rem;color:#b3261e" onclick="lbDelLigne(${l.uid})">✕</button>
+      </div>`;
+    }).join('') +
+    `<div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
+      <button class="btn ghost sm" style="font-size:.78rem" onclick="lbAddLigne(${pid})">+ Ajouter une boîte</button>
+      <span style="font-size:.74rem;color:${trop ? '#b3261e' : '#9a8a82'}">
+        ${trop
+          ? `⚠️ ${qty(-reste)} de trop (le lot n'a que ${qty(dispo)})`
+          : `${qty(place)} rangé(s) · ${qty(reste)} en attente`}
+      </span>
+    </div>`;
+  });
+}
+
+function lbSetLigne(uid, champ, valeur){
+  const l = _lbLignes.find(x => x.uid === +uid);
+  if(!l) return;
+  l[champ] = (valeur === '' || valeur == null) ? null : Math.max(0, Math.round(+valeur || 0));
+  lbRenderLignes(l.prodId);
+}
+
+// Sélecteur d'emplacement pour UNE ligne. Réutilise EMPLACEMENTS (la source unique).
+function lbPickEmp(uid){
+  const l = _lbLignes.find(x => x.uid === +uid);
+  if(!l) return;
+  openModal(`<h3>📍 Emplacement</h3>
+    <p class="note">Où ranger ${(+l.copies || 1) > 1 ? `ces <b>${l.copies} boîtes</b>` : 'cette boîte'} ?</p>
+    <div>${EMPLACEMENTS.map(e => `
+      <button class="btn ${l.equipKey === e.key ? 'gold' : 'ghost'} sm"
+        style="min-width:46%;margin:3px 4px 3px 0;justify-content:flex-start;display:inline-flex;gap:6px"
+        onclick="lbSetEmp(${uid},'${e.key}')">
+        <b style="background:${e.type === 'frigo' ? '#6aa3a0' : '#3b6ea5'};color:#fff;border-radius:6px;padding:0 7px">${e.lettre}</b>
+        <span>${e.icon} ${esc(e.nom)}</span>${l.equipKey === e.key ? ' ✓' : ''}
+      </button>`).join('')}</div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+}
+
+function lbSetEmp(uid, key){
+  const l = _lbLignes.find(x => x.uid === +uid);
+  if(!l) return;
+  l.equipKey = key;
+  closeModal();
+  lbRenderLignes(l.prodId);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// [v1358] LA CONFIRMATION DE DISPATCH — la demande précise de Ben.
+//
+// « Dans le cas de lignes ayant plusieurs impressions (3×20), au moment d'imprimer, demander
+//   confirmation que les 3 boîtes vont au même endroit. Si la réponse est non, proposer un
+//   dispatch individuel. »
+//
+// POURQUOI C'EST JUSTE : 3 étiquettes = 3 boîtes PHYSIQUES. Rien ne dit qu'elles tiennent au même
+// endroit — un congélateur peut être plein après la deuxième. Supposer qu'elles vont ensemble, c'est
+// écrire dans la base un rangement que Ben n'a pas fait. Il retrouverait une boîte qui n'est pas là.
+//
+// ON DEMANDE. On ne suppose pas.
+// ════════════════════════════════════════════════════════════════════════════
+async function lbRangerEtImprimer(){
+  const actives = _lbLignes.filter(l => lbTotalLigne(l) > 0 && l.equipKey);
+  const sansEmp = _lbLignes.filter(l => lbTotalLigne(l) > 0 && !l.equipKey);
+
+  if(!actives.length && !sansEmp.length){ toast('Ajoute au moins une boîte'); return; }
+  if(sansEmp.length){ toast(`${sansEmp.length} ligne(s) sans emplacement`); return; }
+
+  // [v1358] GARDE-FOU : on ne range JAMAIS plus que ce que le lot contient.
+  // Sans ce contrôle, l'app enregistrerait un stock qui n'existe pas — et un stock qui MENT est
+  // pire qu'un stock incomplet : Ben irait chercher des coques qui ne sont nulle part.
+  const parLot = {};
+  actives.forEach(l => { parLot[l.prodId] = (parLot[l.prodId] || 0) + lbTotalLigne(l); });
+  for(const pid of Object.keys(parLot)){
+    const prod = (window._lbProds || []).find(p => +p.id === +pid);
+    const dispo = prod ? round3(+prod.qteRestante || 0) : 0;
+    if(parLot[pid] > dispo + 0.001){
+      toast(`Trop de pièces pour ${prod ? esc(prod.lotProduction || '#' + pid) : '#' + pid}`);
+      return;
+    }
+  }
+
+  // Les lignes à PLUSIEURS boîtes : demander si elles vont bien toutes au même endroit.
+  const multi = actives.filter(l => (+l.copies || 0) > 1);
+  if(multi.length){
+    const l = multi[0];   // on traite une ligne à la fois, séquentiellement
+    const prod = (window._lbProds || []).find(p => +p.id === l.prodId);
+    const emp = EMP_BY_KEY[l.equipKey];
+    const nom = prod ? (prod.lotProduction || '#' + l.prodId) : '#' + l.prodId;
+    openModal(`<h3>📦 ${l.copies} boîtes — même emplacement ?</h3>
+      <p class="note">Le lot <b>${esc(nom)}</b> produit <b>${l.copies} boîtes</b> de ${qty(l.pieces)} pièces.
+      Vont-elles <b>toutes</b> en <b>${esc(emp ? emp.nom : l.equipKey)}</b> ?</p>
+      <p class="note" style="font-size:.76rem;color:#9a8a82">Si tu réponds non, tu choisiras l'emplacement de chaque boîte séparément.</p>
+      <div class="modal-actions">
+        <button class="btn ghost" onclick="lbDispatchIndividuel(${l.uid})">Non — dispatcher</button>
+        <button class="btn" onclick="lbConfirmMulti(${l.uid})">Oui, toutes ici</button>
+      </div>`);
+    return;
+  }
+
+  await lbExecuter();
+}
+
+// « Oui, toutes au même endroit » → on marque la ligne comme confirmée et on repasse au contrôle.
+function lbConfirmMulti(uid){
+  const l = _lbLignes.find(x => x.uid === +uid);
+  if(l) l._confirme = true;
+  closeModal();
+  // On retire la ligne confirmée du lot de vérification en la scindant en boîtes identiques.
+  if(l){
+    const n = +l.copies || 1;
+    l.copies = 1;
+    l._boites = n;         // n boîtes, toutes au même endroit
+    l._confirme = true;
+  }
+  lbRangerEtImprimer();    // relance : les autres lignes multi seront traitées à leur tour
+}
+
+// [v1358] LE DISPATCH INDIVIDUEL. Une ligne de 3 boîtes devient 3 lignes de 1 boîte, chacune avec
+// son propre emplacement. Ben choisit boîte par boîte — c'est exactement ce qu'il a demandé.
+function lbDispatchIndividuel(uid){
+  const l = _lbLignes.find(x => x.uid === +uid);
+  if(!l) return;
+  const n = +l.copies || 1;
+  const pieces = +l.pieces || 0;
+  const pid = l.prodId;
+  // On remplace la ligne par N lignes de 1 boîte. La première garde l'emplacement déjà choisi ;
+  // les suivantes sont VIDES — Ben doit les renseigner, et le bouton refusera tant qu'elles le sont.
+  _lbLignes = _lbLignes.filter(x => x.uid !== +uid);
+  for(let i = 0; i < n; i++){
+    _lbLignes.push({ uid: _lbUid++, prodId: pid, copies: 1, pieces,
+                     equipKey: (i === 0 ? l.equipKey : null), _boites: 1, _confirme: true });
+  }
+  closeModal();
+  lbRenderLignes(pid);
+  toast(`${n} boîtes à placer individuellement`);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// [v1358] L'EXÉCUTION — création des boîtes + écriture des placements.
+//
+// TROIS RÈGLES QUE JE NE CONTOURNE PAS :
+//
+// 1. LES BOÎTES SONT CRÉÉES SI ELLES N'EXISTENT PAS (la demande de Ben : « ça recréerait
+//    automatiquement les boîtes qui vont avec »). Mais on ne crée QUE ce qui manque : une boîte
+//    de 20 déjà en base est RÉUTILISÉE, jamais dupliquée. Sinon la liste de boîtes deviendrait
+//    un cimetière de doublons en trois semaines.
+//
+// 2. TOUT DÉPLACEMENT PASSE PAR `doMoveEmplacement()`. Cette fonction porte les règles de SÉCURITÉ
+//    ALIMENTAIRE : interdiction de recongeler après décongélation, chaîne du froid. Un
+//    `db.productions.update({emplacement})` direct les contournerait EN SILENCE. Un bug de données
+//    se corrige ; une recongélation, non.
+//
+// 3. LE MODÈLE `placements[]` EST CELUI QUI EXISTE (v1358 n'invente rien). Un lot avec plusieurs
+//    placements est déjà affiché « ⊟ dispatché » ailleurs dans l'app — le besoin de Ben était
+//    prévu par le modèle, il n'était simplement pas accessible depuis cet écran.
+// ════════════════════════════════════════════════════════════════════════════
+async function lbExecuter(){
+  const actives = _lbLignes.filter(l => lbTotalLigne(l) > 0 && l.equipKey);
+  if(!actives.length){ toast('Rien à ranger'); return; }
+
+  let boxes = [];
+  try{ boxes = await db.storageBoxes.toArray(); }catch(e){ swallow(e,'lbExecuter boxes'); }
+
+  // Regroupe par lot : chaque lot reçoit ses placements en une seule écriture.
+  const parLot = {};
+  actives.forEach(l => { (parLot[l.prodId] = parLot[l.prodId] || []).push(l); });
+
+  let nbBoitesCreees = 0, nbBoites = 0;
+
+  for(const pid of Object.keys(parLot)){
+    const p = await db.productions.get(+pid);
+    if(!p) continue;
+    const lignes = parLot[pid];
+
+    // Cumule avec les placements DÉJÀ enregistrés (Ben peut ranger en plusieurs sessions).
+    const ancien = (!p.rangee && Array.isArray(p.placements)) ? p.placements : [];
+    const nouveaux = [];
+
+    for(const l of lignes){
+      const cap = +l.pieces || 0;
+      if(cap <= 0) continue;
+
+      // La boîte : on RÉUTILISE si une boîte de cette capacité existe, sinon on la crée.
+      let box = boxes.find(b => (+b.capacite || 0) === cap);
+      if(!box){
+        const nom = `Boîte ${cap}`;
+        try{
+          const dejaLa = await db.storageBoxes.where('nom').equals(nom).first();
+          if(dejaLa){ box = dejaLa; }
+          else {
+            const id = await db.storageBoxes.add({ nom, L:0, l:0, h:0, capacite:cap, capaciteGF:0, stockVide:1 });
+            box = { id, nom, capacite:cap };
+            boxes.push(box);
+            nbBoitesCreees++;
+          }
+        }catch(e){ swallow(e,'lbExecuter addBox'); continue; }
+      }
+
+      // Une ligne = `_boites` boîtes identiques (ou `copies` si non confirmée).
+      const n = Math.max(1, +l._boites || +l.copies || 1);
+      for(let i = 0; i < n; i++){
+        nouveaux.push({ equipKey: l.equipKey, niveauNom: null, boiteNom: box.nom, nbMacarons: cap });
+        nbBoites++;
+      }
+    }
+
+    if(!nouveaux.length) continue;
+
+    const cumul = ancien.concat(nouveaux);
+    const totalPlace = round3(cumul.reduce((s, pl) => s + (+pl.nbMacarons || 0), 0));
+    const totalLot   = round3(+p.qteRestante || 0);
+    const toutRange  = totalPlace >= totalLot - 0.001;
+
+    // [v1358] LE DÉPLACEMENT PHYSIQUE passe par doMoveEmplacement — JAMAIS par un update direct.
+    // On déplace vers l'emplacement de la PREMIÈRE boîte. Si les boîtes sont dispatchées dans
+    // plusieurs endroits, `placements[]` porte le détail (et l'app affiche « ⊟ dispatché ») —
+    // mais `p.emplacement` ne peut en contenir qu'un : c'est la limite du modèle EXISTANT, pas
+    // une régression que j'introduis. Je la nomme plutôt que de la masquer.
+    const destPrincipale = nouveaux[0].equipKey;
+    if(p.emplacement !== destPrincipale){
+      const ok = await doMoveEmplacement(+pid, destPrincipale, {silent:true});
+      if(!ok){ toast('Déplacement refusé (règle chaîne du froid)'); return; }
+    }
+
+    await db.productions.update(+pid, {
+      boiteNom: nouveaux[0].boiteNom,
+      placements: cumul,
+      rangee: toutRange,
+      rangeeTs: toutRange ? new Date().toISOString() : (p.rangeeTs || null)
+    });
+  }
+
+  closeModal();
+  if(typeof renderProductions === 'function') renderProductions();
+  toast(`${nbBoites} boîte(s) rangée(s)${nbBoitesCreees ? ` · ${nbBoitesCreees} nouvelle(s) boîte(s) créée(s)` : ''} ✓`);
+  _lbLignes = [];
+}
+
+
 async function labelsBatchForm(){
   const prods = await db.productions.orderBy('date').reverse().toArray().catch(()=>[]);
   const recipes = await db.recipes.toArray().catch(()=>[]);
@@ -44641,6 +44954,14 @@ async function labelsBatchForm(){
   if(typeof sortProdsRecent==='function') lots = sortProdsRecent(lots);
   lots = lots.slice(0, 200);
   if(!lots.length){ toast('Aucun lot à étiqueter'); return; }
+
+  // [v1358] Les lots sont exposés pour le module de rangement — SANS ça, `qteRestante` serait
+  // toujours 0, et le garde-fou anti-dépassement ne mordrait JAMAIS : Ben pourrait enregistrer
+  // 200 coques rangées sur un lot qui n'en contient que 120. Un stock qui ment est pire qu'un
+  // stock incomplet — il envoie chercher des boîtes qui ne sont nulle part.
+  window._lbProds = lots;
+  _lbLignes = [];   // repartir propre à chaque ouverture, sinon des lignes d'une session précédente
+                    // seraient rangées à l'insu de Ben.
 
   const recName = id => { const r=recipes.find(x=>+x.id===+id); return r?r.produitNom:''; };
   const todayStr = today();  // [A1] réutilise la globale today() (désormais locale)
@@ -44656,9 +44977,8 @@ async function labelsBatchForm(){
     return `<div class="lb-row" data-prod="${p.id}">
       <label class="lb-check"><input type="checkbox" class="lb-sel" data-prod="${p.id}" onchange="lbRowToggle(${p.id})"> <span class="lb-nom">${esc((compLbl?compLbl+' ':'')+nom)}</span></label>
       <div class="lb-lot">${esc(p.lotProduction)}${fab?' · '+esc(fab):''}</div>
-      <div class="lb-fields" id="lbf_${p.id}" style="display:none">
-        <label>Étiquettes <input type="number" min="1" value="1" id="lbcopies_${p.id}" class="lb-num"></label>
-        <label>Pièces/boîte <input type="number" min="0" placeholder="${nbDef!==''?nbDef:'auto'}" id="lbpieces_${p.id}" class="lb-num"></label>
+      <div class="lb-fields" id="lbf_${p.id}" style="display:none;flex-direction:column">
+        <div id="lblignes_${p.id}"></div>
       </div>
     </div>`;
   };
@@ -44705,6 +45025,7 @@ async function labelsBatchForm(){
     <div class="lb-list">${sections}</div>
     <div class="modal-actions">
       <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn ghost" onclick="lbRangerEtImprimer()">📦 Créer les boîtes et ranger</button>
       <button class="btn gold" onclick="lbGenerate()">📄 Générer le PDF</button>
     </div>`);
 }
@@ -44722,7 +45043,21 @@ function lbSecToggle(id){
 function lbRowToggle(prodId){
   const cb = document.querySelector('.lb-sel[data-prod="'+prodId+'"]');
   const f = document.getElementById('lbf_'+prodId);
-  if(f) f.style.display = (cb && cb.checked) ? 'flex' : 'none';
+  const coche = !!(cb && cb.checked);
+  if(f) f.style.display = coche ? 'flex' : 'none';
+  // [v1358] Cocher un lot crée sa PREMIÈRE ligne (une boîte). Ben ajoute les suivantes avec
+  // « + Ajouter une boîte ». Décocher retire toutes les lignes du lot — sinon des lignes fantômes
+  // resteraient dans `_lbLignes` et seraient rangées sans que Ben les voie.
+  if(coche){
+    if(!_lbLignes.some(l => l.prodId === +prodId)){
+      const p = (window._lbProds || []).find(x => +x.id === +prodId);
+      const def = p ? (p.qteReelle != null ? p.qteReelle : (p.qteProduite != null ? p.qteProduite : null)) : null;
+      _lbLignes.push({ uid: _lbUid++, prodId: +prodId, copies: 1, pieces: def, equipKey: null });
+    }
+  } else {
+    _lbLignes = _lbLignes.filter(l => l.prodId !== +prodId);
+  }
+  lbRenderLignes(+prodId);
 }
 
 async function lbGenerate(){
