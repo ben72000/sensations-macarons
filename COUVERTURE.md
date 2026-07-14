@@ -2187,3 +2187,47 @@ paraphrasé, leçon v1345) : volumes non nuls, impayées comptées comme les pay
 
 **Ce bug n'aurait jamais existé si j'avais écrit ce test en v1354.** J'ai livré une vue analytique
 entière sans un seul test sur sa donnée centrale — le volume.
+
+---
+
+## v1356 — J'AI RECOMMIS LE PÉCHÉ DE LA v1337, DIX-NEUF VAGUES PLUS TARD
+
+Le tableau fonctionne (2 171 pièces). Mais **Praliné noisettes (96 pces)** et **Chocolat noir
+(94 pces)** étaient rangés dans **« À QUESTIONNER — faible volume ET faible marge »**, avec une
+marge affichée **« — »**.
+
+**Leur marge est INCONNUE, pas faible.**
+
+```js
+const hauteMarge = (l.margeUnit != null) && (l.margeUnit >= medMarge);  // null → false → "faible"
+```
+
+> **Un `null` traité comme un `false` est UN JUGEMENT DÉGUISÉ EN DONNÉE.**
+
+C'est exactement la règle gravée en v1337 — *« zéro n'est pas une mesure, c'est une affirmation »* —
+**que je viens de recommettre**. Ben aurait pu **sortir de sa gamme** deux parfums qui vendent près
+de 100 pièces, sur la foi d'une marge qu'on n'a **jamais mesurée**.
+
+### Pourquoi ces marges sont nulles — le mélange de périmètres, encore
+`analyzeFlavorProfitability` calcule `margeUnit` à partir de `piecesVendues`, qui filtre
+`paiement === 'Payé'`. **J'ai contourné ce filtre pour les volumes en v1355** (décision de Ben,
+v1344) **mais pas dans le moteur de rentabilité**. Ces parfums ont donc **96 et 94 pièces sorties,
+et 0 pièce payée**.
+
+Ce ne sont pas des parfums sans marge : **ce sont des parfums dont les commandes ne sont pas encore
+réglées.** Nouveau quadrant : **« MARGE NON MESURÉE »** — *ils se vendent, mais aucune commande
+réglée : impossible de calculer leur marge*.
+
+### Le second point : le vocabulaire, pas la maths
+Popcorn (101 pces) était étiqueté « **faible** volume ». La médiane de la gamme est à **125 pièces**
+— le calcul est **juste**. Mais dire « faible » pour 101 pièces vendues est **trompeur** :
+
+> **Un seuil relatif décrit une POSITION, jamais une VALEUR.**
+
+Renommé : *« sous la médiane sur les deux axes — à questionner, pas à condamner »*, et l'écran affiche
+désormais les médianes réelles (125 pces / 1,43 €) pour que Ben sache **à quoi** il se compare.
+
+### Ce que ça dit
+La règle v1337 est gravée dans `COUVERTURE.md` depuis dix-neuf vagues. Je l'ai relue, citée, et
+**enfreinte quand même** — parce qu'un `&&` qui renvoie `false` sur un `null` ne *ressemble* pas à une
+affirmation. Les tests attrapent ce que la vigilance ne voit plus.

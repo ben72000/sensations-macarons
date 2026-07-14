@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1355';
+const APP_VERSION = 'v1356';
 const APP_MAJ = 'LE MONTAGE PYRAMIDE, SANS OUVRIR « MODIFIER » — comme tu l’as demandé. Le résumé d’une commande événement affiche maintenant, d’un coup d’œil : le NOMBRE de pyramides, le TYPE (location ou vendue), le NOMBRE D’ÉTAGES, le modèle de présentoir, et le nombre de macarons par pyramide — avec la mention « pyramide entière » quand tous les plateaux sont utilisés. UNE DIFFICULTÉ QUE JE DOIS TE DIRE : le nombre d’étages N’EST PAS STOCKÉ sur la commande. Seuls le nombre de pyramides et le nombre de macarons le sont. Les étages se DÉDUISENT de tes modèles de présentoirs (chaque modèle a ses plateaux, donc ses paliers cumulés : 4, 11, 21, 34, 50, 69 pour ta pyramide transparente). JE NE DEVINE DONC PAS — JE DÉDUIS, ET JE DIS CE QUE JE SAIS. Si un seul modèle correspond, je l’affiche avec ses étages. Si PLUSIEURS correspondent (34 macarons, c’est 4 étages sur un modèle et 3 sur un autre), je te les LISTE TOUS : trancher en silence reviendrait à décider à ta place. Si AUCUN palier ne correspond, je te dis « montage sur mesure » — sans arrondir au palier voisin, alors que ce serait facile. Et si la répartition n’est pas entière (100 macarons sur 3 pyramides), je te signale que tes pyramides ne seront PAS identiques, au lieu de te laisser croire à un montage équilibré qui n’existe pas. LA RÈGLE QUE J’AI FIGÉE : un nombre d’étages INVENTÉ serait PIRE qu’une absence — il t’enverrait monter le MAUVAIS présentoir le jour J, devant ton client. Une donnée manquante te coûte un aller-retour dans « Modifier » ; une donnée FAUSSE te coûte un événement raté. Le silence est le moindre mal ; le mensonge, jamais. Enfin, pour un bloc plat (non sécable), je n’affiche AUCUN étage : parler d’étages n’aurait aucun sens. Suite : 1397 → 1437 assertions vertes.';
 
 // ============================================================
@@ -40950,10 +40950,29 @@ async function aiQueryTendancesParfums(params){
   // ── 5. LES QUATRE QUADRANTS (volume × marge) — le vrai outil de décision de gamme.
   // Ce n'est PAS une matrice BCG plaquée : c'est la seule façon de voir qu'un parfum qui se vend
   // beaucoup peut te faire perdre de l'argent, et qu'un parfum discret peut être ta meilleure marge.
+  // [v1356] UNE MARGE INCONNUE N'EST PAS UNE MAUVAISE MARGE.
+  //
+  // Le bug : `(l.margeUnit != null) && (l.margeUnit >= medMarge)` renvoyait `false` sur un `null`.
+  // Praliné noisettes (96 pces) et Chocolat noir (94 pces) atterrissaient donc dans « À QUESTIONNER
+  // — faible volume ET faible marge », avec une marge affichée « — ». Ben aurait pu SORTIR DE SA
+  // GAMME deux parfums qui vendent près de 100 pièces, sur la foi d'une marge qu'on n'a jamais mesurée.
+  //
+  // C'est EXACTEMENT le péché gravé en v1337 (« zéro n'est pas une mesure, c'est une affirmation »),
+  // que je viens de commettre à nouveau, 19 vagues plus tard. Un `null` traité comme un `false` est
+  // un jugement déguisé en donnée.
+  //
+  // POURQUOI ces marges sont nulles : `analyzeFlavorProfitability` calcule `margeUnit` à partir de
+  // `piecesVendues`, qui filtre `paiement === 'Payé'`. J'ai contourné ce filtre pour MES volumes en
+  // v1355 (décision de Ben, v1344 : payé et non payé sont deux notions distinctes) — mais PAS dans
+  // le moteur de rentabilité. Ces deux parfums ont donc 96 et 94 pièces SORTIES, et 0 pièce PAYÉE.
+  //
+  // Ce ne sont pas des parfums sans marge : ce sont des parfums dont les commandes ne sont pas
+  // encore réglées. La donnée manque, et on le DIT — on ne la remplace pas par un verdict.
   const quadrant = (l) => {
-    if(l.volume === 0) return 'dormant';
-    const hautVol   = l.volume >= medVol;
-    const hauteMarge = (l.margeUnit != null) && (l.margeUnit >= medMarge);
+    if(l.volume === 0)      return 'dormant';
+    if(l.margeUnit == null) return 'marge_inconnue';   // [v1356] jamais 'poids_mort' par défaut
+    const hautVol    = l.volume   >= medVol;
+    const hauteMarge = l.margeUnit >= medMarge;
     if(hautVol && hauteMarge)   return 'pilier';
     if(hautVol && !hauteMarge)  return 'locomotive';
     if(!hautVol && hauteMarge)  return 'pepite';
@@ -40961,12 +40980,18 @@ async function aiQueryTendancesParfums(params){
   };
   lignes.forEach(l => { l.quadrant = quadrant(l); });
 
+  // [v1356] LE VOCABULAIRE, PAS LA MATHS. La médiane de Ben est à 125 pièces — Popcorn (101 pces)
+  // tombe donc SOUS la médiane, et le calcul est juste. Mais lui dire « faible volume » pour
+  // 101 pièces vendues est TROMPEUR : ce n'est pas faible dans l'absolu, c'est « en dessous de la
+  // moitié de ta gamme ». Un seuil relatif décrit une POSITION, jamais une VALEUR — et confondre
+  // les deux ferait sortir de la gamme des parfums qui vendent une centaine de pièces.
   const LIB = {
-    pilier:     { t:'PILIERS',      d:'fort volume + forte marge — le cœur de ta gamme' },
-    locomotive: { t:'LOCOMOTIVES',  d:'fort volume, marge faible — ils attirent, ils ne t\'enrichissent pas' },
-    pepite:     { t:'PÉPITES',      d:'faible volume, forte marge — à mettre en avant' },
-    poids_mort: { t:'À QUESTIONNER',d:'faible volume ET faible marge' },
-    dormant:    { t:'JAMAIS VENDUS',d:'aucune vente enregistrée' }
+    pilier:     { t:'PILIERS',      d:`au-dessus de la médiane sur les DEUX axes (${qty(medVol)} pces / ${euro(medMarge)}) — le cœur de ta gamme` },
+    locomotive: { t:'LOCOMOTIVES',  d:'gros volume, marge sous la médiane — ils attirent, ils enrichissent moins' },
+    pepite:     { t:'PÉPITES',      d:'volume sous la médiane, marge au-dessus — à pousser' },
+    poids_mort: { t:'SOUS LA MÉDIANE SUR LES DEUX AXES', d:'ni le volume ni la marge ne dépassent la moitié de ta gamme — à questionner, pas à condamner' },
+    dormant:    { t:'JAMAIS VENDUS',d:'aucune vente enregistrée' },
+    marge_inconnue: { t:'MARGE NON MESURÉE', d:'ils se vendent, mais aucune commande réglée : impossible de calculer leur marge' }
   };
 
   const ligneHtml = (l) => {
@@ -40987,7 +41012,7 @@ async function aiQueryTendancesParfums(params){
     </div>`;
   };
 
-  const blocs = ['pilier','locomotive','pepite','poids_mort','dormant'].map(q => {
+  const blocs = ['pilier','locomotive','pepite','marge_inconnue','poids_mort','dormant'].map(q => {
     const grp = lignes.filter(l => l.quadrant === q);
     if(!grp.length) return '';
     return `<p style="margin:12px 0 4px;font-weight:700;font-size:.82rem;letter-spacing:.04em">${LIB[q].t}
@@ -40998,7 +41023,7 @@ async function aiQueryTendancesParfums(params){
   return aiSay(`${aiHero(String(lignes.length), 'Parfums au catalogue', {sub:`${qty(totalVol)} pièces vendues au total`, color:'var(--bordeaux)'})}
     ${aiSynth(`Chaque parfum, classé par <b>volume</b>, avec sa <b>marge</b> et sa <b>meilleure association</b> mesurée. Les seuils « fort/faible » sont les <b>médianes</b> de ta propre gamme — pas des valeurs absolues.`, {icon:'📊'})}
     ${blocs}
-    ${aiSynth(`Un parfum à <b>fort lift</b> mais <b>faible volume</b> reste un pari : l'association est réelle, mais elle repose sur peu de ventes. Croise toujours les deux avant de composer ta gamme.`, {icon:'🎯'})}`);
+    ${aiSynth(`Les seuils sont <b>relatifs à ta gamme</b> : la médiane est à <b>${qty(medVol)} pièces</b> et <b>${euro(medMarge)}/pce</b>. « Sous la médiane » ne veut pas dire « mauvais » — Popcorn à 101 pièces reste un vrai volume, il est juste dans la moitié basse <b>de tes propres parfums</b>.<br><br>Un parfum à <b>fort lift</b> mais <b>petit volume</b> reste un pari : l'association est réelle, elle repose sur peu de ventes.`, {icon:'🎯'})}`);
 }
 
 

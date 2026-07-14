@@ -65,5 +65,43 @@ T('Chocolat noir = 10 (grand format compte)', () => v['Chocolat noir'], 10);
 console.log('\n-- LES REPRISES D HISTORIQUE restent exclues');
 T('la reprise histo (99 Vanille) n est PAS comptee', () => v['Vanille'] !== 104, true);
 
-console.log('\n' + (ko ? ('ECHECS: ' + ko + ' -- ' + ok + ' ok') : ('OK ' + ok + '/' + ok + ' -- volumes coherents')));
+
+
+// ════════════════════════════════════════════════════════════════════════════
+//  v1356 — UNE MARGE INCONNUE N'EST PAS UNE MAUVAISE MARGE
+//
+//  Praliné noisettes (96 pces) et Chocolat noir (94 pces) atterrissaient dans
+//  « À QUESTIONNER — faible volume ET faible marge », avec une marge affichée « — ».
+//  Ben aurait pu SORTIR DE SA GAMME deux parfums qui vendent ~100 pièces, sur la foi d'une
+//  marge qu'on n'a JAMAIS MESURÉE.
+//
+//  Cause : `(margeUnit != null) && (margeUnit >= med)` renvoie `false` sur un `null`.
+//  Un null traité comme un false est UN JUGEMENT DÉGUISÉ EN DONNÉE.
+//
+//  C'est le péché gravé en v1337 (« zéro n'est pas une mesure ») — recommis 19 vagues plus tard.
+// ════════════════════════════════════════════════════════════════════════════
+console.log('\n-- [v1356] UNE MARGE INCONNUE N EST PAS UNE MAUVAISE MARGE');
+
+// On extrait la VRAIE fonction quadrant du fichier (jamais paraphrasee).
+const iQ = SRC.indexOf('const quadrant = (l) => {');
+const jQ = SRC.indexOf('};', iQ) + 2;
+const BLOC_Q = SRC.slice(iQ, jQ).replace('const quadrant =', 'globalThis.quadrant =');
+
+const medVol = 125, medMarge = 1.43;   // medianes reelles de la gamme de Ben
+eval(BLOC_Q);
+
+T('Praline noisettes (96 pces, marge INCONNUE) -> "marge_inconnue", PAS "poids_mort"',
+  () => quadrant({ volume: 96, margeUnit: null }), 'marge_inconnue');
+T('Chocolat noir (94 pces, marge INCONNUE) -> idem',
+  () => quadrant({ volume: 94, margeUnit: null }), 'marge_inconnue');
+console.log('      -> avant v1356, ces deux tombaient en "poids_mort" : Ben pouvait les SORTIR de sa gamme.');
+
+console.log('\n-- Les quadrants MESURES restent corrects (non-regression)');
+T('gros volume + grosse marge -> pilier',      () => quadrant({ volume: 284, margeUnit: 1.48 }), 'pilier');
+T('gros volume + marge sous mediane -> locomotive', () => quadrant({ volume: 285, margeUnit: 1.40 }), 'locomotive');
+T('petit volume + grosse marge -> pepite',     () => quadrant({ volume: 61,  margeUnit: 1.47 }), 'pepite');
+T('petit volume + petite marge -> poids_mort', () => quadrant({ volume: 37,  margeUnit: 1.34 }), 'poids_mort');
+T('zero vente -> dormant',                     () => quadrant({ volume: 0,   margeUnit: 1.50 }), 'dormant');
+
+console.log('\n' + (ko ? ('ECHECS: ' + ko + ' -- ' + ok + ' ok') : ('OK ' + ok + '/' + ok + ' -- volumes + quadrants coherents')));
 process.exit(ko ? 1 : 0);
