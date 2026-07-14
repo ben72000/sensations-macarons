@@ -2448,3 +2448,92 @@ date · pièce justificative · client · **nature de la prestation** · montant
 - **Édition papier** — c'est **ce document** qu'on présente à un contrôle. Un CSV n'est pas un livre :
   c'est un fichier. Le livre se lit, se date, se signe. Il porte le **contrôle d'intégrité** et
   l'**empreinte de clôture**.
+
+---
+
+## v1361 — LES REPRISES HISTORIQUES SONT DES RECETTES
+
+Ben : *« Les migrations comptées à part ne sont pas incluses dans le cahier comptable, pourquoi ?
+Bien qu'elles aient été comptabilisées elles font bien partie de mon CA, **le dissimuler serait
+mentir**. »*
+
+**Il a raison, et l'erreur est grave.** J'avais écrit :
+
+```js
+if(!o || o.histo) return;   // « les reprises d'historique ne sont pas des recettes de l'exercice »
+```
+
+**C'est faux.** Ce sont des **ventes réelles, encaissées**, qui font partie de son CA. Les exclure du
+livre des recettes, c'est **dissimuler du chiffre d'affaires** — et un contrôleur qui compare le livre
+à la déclaration verrait l'écart **immédiatement**.
+
+### J'ai confondu deux choses
+| Ce que j'ai lu | Ce que c'est |
+|---|---|
+| « saisi rétroactivement dans l'app » | une caractéristique **technique** |
+| « ne fait pas partie du CA » | une affirmation **comptable** — et elle est **FAUSSE** |
+
+> **RÈGLE GRAVÉE (v1361) : UNE CARACTÉRISTIQUE TECHNIQUE N'EST JAMAIS UNE JUSTIFICATION COMPTABLE.**
+> Le **mode de saisie** d'une recette ne change **rien** à son **existence**.
+
+C'est le principe que je venais de graver en v1360 (*« l'omission d'un canal rend le livre FAUX »*),
+**violé dans la ligne suivante**.
+
+### Le piège technique, plus retors que le filtre
+Une commande historique a `paiement:'Payé'` mais **`paiements:[]` — un tableau VIDE**.
+
+**Retirer le filtre `o.histo` n'aurait donc RIEN changé** : la boucle sur `paiements` ne trouve rien.
+La recette serait restée absente du livre — **mais silencieusement**, ce qui est pire qu'un filtre
+visible.
+
+**Correctif :** même rétro-compatibilité que `orderPaid()` — pas d'écriture de paiement + statut
+« Payé » ⇒ la recette vaut le **montant de la commande**, à sa date.
+
+### La vérité, sans dissimulation ni disqualification
+La reprise apparaît dans le livre avec :
+- sa **nature** : *« Vente de macarons — reprise d'historique (label) »*
+- son **canal** : *« Reprise historique »*, ventilé séparément dans les totaux
+
+**On ne cache pas l'origine. On ne la disqualifie pas non plus.**
+**Une recette reprise reste une recette.**
+
+---
+
+## v1362 — « ACOMPTE » N'EST PAS UN MOYEN DE PAIEMENT
+
+Ben : *« Pourquoi certains acomptes sont notés dans le livre des recettes comme "virement" et d'autres
+comme "acompte" ? **L'un empêche pas l'autre non ?** »*
+
+**Il a raison, et la confusion était dans le code :**
+
+```js
+paiements: [{ date, montant, moyen:'Acompte' }]   // un STATUT rangé dans le champ MOYEN
+```
+
+### Deux dimensions indépendantes, un seul champ
+| Dimension | Ce qu'elle dit | Valeurs |
+|---|---|---|
+| **MOYEN** | **COMMENT** l'argent est arrivé | Virement · Carte · Espèces · Chèque |
+| **STATUT** | **CE QUE** couvre le règlement | Acompte · Solde |
+
+**On peut avoir un acompte PAR VIREMENT, puis un solde EN ESPÈCES.** Les deux coexistent.
+
+> **RÈGLE GRAVÉE (v1362) : UN STATUT N'EST PAS UN MOYEN.**
+> Deux dimensions indépendantes ne partagent **jamais** un champ — sinon l'une **écrase** l'autre,
+> et le total **ment**.
+
+### La conséquence comptable, et elle est sérieuse
+**La ventilation par mode de règlement du livre des recettes était FAUSSE.** Une colonne « Acompte »
+sans aucun sens comptable, et **les vrais virements sous-comptés**. Sur un contrôle, c'est une
+ventilation qui ne tombe pas juste — exactement le genre d'incohérence qui déclenche un examen.
+
+### Le correctif
+- **Le moyen réel est désormais demandé** à la saisie de l'acompte (sélecteur `PAY_METHODS`)
+- **Le statut est stocké dans son propre champ** (`acompte:true`)
+- **Si le moyen n'est pas renseigné → `null`**, jamais une valeur inventée (v1337)
+
+### Le legacy — l'information n'est pas perdue, elle est remise dans la bonne colonne
+Les acomptes **déjà saisis** portent `moyen:'Acompte'`. Le vrai moyen est **inconnu a posteriori** :
+- **Colonne moyen** → « Non précisé » (la **vérité**), jamais « Acompte » (une catégorie de règlement
+  **qui n'existe pas**)
+- **Colonne statut** → « Acompte » ✅ **conservé**

@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1360';
+const APP_VERSION = 'v1362';
 const APP_MAJ = 'LE MONTAGE PYRAMIDE, SANS OUVRIR « MODIFIER » — comme tu l’as demandé. Le résumé d’une commande événement affiche maintenant, d’un coup d’œil : le NOMBRE de pyramides, le TYPE (location ou vendue), le NOMBRE D’ÉTAGES, le modèle de présentoir, et le nombre de macarons par pyramide — avec la mention « pyramide entière » quand tous les plateaux sont utilisés. UNE DIFFICULTÉ QUE JE DOIS TE DIRE : le nombre d’étages N’EST PAS STOCKÉ sur la commande. Seuls le nombre de pyramides et le nombre de macarons le sont. Les étages se DÉDUISENT de tes modèles de présentoirs (chaque modèle a ses plateaux, donc ses paliers cumulés : 4, 11, 21, 34, 50, 69 pour ta pyramide transparente). JE NE DEVINE DONC PAS — JE DÉDUIS, ET JE DIS CE QUE JE SAIS. Si un seul modèle correspond, je l’affiche avec ses étages. Si PLUSIEURS correspondent (34 macarons, c’est 4 étages sur un modèle et 3 sur un autre), je te les LISTE TOUS : trancher en silence reviendrait à décider à ta place. Si AUCUN palier ne correspond, je te dis « montage sur mesure » — sans arrondir au palier voisin, alors que ce serait facile. Et si la répartition n’est pas entière (100 macarons sur 3 pyramides), je te signale que tes pyramides ne seront PAS identiques, au lieu de te laisser croire à un montage équilibré qui n’existe pas. LA RÈGLE QUE J’AI FIGÉE : un nombre d’étages INVENTÉ serait PIRE qu’une absence — il t’enverrait monter le MAUVAIS présentoir le jour J, devant ton client. Une donnée manquante te coûte un aller-retour dans « Modifier » ; une donnée FAUSSE te coûte un événement raté. Le silence est le moindre mal ; le mensonge, jamais. Enfin, pour un bloc plat (non sécable), je n’affiche AUCUN étage : parler d’étages n’aurait aucun sens. Suite : 1397 → 1437 assertions vertes.';
 
 // ============================================================
@@ -8479,6 +8479,11 @@ async function docOpen(id){
     ${(d.type==='devis'&&d.statut==='en_attente')?`
       <div class="field" style="margin-top:10px"><label>Acompte reçu (€) — facultatif</label>
         <input type="number" min="0" step="0.01" id="docAcompte" value="${acompte>0?acompte:''}" placeholder="ex : 100" oninput="docSetAcompte(${d.id},this.value)"></div>
+      <div class="field"><label>Moyen de paiement de l'acompte</label>
+        <select id="docAcompteMoyen" onchange="docSetAcompteMoyen(${d.id},this.value)">
+          <option value="">— à préciser —</option>
+          ${PAY_METHODS.map(m=>`<option value="${esc(m)}"${d.acompteMoyen===m?' selected':''}>${esc(m)}</option>`).join('')}
+        </select></div>
       <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
         <button class="btn gold" id="docConvertBtn" onclick="docConvertToOrder(${d.id})">→ Convertir en commande</button>
         <button class="btn ghost" onclick="cmdForm(null,{devis:true,devisId:${d.id}});">Modifier</button>
@@ -8517,6 +8522,10 @@ async function docSetFactDate(id, v){
   if(v>auj){ toast('⛔ Date dans le futur interdite'); const el=document.getElementById('docFactDate'); if(el) el.value=auj; await db.documents.update(id,{date:auj}); return; }
   await db.documents.update(id,{date:v});
 }
+// [v1362] Le MOYEN de l'acompte, saisi séparément de son MONTANT.
+async function docSetAcompteMoyen(id, v){
+  await db.documents.update(id, {acompteMoyen: (v||'')});
+}
 async function docSetAcompte(id, v){
   const a=money2(+v||0);
   await db.documents.update(id, {acompte:a});
@@ -8538,7 +8547,32 @@ async function docConvertToOrder(id){
     fraisLivraison:d.fraisLivraison||0, sacMatId:d.sacMatId||0, sacNb:d.sacNb||0,
     lignes:d.lignes||[], remiseGlobale:d.remiseGlobale||0, remiseGlobaleEur:(d.remiseGlobaleEur!=null?+d.remiseGlobaleEur:null),
     perso:!!(d.perso||+d.persoMacarons>0), persoMacarons:+d.persoMacarons||0, persoCouleurs:Array.isArray(d.persoCouleurs)?d.persoCouleurs:[], persoRemiseEur:+d.persoRemiseEur||0, acompteMention:(d.acompteMention!==false), montant:d.montant||0,
-    paiements: acompte>0 ? [{date:auj, montant:money2(acompte), moyen:'Acompte'}] : [],   // [v1157] pas d'acompte → pas de ligne fantôme à 0 €
+    // ════════════════════════════════════════════════════════════════════
+    // [v1362] « ACOMPTE » N'EST PAS UN MOYEN DE PAIEMENT.
+    //
+    // Ben : « pourquoi certains acomptes sont notés comme "virement" et d'autres comme "acompte" ?
+    // L'un empêche pas l'autre non ? » — IL A RAISON, ET LA CONFUSION ÉTAIT DANS MON CODE.
+    //
+    // On écrivait `moyen:'Acompte'` : un STATUT rangé dans le champ MOYEN DE PAIEMENT.
+    // Ce sont DEUX DIMENSIONS INDÉPENDANTES :
+    //   • le MOYEN  = COMMENT l'argent est arrivé (virement, CB, espèces, chèque…)
+    //   • le STATUT = CE QUE couvre le règlement (acompte partiel, ou solde)
+    // On peut avoir un acompte PAR VIREMENT, puis un solde EN ESPÈCES.
+    //
+    // CONSÉQUENCE COMPTABLE, ET ELLE EST SÉRIEUSE : la ventilation par mode de règlement du
+    // LIVRE DES RECETTES était FAUSSE. Une colonne « Acompte » sans aucun sens comptable, et les
+    // vrais virements sous-comptés. Sur un contrôle, c'est une ventilation qui ne tombe pas juste.
+    //
+    // RÈGLE GRAVÉE (v1362) : UN STATUT N'EST PAS UN MOYEN. Deux dimensions indépendantes ne
+    // partagent JAMAIS un champ — sinon l'une écrase l'autre, et le total ment.
+    //
+    // Le moyen réel est désormais SAISI (docSetAcompteMoyen). S'il n'a pas été renseigné, on
+    // écrit `null` — « je ne sais pas » — JAMAIS une valeur inventée (v1337 : l'absence de mesure
+    // n'est pas une mesure).
+    // ════════════════════════════════════════════════════════════════════
+    paiements: acompte>0
+      ? [{ date:auj, montant:money2(acompte), moyen:(d.acompteMoyen || null), acompte:true }]
+      : [],   // [v1157] pas d'acompte → pas de ligne fantôme à 0 €
     statut:'À préparer', notes:(d.notes||'')+`\n(Issu du devis ${d.numero})`,
     type:'multi', taille:0, parfums:[], evQte:0, equip:0, tarif:'', bigItems:[],
     issuDevis:d.numero
@@ -19831,8 +19865,56 @@ async function livreDesRecettes(depuis, jusqu){
   };
 
   (orders || []).forEach(o => {
-    if(!o || o.histo) return;   // les reprises d'historique ne sont pas des recettes de l'exercice
+    if(!o) return;
+
+    // ════════════════════════════════════════════════════════════════════════
+    // [v1361] BEN A RAISON, ET MON ERREUR ÉTAIT GRAVE.
+    //
+    // J'écrivais `if(o.histo) return;` — « les reprises d'historique ne sont pas des recettes de
+    // l'exercice ». C'EST FAUX. Ce sont des VENTES RÉELLES, ENCAISSÉES, qui font partie de son CA.
+    // Les exclure du livre des recettes, c'est DISSIMULER DU CHIFFRE D'AFFAIRES — et un contrôleur
+    // qui compare le livre à la déclaration verrait l'écart immédiatement.
+    //
+    // J'AI CONFONDU DEUX CHOSES :
+    //   • « saisi rétroactivement dans l'app » → une caractéristique TECHNIQUE
+    //   • « ne fait pas partie du CA »         → une affirmation COMPTABLE, et elle est FAUSSE
+    //
+    // C'est le principe que je venais de graver en v1360 (« l'omission d'un canal rend le livre
+    // FAUX »), violé dans la ligne suivante. Ben l'a vu : « le dissimuler serait mentir ».
+    //
+    // RÈGLE GRAVÉE (v1361) : UNE CARACTÉRISTIQUE TECHNIQUE N'EST JAMAIS UNE JUSTIFICATION COMPTABLE.
+    // Le mode de saisie d'une recette ne change RIEN à son existence.
+    //
+    // LE PIÈGE TECHNIQUE, plus retors : une commande historique a `paiement:'Payé'` mais
+    // `paiements:[]` — un tableau VIDE. Retirer le filtre `o.histo` n'aurait donc RIEN changé :
+    // la boucle sur `paiements` ne trouve rien. La recette serait restée absente, mais SILENCIEUSEMENT.
+    // On applique la même rétro-compatibilité que `orderPaid()` : pas d'écriture de paiement +
+    // statut « Payé » ⇒ la recette vaut le montant de la commande, à sa date.
+    // ════════════════════════════════════════════════════════════════════════
     const paiements = Array.isArray(o.paiements) ? o.paiements : [];
+    const sansEcriture = !paiements.some(p => p && (+p.montant));
+
+    if(sansEcriture && o.paiement === 'Payé' && (+o.montant) > 0){
+      const d = (o.datePaiement || o.date || '').slice(0, 10);
+      if((!depuis || d >= depuis) && (!jusqu || d <= jusqu)){
+        lignes.push({
+          date: d,
+          piece: o.factureNumero || ((typeof orderNumber === 'function') ? orderNumber(o) : ('CMD-' + o.id)),
+          client: o.clientNom || nomClient(o.clientId) || 'Client non identifié',
+          montant: money2(+o.montant || 0),
+          moyen: o.reglement || 'Non précisé',
+          // La nature dit la VÉRITÉ sur l'origine de la ligne — sans la cacher, et sans la
+          // disqualifier. Une recette reprise reste une recette.
+          nature: o.histo
+            ? `Vente de macarons — reprise d'historique${o.histoLabel ? ' (' + o.histoLabel + ')' : ''}`
+            : 'Vente de macarons — commande',
+          canal: o.histo ? 'Reprise historique' : 'Commande',
+          statut: 'Encaissement',
+          motif: ''
+        });
+      }
+    }
+
     paiements.forEach((p, i) => {
       if(!p || !(+p.montant)) return;
       const d = (p.date || o.date || '').slice(0, 10);
@@ -19842,6 +19924,14 @@ async function livreDesRecettes(depuis, jusqu){
       let statut = 'Encaissement';
       if(p.annule)          statut = 'ANNULÉ';
       else if(p.correction) statut = ((+p.montant) < 0) ? 'Annulation' : 'Correction';
+      else if(p.acompte || p.moyen === 'Acompte') statut = 'Acompte';
+
+      // [v1362] LE LEGACY. Les acomptes saisis AVANT ce correctif portent `moyen:'Acompte'` — un
+      // STATUT logé dans le champ MOYEN. On ne peut pas deviner le vrai moyen a posteriori : on
+      // affiche « Non précisé », qui est la VÉRITÉ, plutôt que « Acompte », qui est une catégorie
+      // de règlement N'EXISTANT PAS. Le STATUT est conservé (ligne ci-dessus) : l'information
+      // n'est pas perdue — elle est remise dans la BONNE COLONNE.
+      const _moyenReel = (p.moyen === 'Acompte') ? null : p.moyen;
 
       lignes.push({
         date: d,
@@ -19851,9 +19941,11 @@ async function livreDesRecettes(depuis, jusqu){
         piece: o.factureNumero || ((typeof orderNumber === 'function') ? orderNumber(o) : ('CMD-' + o.id)),
         client: o.clientNom || nomClient(o.clientId) || 'Client non identifié',
         montant: money2(+p.montant || 0),
-        moyen: p.moyen || o.reglement || 'Non précisé',
-        nature: 'Vente de macarons — commande',
-        canal: 'Commande',
+        moyen: _moyenReel || o.reglement || 'Non précisé',
+        nature: o.histo
+          ? `Vente de macarons — reprise d'historique${o.histoLabel ? ' (' + o.histoLabel + ')' : ''}`
+          : 'Vente de macarons — commande',
+        canal: o.histo ? 'Reprise historique' : 'Commande',
         statut,
         motif: p.motif || p.annuleMotif || ''
       });

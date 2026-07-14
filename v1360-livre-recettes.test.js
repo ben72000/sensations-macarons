@@ -82,5 +82,48 @@ console.log('\n-- LES MENTIONS OBLIGATOIRES (art. L102 B LPF / 286-I-3 CGI)');
 console.log('\n-- LES REPRISES HISTORIQUES NE SONT PAS DES RECETTES DE L EXERCICE');
 T('les lots histo sont exclus', () => F.includes('o.histo'), true);
 
-console.log('\n' + (ko ? ('ECHECS: ' + ko + ' -- ' + ok + ' ok') : ('OK ' + ok + '/' + ok + ' -- livre des recettes coherent')));
+
+
+// ════════════════════════════════════════════════════════════════════════════
+//  v1361 — LES REPRISES HISTORIQUES SONT DES RECETTES
+//
+//  Ben : « les migrations comptées à part ne sont pas incluses dans le cahier comptable, pourquoi ?
+//  Bien qu'elles aient été comptabilisées elles font bien partie de mon CA, le dissimuler serait
+//  mentir. »
+//
+//  IL A RAISON. J'ecrivais `if(o.histo) return;` avec ce commentaire : « les reprises d'historique
+//  ne sont pas des recettes de l'exercice ». C'EST FAUX.
+//
+//  J'AI CONFONDU :
+//   - « saisi retroactivement dans l'app »  -> caracteristique TECHNIQUE
+//   - « ne fait pas partie du CA »          -> affirmation COMPTABLE, et elle est FAUSSE
+//
+//  REGLE GRAVEE (v1361) : UNE CARACTERISTIQUE TECHNIQUE N'EST JAMAIS UNE JUSTIFICATION COMPTABLE.
+//  Le mode de saisie d'une recette ne change RIEN a son existence.
+//
+//  LE PIEGE, plus retors : une commande historique a `paiement:'Payé'` mais `paiements:[]` — un
+//  tableau VIDE. Retirer le filtre `o.histo` n'aurait donc RIEN change : la boucle sur `paiements`
+//  ne trouve rien. La recette serait restee absente, mais SILENCIEUSEMENT.
+// ════════════════════════════════════════════════════════════════════════════
+console.log('\n-- [v1361] LES REPRISES HISTORIQUES SONT DANS LE LIVRE');
+
+const F2 = grab('livreDesRecettes');
+
+T('le filtre "if(o.histo) return" a DISPARU (il dissimulait du CA)',
+  () => /if\(!o \|\| o\.histo\) return;/.test(F2), false);
+
+T('une commande PAYEE sans ecriture de paiement produit quand meme une recette',
+  () => F2.includes("sansEcriture") && F2.includes("o.paiement === 'Payé'"), true);
+console.log('      -> une reprise a `paiement:"Payé"` mais `paiements:[]`. Sans ce rattrapage,');
+console.log('         elle serait restee absente du livre — SILENCIEUSEMENT.');
+
+T('la reprise est identifiee dans la NATURE de la recette (verite, sans dissimulation)',
+  () => F2.includes("reprise d'historique"), true);
+
+T('... et dans un CANAL distinct, pour la ventilation',
+  () => F2.includes("'Reprise historique'"), true);
+console.log('      -> on ne CACHE pas l origine, et on ne la DISQUALIFIE pas non plus.');
+console.log('         Une recette reprise reste une recette.');
+
+console.log('\n' + (ko ? ('ECHECS: ' + ko + ' -- ' + ok + ' ok') : ('OK ' + ok + '/' + ok + ' -- livre des recettes complet')));
 process.exit(ko ? 1 : 0);
