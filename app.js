@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1356';
+const APP_VERSION = 'v1357';
 const APP_MAJ = 'LE MONTAGE PYRAMIDE, SANS OUVRIR « MODIFIER » — comme tu l’as demandé. Le résumé d’une commande événement affiche maintenant, d’un coup d’œil : le NOMBRE de pyramides, le TYPE (location ou vendue), le NOMBRE D’ÉTAGES, le modèle de présentoir, et le nombre de macarons par pyramide — avec la mention « pyramide entière » quand tous les plateaux sont utilisés. UNE DIFFICULTÉ QUE JE DOIS TE DIRE : le nombre d’étages N’EST PAS STOCKÉ sur la commande. Seuls le nombre de pyramides et le nombre de macarons le sont. Les étages se DÉDUISENT de tes modèles de présentoirs (chaque modèle a ses plateaux, donc ses paliers cumulés : 4, 11, 21, 34, 50, 69 pour ta pyramide transparente). JE NE DEVINE DONC PAS — JE DÉDUIS, ET JE DIS CE QUE JE SAIS. Si un seul modèle correspond, je l’affiche avec ses étages. Si PLUSIEURS correspondent (34 macarons, c’est 4 étages sur un modèle et 3 sur un autre), je te les LISTE TOUS : trancher en silence reviendrait à décider à ta place. Si AUCUN palier ne correspond, je te dis « montage sur mesure » — sans arrondir au palier voisin, alors que ce serait facile. Et si la répartition n’est pas entière (100 macarons sur 3 pyramides), je te signale que tes pyramides ne seront PAS identiques, au lieu de te laisser croire à un montage équilibré qui n’existe pas. LA RÈGLE QUE J’AI FIGÉE : un nombre d’étages INVENTÉ serait PIRE qu’une absence — il t’enverrait monter le MAUVAIS présentoir le jour J, devant ton client. Une donnée manquante te coûte un aller-retour dans « Modifier » ; une donnée FAUSSE te coûte un événement raté. Le silence est le moindre mal ; le mensonge, jamais. Enfin, pour un bloc plat (non sécable), je n’affiche AUCUN étage : parler d’étages n’aurait aucun sens. Suite : 1397 → 1437 assertions vertes.';
 
 // ============================================================
@@ -11198,8 +11198,24 @@ function partFlowRenderBoxes(){
   // boîtes assez grandes pour la quantité, triées par capacité croissante (la plus juste d'abord)
   const elig=(cx.boxes||[]).filter(b=>capOf(b)>=q).sort((a,b)=>capOf(a)-capOf(b));
   if(!elig.length){
+    // [v1357] LE SYSTÈME N'A PAS À IMPOSER SA CONFIGURATION À LA RÉALITÉ DE BEN.
+    //
+    // Avant : « Aucune boîte ne contient 78 coques. Réduis la quantité. » — l'app ORDONNAIT à Ben
+    // de plier sa réalité à une liste de boîtes saisie un jour, pour d'autres besoins. Or ce n'est
+    // pas sa quantité qui est fausse : c'est SA BOÎTE PONCTUELLE QUI MANQUE.
+    //
+    // Un blocage qui n'offre AUCUNE SORTIE force l'utilisateur à mentir à son propre outil (saisir
+    // 30 au lieu de 78, ou abandonner la saisie) — et un outil auquel on ment cesse de mesurer quoi
+    // que ce soit. La donnée qu'il protégeait, il la détruit.
+    //
+    // RÈGLE GRAVÉE (v1357) : UNE CONTRAINTE SANS ÉCHAPPATOIRE PRODUIT DES DONNÉES FAUSSES.
+    // Mieux vaut une boîte créée à la volée qu'une quantité falsifiée pour satisfaire le formulaire.
     const maxCap=Math.max(0,...(cx.boxes||[]).map(capOf));
-    zone.innerHTML=`<div class="note" style="color:#b3261e">Aucune boîte ne contient ${qty(q)} ${esc(uniteLabel(cx.ctx,q))}${maxCap?` (la plus grande fait ${maxCap}).`:'.'} Réduis la quantité.</div>`;
+    zone.innerHTML=`<div class="note" style="color:#b3261e;margin-bottom:8px">Aucune boîte ne contient ${qty(q)} ${esc(uniteLabel(cx.ctx,q))}${maxCap?` (la plus grande fait ${maxCap}).`:'.'}</div>
+      <button class="btn gold sm" style="width:100%;justify-content:center" onclick="partFlowNouvelleBoite(${q})">
+        📦 Créer une boîte de ${qty(q)} ${esc(uniteLabel(cx.ctx,q))}
+      </button>
+      <div class="note" style="font-size:.74rem;margin-top:6px;color:#9a8a82">Ou réduis la quantité pour utiliser une boîte existante.</div>`;
     return;
   }
   zone.innerHTML = elig.map(b=>{
@@ -11210,6 +11226,83 @@ function partFlowRenderBoxes(){
       📦 ${esc(b.nom)} <span style="font-size:.72rem;color:${sel?'#fff':'#9a8a82'}">${cap} ${gf?'GF':'std'}</span>${sel?' ✓':''}</button>`;
   }).join('');
 }
+// [v1357] CRÉER UNE BOÎTE À LA VOLÉE, sans quitter le flux de rangement.
+//
+// LE POINT DÉLICAT : Ben est au milieu d'un rangement (quantité choisie, lot en cours). Si créer une
+// boîte le renvoyait dans l'écran « Réglages → Boîtes », il perdrait tout et devrait recommencer.
+// La création se fait donc EN PLACE, et le flux reprend exactement où il en était — la nouvelle
+// boîte étant automatiquement sélectionnée puisqu'elle a été créée POUR cette quantité.
+async function partFlowNouvelleBoite(qte){
+  if(!_partFlow || !_placeCtx) return;
+  const cx = _placeCtx;
+  const gf = cx.ctx.grandFormat;
+  const q  = Math.max(1, Math.round(+qte || _partFlow.qte || 0));
+  if(q <= 0) return;
+
+  // Nom par défaut : la capacité, comme pour les boîtes existantes. Ben peut le changer.
+  const nomDefaut = `Boîte ${q}${gf ? ' GF' : ''}`;
+
+  openModal(`<h3>📦 Nouvelle boîte</h3>
+    <p class="note">Elle contiendra <b>${qty(q)} ${esc(uniteLabel(cx.ctx, q))}</b> et sera ajoutée à tes boîtes.
+    Tu pourras la retrouver et la modifier dans les réglages.</p>
+    <div class="field"><label>Nom</label>
+      <input id="nb_nom" value="${esc(nomDefaut)}" placeholder="ex : Bac traiteur"></div>
+    <div class="field"><label>Capacité — ${gf ? 'grand format' : 'standard'}</label>
+      <input type="number" step="1" min="1" id="nb_cap" value="${q}"></div>
+    <p class="note" style="font-size:.74rem">Capacité pré-remplie avec ta quantité (${qty(q)}). Tu peux la mettre plus haut si la boîte est plus grande.</p>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn" onclick="partFlowNouvelleBoiteSave()">Créer et utiliser</button>
+    </div>`);
+  // On mémorise le contexte pour le save (le modal n'a pas accès aux closures).
+  window._nbCtx = { gf, q };
+}
+
+async function partFlowNouvelleBoiteSave(){
+  const c = window._nbCtx; if(!c || !_partFlow || !_placeCtx) return;
+  const nom = (val('nb_nom') || '').trim();
+  const cap = Math.max(1, Math.round(+val('nb_cap') || 0));
+  if(!nom){ toast('Nom requis'); return; }
+
+  // [v1357] La capacité doit couvrir la quantité — sinon on recréerait le blocage qu'on répare.
+  if(cap < c.q){
+    toast(`La capacité (${cap}) doit couvrir tes ${qty(c.q)}`);
+    return;
+  }
+
+  // Un nom déjà pris écraserait une boîte existante : on refuse plutôt que de la modifier en douce.
+  try{
+    const dejaLa = await db.storageBoxes.where('nom').equals(nom).first();
+    if(dejaLa){ toast('Ce nom existe déjà — choisis-en un autre'); return; }
+  }catch(e){ swallow(e,'partFlowNouvelleBoiteSave check'); }
+
+  const o = { nom, L:0, l:0, h:0,
+    capacite:   c.gf ? 0   : cap,
+    capaciteGF: c.gf ? cap : 0,
+    stockVide: 1 };   // au moins une exemplaire dispo, puisque Ben l'a sous la main
+
+  try{
+    await db.storageBoxes.add(o);
+  }catch(e){
+    swallow(e,'partFlowNouvelleBoiteSave add');
+    toast('Création impossible');
+    return;
+  }
+
+  // On RECHARGE les boîtes dans le contexte du flux en cours, et on sélectionne la nouvelle.
+  // Sans ce rechargement, `cx.boxes` resterait l'ancienne liste et la boîte n'apparaîtrait pas.
+  try{
+    _placeCtx.boxes = await db.storageBoxes.toArray();
+  }catch(e){ swallow(e,'partFlowNouvelleBoiteSave reload'); }
+
+  closeModal();
+  _partFlow.boiteNom = nom;      // sélectionnée d'office : elle a été créée POUR cette quantité
+  _partFlow.equipKey = null;     // l'emplacement reste à choisir
+  partFlowRenderBoxes();
+  partFlowRenderEmps();
+  toast(`${nom} créée ✓`);
+}
+
 function partFlowPickBox(nom){
   if(!_partFlow) return;
   _partFlow.boiteNom=nom; _partFlow.equipKey=null;

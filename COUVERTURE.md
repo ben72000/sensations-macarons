@@ -2231,3 +2231,47 @@ désormais les médianes réelles (125 pces / 1,43 €) pour que Ben sache **à 
 La règle v1337 est gravée dans `COUVERTURE.md` depuis dix-neuf vagues. Je l'ai relue, citée, et
 **enfreinte quand même** — parce qu'un `&&` qui renvoie `false` sur un `null` ne *ressemble* pas à une
 affirmation. Les tests attrapent ce que la vigilance ne voit plus.
+
+---
+
+## v1357 — LA BOÎTE PONCTUELLE : quand la contrainte produit des données fausses
+
+Ben veut ranger **78 coques**. L'app répond : *« Aucune boîte ne contient 78 coques (la plus grande
+fait 30). **Réduis la quantité.** »*
+
+**Ce n'est pas sa quantité qui est fausse. C'est sa boîte ponctuelle qui manque.**
+
+### Le vrai problème : un blocage sans issue
+L'app **ordonnait** à Ben de plier sa réalité à une liste de boîtes saisie un jour, pour d'autres
+besoins. Un blocage qui n'offre **aucune sortie** force l'utilisateur à **mentir à son propre outil** —
+saisir 30 au lieu de 78, ou abandonner la saisie.
+
+> **RÈGLE GRAVÉE (v1357) : UNE CONTRAINTE SANS ÉCHAPPATOIRE PRODUIT DES DONNÉES FAUSSES.**
+> Un outil auquel on ment cesse de mesurer quoi que ce soit. La donnée qu'il protégeait, il la détruit.
+
+**Correctif :** un bouton *« Créer une boîte de 78 coques »* apparaît **dans l'écran de blocage**.
+La boîte est créée **en place** (pas de détour par les réglages, pas de perte du flux en cours), et
+elle est **automatiquement sélectionnée** — elle a été créée pour cette quantité.
+
+### ⚠️ ET LE MÊME BUG DE PLOMBERIE, POUR LA TROISIÈME FOIS
+En écrivant cette fonction, j'ai appelé **`modal(...)`**. `modal` **n'est pas une fonction** — c'est
+une **variable** (l'élément DOM). La vraie fonction est **`openModal()`**. **Le bouton aurait planté au
+premier clic de Ben.**
+
+**Trois bugs, trois causes, une seule famille :**
+
+| Vague | Bug | Nature |
+|---|---|---|
+| **v1351** | `db.lots` — table inexistante | Référence fantôme |
+| **v1352** | `case` manquant dans le dispatch | Câblage absent |
+| **v1357** | `modal()` au lieu de `openModal()` | Fonction fantôme |
+
+**Aucun ne casse à la lecture. Tous cassent à l'exécution.** Aucun test métier ne les attrape — ils
+ne concernent pas le **calcul**, mais le **câblage**.
+
+**Troisième test de plomberie :** `tests/v1357-onclick.test.js` vérifie que **chacune des 688
+fonctions appelées depuis un `onclick=`** existe réellement dans le fichier. Zéro bouton mort trouvé —
+mais je ne l'aurais pas su.
+
+*(Et le test avait lui-même le bug qu'il cherchait : ma regex comptait `onclick="if(...)"` comme un
+appel de fonction fantôme. Un faux positif dans le détecteur de faux appels.)*
