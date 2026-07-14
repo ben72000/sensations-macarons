@@ -2064,3 +2064,44 @@ pour beaucoup ; ma méthode aussi.
 C'est le deuxième test de **plomberie** de la session (après le schéma Dexie). Les deux vérifient la
 même chose sous deux angles : *le code peut-il seulement s'exécuter comme prévu ?* — une question
 distincte de *le calcul est-il juste ?*, et qu'aucun test métier ne pose.
+
+---
+
+## v1353 — LE GARDE-FOU QUI PUNISSAIT BEN POUR UNE DÉCISION QU'IL N'AVAIT PAS PRISE
+
+Le générateur est enfin **branché et fonctionnel** (v1352). Premier essai réel de Ben :
+« Génère moi un coffret » → **refus complet**, au motif que le critère « production » est indisponible.
+
+**Ben n'avait jamais demandé le critère production.** Il n'a précisé aucun critère.
+
+### La mécanique du bug
+```js
+const criteres = params.criteres || { association:1, rentabilite:1, production:1 };  // ← défaut
+if(productionIndisponible && criteres.production > 0) return REFUS;                  // ← bloque tout
+```
+Le code met les trois critères **par défaut**, puis se bloque lui-même sur l'un des trois. Une
+génération parfaitement faisable sur **deux critères solides** (associations mesurées + rentabilité)
+était refusée à cause d'un troisième que Ben n'avait jamais réclamé.
+
+> **RÈGLE GRAVÉE (v1353) : UN GARDE-FOU NE DOIT JAMAIS PUNIR L'UTILISATEUR POUR UNE DÉCISION QUE LE
+> CODE A PRISE À SA PLACE.** Le garde-fou était **juste** ; sa **portée** était fausse. Un défaut
+> implicite n'a pas la même valeur qu'un choix explicite — et les confondre transforme une aide en
+> obstacle.
+
+### Le correctif : dégradation gracieuse, jamais silencieuse
+| Situation | Comportement |
+|---|---|
+| Aucun critère précisé + production indispo | **Génère** sur les 2 critères disponibles, et **le dit** |
+| Production demandée **explicitement** + indispo | **Refuse** — générer en ignorant sa demande serait répondre à côté |
+| Mode « temps mesuré » actif | Les 3 critères tournent |
+
+Le retrait du critère est **affiché** (« Ces propositions reposent donc uniquement sur… ») : remplacer
+un blocage bruyant par une **omission silencieuse** aurait été pire que le bug d'origine — Ben aurait
+cru que ses coffrets tenaient compte du temps de production. C'est la règle v1347 appliquée ici :
+*un filtre silencieux est un mensonge par omission*.
+
+### Ce que ça dit sur les garde-fous
+Cette session en a produit beaucoup (seuil de signifiance, exclusion des pros, mesure non fiable,
+auto-vérification du journal…). Tous partagent le même risque : **être justes dans leur principe et
+faux dans leur portée**. Un garde-fou trop large ne protège plus, il empêche — et c'est d'autant plus
+insidieux qu'il a l'air d'un message sensé, pas d'un bug.

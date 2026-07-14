@@ -74,5 +74,31 @@ T('Vanille (mesure NON fiable) ne fait pas planter le critere production',
   ()=>genererPropositionsCoffret({coOccurrence:{rows:[{a:'Coco',b:'Vanille',lift:2.0,paniers:6,nClients:4,significatif:true}]},flavorRows,mesureParRec,taille:2,criteres:{production:1}}).propositions.length>0,
   true);
 
+console.log('\n-- [v1353] UN CRITERE PAR DEFAUT N EST PAS UN CRITERE DEMANDE');
+// Ben tape "genere moi un coffret" sans preciser de critere. Le code appliquait les trois par
+// defaut, constatait que "production" etait indisponible, et REFUSAIT TOUT -- bloquant une
+// generation faisable sur deux criteres solides, a cause d un troisieme jamais demande.
+// La garde etait juste ; sa PORTEE etait fausse.
+function simuleGarde(params, productionIndisponible){
+  const criteresExplicites = !!params.criteres;
+  const criteres = params.criteres || { association:1, rentabilite:1, production:1 };
+  let productionRetiree=false, refus=false;
+  if(productionIndisponible && criteres.production != null && +criteres.production > 0){
+    if(criteresExplicites){ refus=true; }
+    else { criteres.production=null; productionRetiree=true; }
+  }
+  return {refus, productionRetiree, actifs:Object.keys(criteres).filter(k=>criteres[k]!=null&&+criteres[k]>0)};
+}
+T('sans critere precise + production indispo -> GENERE quand meme (2 criteres)',
+  ()=>simuleGarde({}, true).actifs, ['association','rentabilite']);
+T('... et ne refuse PAS', ()=>simuleGarde({}, true).refus, false);
+T('... et SIGNALE le retrait (jamais une omission silencieuse -- v1347)',
+  ()=>simuleGarde({}, true).productionRetiree, true);
+T('production demandee EXPLICITEMENT + indispo -> refuse (repondre a cote serait pire)',
+  ()=>simuleGarde({criteres:{production:1}}, true).refus, true);
+T('mode mesure ACTIF -> les trois criteres tournent',
+  ()=>simuleGarde({}, false).actifs, ['association','rentabilite','production']);
+console.log('  -> une garde ne doit jamais punir l utilisateur pour une decision que le CODE a prise a sa place.');
+
 console.log('\n'+(ko?('ECHECS: '+ko+' -- '+ok+' ok'):('OK '+ok+'/'+ok+' -- vague 65 verte')));
 process.exit(ko?1:0);

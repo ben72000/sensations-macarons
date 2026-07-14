@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1352';
+const APP_VERSION = 'v1353';
 const APP_MAJ = 'LE MONTAGE PYRAMIDE, SANS OUVRIR « MODIFIER » — comme tu l’as demandé. Le résumé d’une commande événement affiche maintenant, d’un coup d’œil : le NOMBRE de pyramides, le TYPE (location ou vendue), le NOMBRE D’ÉTAGES, le modèle de présentoir, et le nombre de macarons par pyramide — avec la mention « pyramide entière » quand tous les plateaux sont utilisés. UNE DIFFICULTÉ QUE JE DOIS TE DIRE : le nombre d’étages N’EST PAS STOCKÉ sur la commande. Seuls le nombre de pyramides et le nombre de macarons le sont. Les étages se DÉDUISENT de tes modèles de présentoirs (chaque modèle a ses plateaux, donc ses paliers cumulés : 4, 11, 21, 34, 50, 69 pour ta pyramide transparente). JE NE DEVINE DONC PAS — JE DÉDUIS, ET JE DIS CE QUE JE SAIS. Si un seul modèle correspond, je l’affiche avec ses étages. Si PLUSIEURS correspondent (34 macarons, c’est 4 étages sur un modèle et 3 sur un autre), je te les LISTE TOUS : trancher en silence reviendrait à décider à ta place. Si AUCUN palier ne correspond, je te dis « montage sur mesure » — sans arrondir au palier voisin, alors que ce serait facile. Et si la répartition n’est pas entière (100 macarons sur 3 pyramides), je te signale que tes pyramides ne seront PAS identiques, au lieu de te laisser croire à un montage équilibré qui n’existe pas. LA RÈGLE QUE J’AI FIGÉE : un nombre d’étages INVENTÉ serait PIRE qu’une absence — il t’enverrait monter le MAUVAIS présentoir le jour J, devant ton client. Une donnée manquante te coûte un aller-retour dans « Modifier » ; une donnée FAUSSE te coûte un événement raté. Le silence est le moindre mal ; le mensonge, jamais. Enfin, pour un bloc plat (non sécable), je n’affiche AUCUN étage : parler d’étages n’aurait aucun sens. Suite : 1397 → 1437 assertions vertes.';
 
 // ============================================================
@@ -40642,17 +40642,31 @@ async function aiQueryGenererCoffret(params){
   // constater que ses coffrets "production" sortent toujours vides ou identiques aux autres.
   const productionIndisponible = !(settings.laborSource==='mesure' && settings.laborEnabled);
 
-  // Critères : par défaut les trois, à poids égal — mais Ben peut en isoler un ou deux.
-  // params.criteres = {association, rentabilite, production} avec des poids ou null.
+  // [v1353] UN CRITÈRE PAR DÉFAUT N'EST PAS UN CRITÈRE DEMANDÉ. La distinction est capitale, et
+  // son absence a produit le pire garde-fou possible : Ben tape « génère-moi un coffret » sans
+  // préciser de critère → le code applique les trois par défaut → constate que « production » est
+  // indisponible → et REFUSE TOUT. Je bloquais une génération parfaitement faisable sur deux
+  // critères solides, à cause d'un troisième que Ben n'avait JAMAIS demandé.
+  //
+  // RÈGLE GRAVÉE (v1353) : UN GARDE-FOU NE DOIT JAMAIS PUNIR L'UTILISATEUR POUR UNE DÉCISION
+  // QUE LE CODE A PRISE À SA PLACE. Le garde-fou était juste ; sa PORTÉE était fausse.
+  const criteresExplicites = !!params.criteres;
   const criteres = params.criteres || { association:1, rentabilite:1, production:1 };
   const taille = params.taille || 6;
 
-  // [v1351] Si Ben demande le critère PRODUCTION alors que le mode mesuré n'est pas actif,
-  // le dire AVANT de générer plutôt que de le laisser deviner pourquoi ses coffrets "production"
-  // ressemblent aux autres, ou pourquoi le critère semble ne rien changer. Un critère qui ne
-  // PEUT pas fonctionner doit le dire, pas se comporter comme s'il fonctionnait à vide.
+  // Si le critère production est indisponible ET qu'il vient du DÉFAUT (pas d'une demande de Ben),
+  // on le retire silencieusement du calcul et on DÉGRADE GRACIEUSEMENT sur les deux autres — en
+  // le DISANT ensuite, jamais en le cachant (v1347 : un filtre silencieux est un mensonge par omission).
+  let productionRetiree = false;
   if(productionIndisponible && criteres.production != null && +criteres.production > 0){
-    return aiSay(`${aiHero('—', 'Générateur de coffrets')}${aiSynth(`Le critère <b>production</b> a besoin du mode « temps mesuré » (réglages → main-d'œuvre), qui n'est pas actif. Je ne peux pas le calculer sans lui — active-le, ou lance la génération avec les deux autres critères.`, {icon:'⚠️', tone:'warn'})}`);
+    if(criteresExplicites){
+      // Ben a EXPLICITEMENT demandé le critère production : là, refuser est la bonne réponse.
+      // Générer en l'ignorant serait lui donner un résultat qui ne répond pas à sa question.
+      return aiSay(`${aiHero('—', 'Générateur de coffrets')}${aiSynth(`Le critère <b>production</b> a besoin du mode « temps mesuré » (réglages → main-d'œuvre), qui n'est pas actif. Je ne peux pas le calculer sans lui — active-le, ou relance sans ce critère.`, {icon:'⚠️', tone:'warn'})}`);
+    }
+    // Sinon : il vient du défaut. On l'écarte et on continue avec ce qu'on a.
+    criteres.production = null;
+    productionRetiree = true;
   }
 
   const { propositions, erreur } = genererPropositionsCoffret({
@@ -40665,6 +40679,13 @@ async function aiQueryGenererCoffret(params){
 
   const _labelCriteres = { association:'associations mesurées', rentabilite:'rentabilité', production:'temps de production' };
   const actifsLabel = Object.keys(criteres).filter(k=>criteres[k]!=null && +criteres[k]>0).map(k=>_labelCriteres[k]||k).join(' + ');
+
+  // [v1353] On DIT ce qu'on a retiré. Remplacer un blocage bruyant par une omission silencieuse
+  // serait pire que le bug d'origine : Ben croirait que ses coffrets tiennent compte du temps de
+  // production alors que non.
+  const noteProduction = productionRetiree
+    ? `${aiSynth(`Le critère <b>temps de production</b> n'a pas pu être pris en compte : il demande le mode « temps mesuré » (réglages → main-d'œuvre), qui n'est pas actif. Ces propositions reposent donc uniquement sur les <b>${esc(actifsLabel)}</b>.`, {icon:'ℹ️'})}`
+    : '';
 
   const blocs = propositions.map((p,i) => {
     const idx = i+1;
@@ -40682,6 +40703,7 @@ async function aiQueryGenererCoffret(params){
 
   return aiSay(`${aiHero(String(propositions.length), 'Proposition(s) de coffret', {sub:`basé sur ${actifsLabel}`, color:'var(--bordeaux)'})}
     ${aiSynth(`Calculé sur <b>${paniers.length} paniers</b> exploitables, uniquement des associations qui passent le seuil de signifiance (5 paniers, 3 clients).`, {icon:'🧺'})}
+    ${noteProduction}
     ${blocs}
     ${aiSynth(`Rien n'est créé automatiquement. Touche <b>« Créer ce coffret »</b> pour l'ajouter au catalogue — je te demanderai confirmation une dernière fois.`, {icon:'🎯'})}`);
 }
