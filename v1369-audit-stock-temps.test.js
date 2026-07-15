@@ -27,13 +27,14 @@ function swallow(){}
 const COQUES_PAR_MACARON = 2;
 
 // Fausse DB pilotée
-let _lots=[], _conso=[], _prods=[], _mats=[], _recipes=[], _sessions=[];
+let _lots=[], _conso=[], _prods=[], _mats=[], _recipes=[], _sessions=[], _losses=[];
 const db = {
   materialLots:    { toArray: async()=>_lots },
   prodConsumption: { toArray: async()=>_conso },
   productions:     { toArray: async()=>_prods },
   materials:       { toArray: async()=>_mats },
   recipes:         { toArray: async()=>_recipes },
+  materialLosses:  { toArray: async()=>_losses },
 };
 function prodSessLoad(){ return _sessions; }
 function ymdLocal(d){ return d.toISOString().slice(0,10); }
@@ -56,7 +57,7 @@ const codesTemps = async (j) => (await auditTemps(j)).map(a=>a.code);
 (async()=>{
   console.log('\n-- STOCK S1 : conso sur un lot fantôme → CRITIQUE');
   _mats=[{id:1,nom:'Amande'}]; _prods=[{id:10,lotProduction:'AMD-01'}];
-  _lots=[]; _conso=[{productionId:10,materialLotId:999,qteConsommee:5}];
+  _losses=[]; _lots=[]; _conso=[{productionId:10,materialLotId:999,qteConsommee:5}];
   await T('conso pointant un lot inexistant -> CONSO_LOT_FANTOME',
     async()=>(await codesStock()).includes('CONSO_LOT_FANTOME'), true);
 
@@ -66,16 +67,30 @@ const codesTemps = async (j) => (await auditTemps(j)).map(a=>a.code);
   await T('13 consommés sur un lot de 10 -> LOT_SURCONSOMME',
     async()=>(await codesStock()).includes('LOT_SURCONSOMME'), true);
 
-  console.log('\n-- STOCK S3 : restant incohérent → ALERTE');
-  _lots=[{id:1,materialId:1,qteInitiale:100,qteRestante:80}];   // 100-30=70 attendu, 80 affiché
+  console.log('\n-- STOCK S3 : affiché SUPÉRIEUR à l attendu → ALERTE (stock apparu de nulle part)');
+  _losses=[];
+  _lots=[{id:1,materialId:1,qteInitiale:100,qteRestante:80}];   // 100-30=70 attendu, 80 affiché = +10
   _conso=[{productionId:10,materialLotId:1,qteConsommee:30}];
-  await T('restant affiché ≠ initiale − consommé -> RESTANT_INCOHERENT',
-    async()=>(await codesStock()).includes('RESTANT_INCOHERENT'), true);
+  await T('affiché 80 > attendu 70 -> RESTANT_SUPERIEUR',
+    async()=>(await codesStock()).includes('RESTANT_SUPERIEUR'), true);
+
+  console.log('\n-- STOCK S3 : affiché INFÉRIEUR sans trace → INFO (ajustement probable, pas un mensonge)');
+  _lots=[{id:1,materialId:1,qteInitiale:100,qteRestante:60}];   // 70 attendu, 60 affiché = -10 non tracé
+  _conso=[{productionId:10,materialLotId:1,qteConsommee:30}];
+  await T('affiché 60 < attendu 70 sans trace -> ECART_NON_TRACE (info, pas alerte)',
+    async()=>(await codesStock()).includes('ECART_NON_TRACE'), true);
+
+  console.log('\n-- STOCK S3 : les PERTES et AJUSTEMENTS tracés sont déduits (pas de faux positif)');
+  _lots=[{id:1,materialId:1,qteInitiale:100,qteRestante:55,ajustInventaire:5}];  // 100-30-10-5=55
+  _conso=[{productionId:10,materialLotId:1,qteConsommee:30}];
+  _losses=[{lotId:1,qte:10}];
+  await T('initiale − conso − perte − ajust = affiché -> AUCUNE anomalie',
+    async()=>(await codesStock()).filter(c=>c.startsWith('RESTANT')||c==='ECART_NON_TRACE').length, 0);
 
   _lots=[{id:1,materialId:1,qteInitiale:100,qteRestante:70}];   // 100-30=70 : cohérent
-  _conso=[{productionId:10,materialLotId:1,qteConsommee:30}];
-  await T('restant = initiale − consommé -> aucune incohérence',
-    async()=>(await codesStock()).includes('RESTANT_INCOHERENT'), false);
+  _conso=[{productionId:10,materialLotId:1,qteConsommee:30}]; _losses=[];
+  await T('restant = initiale − consommé -> aucune anomalie',
+    async()=>(await codesStock()).filter(c=>c.startsWith('RESTANT')||c==='ECART_NON_TRACE').length, 0);
 
   console.log('\n-- STOCK S4 : restant négatif → CRITIQUE');
   _lots=[{id:1,materialId:1,qteInitiale:10,qteRestante:-3}]; _conso=[];

@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1369';
+const APP_VERSION = 'v1370';
 const APP_MAJ = 'LE MONTAGE PYRAMIDE, SANS OUVRIR « MODIFIER » — comme tu l’as demandé. Le résumé d’une commande événement affiche maintenant, d’un coup d’œil : le NOMBRE de pyramides, le TYPE (location ou vendue), le NOMBRE D’ÉTAGES, le modèle de présentoir, et le nombre de macarons par pyramide — avec la mention « pyramide entière » quand tous les plateaux sont utilisés. UNE DIFFICULTÉ QUE JE DOIS TE DIRE : le nombre d’étages N’EST PAS STOCKÉ sur la commande. Seuls le nombre de pyramides et le nombre de macarons le sont. Les étages se DÉDUISENT de tes modèles de présentoirs (chaque modèle a ses plateaux, donc ses paliers cumulés : 4, 11, 21, 34, 50, 69 pour ta pyramide transparente). JE NE DEVINE DONC PAS — JE DÉDUIS, ET JE DIS CE QUE JE SAIS. Si un seul modèle correspond, je l’affiche avec ses étages. Si PLUSIEURS correspondent (34 macarons, c’est 4 étages sur un modèle et 3 sur un autre), je te les LISTE TOUS : trancher en silence reviendrait à décider à ta place. Si AUCUN palier ne correspond, je te dis « montage sur mesure » — sans arrondir au palier voisin, alors que ce serait facile. Et si la répartition n’est pas entière (100 macarons sur 3 pyramides), je te signale que tes pyramides ne seront PAS identiques, au lieu de te laisser croire à un montage équilibré qui n’existe pas. LA RÈGLE QUE J’AI FIGÉE : un nombre d’étages INVENTÉ serait PIRE qu’une absence — il t’enverrait monter le MAUVAIS présentoir le jour J, devant ton client. Une donnée manquante te coûte un aller-retour dans « Modifier » ; une donnée FAUSSE te coûte un événement raté. Le silence est le moindre mal ; le mensonge, jamais. Enfin, pour un bloc plat (non sécable), je n’affiche AUCUN étage : parler d’étages n’aurait aucun sens. Suite : 1397 → 1437 assertions vertes.';
 
 // ============================================================
@@ -6528,7 +6528,18 @@ async function inventaireConfirm(list){
           for(const l of lots){
             if(reste<=1e-9) break;
             const pris = round3(Math.min(reste, +l.qteRestante));
-            if(pris>0){ await db.materialLots.update(l.id, {qteRestante: subQty(l.qteRestante, pris)}); reste = subQty(reste, pris); }
+            if(pris>0){
+              // [v1370] On TRACE le retrait d'inventaire sur le lot lui-même (cumul `ajustInventaire`).
+              // Sans cette trace, qteRestante baisse sans que rien ne l'explique côté données — et le
+              // contrôle S3 (restant = initiale − conso) crie à l'incohérence sur un ajustement LÉGITIME.
+              // Un manque d'inventaire n'est ni une consommation ni une perte formelle : c'est un
+              // ajustement, et il doit laisser une trace déductible.
+              await db.materialLots.update(l.id, {
+                qteRestante: subQty(l.qteRestante, pris),
+                ajustInventaire: round3((+l.ajustInventaire||0) + pris)
+              });
+              reste = subQty(reste, pris);
+            }
           }
         }
       }
@@ -20958,6 +20969,11 @@ async function auditStock(){
   const conso  = (await db.prodConsumption.toArray().catch(()=>[])).filter(c=>!c.annuleeInventaire);
   const prods  = await db.productions.toArray().catch(()=>[]);
   const mats   = await db.materials.toArray().catch(()=>[]);
+  // [v1370] Les pertes formelles (casse, péremption) décrémentent le stock SANS consommation.
+  // S3 doit les déduire, sinon un lot où on a jeté de la matière paraît « incohérent ».
+  const pertes = await db.materialLosses.toArray().catch(()=>[]);
+  const perteParLot = {};
+  (pertes||[]).forEach(pl=>{ if(pl.lotId!=null) perteParLot[pl.lotId] = round3((perteParLot[pl.lotId]||0) + (+pl.qte||0)); });
 
   const lotById  = id => lots.find(l=>+l.id===+id);
   const prodById = id => prods.find(p=>+p.id===+id);
@@ -20998,22 +21014,50 @@ async function auditStock(){
     }
   });
 
-  // ── INVARIANT S3 : qteRestante = qteInitiale − somme des consos actives ───────────
-  // LE contrôle-maître du stock. La quantité affichée doit égaler ce que l'arithmétique impose.
-  // Si elle diverge, soit une conso n'a pas décrémenté, soit une correction a oublié de recréditer :
-  // le stock affiché ment sur ce qu'il reste réellement.
+  // ── INVARIANT S3 : qteRestante = initiale − conso − pertes − ajustements ──────────
+  // LE contrôle-maître du stock — mais il ne vaut QUE s'il connaît TOUT ce qui décrémente un lot
+  // légitimement. Un lot baisse par TROIS chemins : la consommation (production), la perte formelle
+  // (casse/péremption, `materialLosses`), et l'ajustement d'inventaire (`ajustInventaire`, tracé
+  // depuis v1370). S3 déduit les trois.
+  //
+  // POURQUOI C'EST CAPITAL (leçon apprise en production, sur 65 faux positifs) : un contrôle qui crie
+  // au loup sur des ajustements LÉGITIMES détruit la confiance aussi sûrement qu'un vrai mensonge —
+  // Ben finirait par ignorer toutes les alertes, y compris les vraies. Un faux positif n'est pas un
+  // désagrément mineur : c'est du bruit qui masque le signal.
+  //
+  // L'HONNÊTETÉ SUR LA LIMITE : les ajustements d'inventaire ANTÉRIEURS à v1370 ne sont pas tracés
+  // (le champ n'existait pas). Pour ces lots, l'écart est INEXPLICABLE par les données — pas parce
+  // que le stock ment, mais parce que la trace manque. On NE crie donc PAS « incohérence » : on
+  // classe en INFO « écart non tracé », et seulement si l'affiché est INFÉRIEUR à l'attendu (un
+  // ajustement à la baisse non tracé). Un affiché SUPÉRIEUR à l'attendu, lui, reste une vraie alerte :
+  // du stock est apparu de nulle part.
   lots.forEach(lot=>{
     const initiale = round3(+lot.qteInitiale||0);
     const consomme = consoParLot[lot.id] || 0;
-    const attendu  = round3(initiale - consomme);
+    const perte    = perteParLot[lot.id] || 0;
+    const ajust    = round3(+lot.ajustInventaire||0);
+    const attendu  = round3(initiale - consomme - perte - ajust);
     const affiche  = round3(+lot.qteRestante||0);
-    // On tolère un écart d'arrondi. Au-delà, le stock affiché n'est pas celui que la conso impose.
-    if(Math.abs(affiche - attendu) > 0.01){
-      anomalies.push(_auditAnomalie('alerte','RESTANT_INCOHERENT',
+    const ecart    = round3(affiche - attendu);
+    if(Math.abs(ecart) <= 0.01) return;   // cohérent une fois tout déduit
+
+    if(ecart > 0.01){
+      // Affiché > attendu : du stock est apparu sans justification → vraie alerte.
+      anomalies.push(_auditAnomalie('alerte','RESTANT_SUPERIEUR',
         `Lot ${matNom(lot.materialId)} #${lot.id}`,
-        `Stock affiché ${qty(affiche)}, mais initiale ${qty(initiale)} − consommé ${qty(consomme)} `
-        +`= ${qty(attendu)}. Écart de ${qty(Math.abs(affiche-attendu))}.`,
-        'Le restant d’un lot doit Ã©galer sa quantitÃ© initiale moins ses consommations actives.',
+        `Stock affiché ${qty(affiche)} SUPÉRIEUR à l'attendu ${qty(attendu)} `
+        +`(initiale ${qty(initiale)} − conso ${qty(consomme)}${perte?` − perte ${qty(perte)}`:''}${ajust?` − ajust. ${qty(ajust)}`:''}). `
+        +`${qty(ecart)} de trop.`,
+        'Un lot ne peut pas afficher plus que son initiale moins ce qui en est sorti.',
+        null));
+    } else {
+      // Affiché < attendu : très probablement un ajustement d'inventaire non tracé (historique).
+      // INFO, pas alerte : ce n'est pas un mensonge, c'est une trace manquante.
+      anomalies.push(_auditAnomalie('info','ECART_NON_TRACE',
+        `Lot ${matNom(lot.materialId)} #${lot.id}`,
+        `Stock affiché ${qty(affiche)}, inférieur de ${qty(-ecart)} à l'attendu ${qty(attendu)} — `
+        +`probablement un ajustement d'inventaire antérieur au suivi (non tracé sur ce lot).`,
+        'Écart à la baisse sans trace : ajustement d\'inventaire probable, à confirmer.',
         null));
     }
   });
@@ -21075,7 +21119,7 @@ async function auditTemps(jours){
         anomalies.push(_auditAnomalie('critique','TACHE_DUREE_NEGATIVE',
           `${recNom(t.recipeId)} · ${(s.date||'').slice(0,10)}`,
           `Une tâche d'atelier finit avant d'avoir commencé — durée négative, moyenne faussée.`,
-          'La fin d’une tÃ¢che doit Ãªtre postÃ©rieure Ã  son dÃ©but.', null));
+          'La fin d’une tâche doit être postérieure à son début.', null));
       }
     });
   });
@@ -21093,7 +21137,7 @@ async function auditTemps(jours){
         recNom(rid),
         `Temps mesuré (${(e.minParMac).toFixed(2)} min/macaron) mais sur trop peu de données pour être fiable `
         +`(${e.minAtelier} min d'atelier, ${qty(e.nbMac)} macarons).`,
-        'Un temps par recette n’est fiable qu’avec assez d’atelier et de piÃ¨ces mesurÃ©s.', null));
+        'Un temps par recette n’est fiable qu’avec assez d’atelier et de pièces mesurés.', null));
     }
   });
 
@@ -21127,7 +21171,7 @@ async function auditTemps(jours){
         recNom(rid),
         `${Math.round(minAtelier)} min d'atelier mesurées mais aucun macaron produit sur ${jours} j — `
         +`ce temps ne se rattache à aucune sortie.`,
-        'Du temps d’atelier doit correspondre Ã  une production, sinon la rentabilitÃ© par parfum est faussÃ©e.',
+        'Du temps d’atelier doit correspondre à une production, sinon la rentabilité par parfum est faussée.',
         null));
     }
   });

@@ -2779,3 +2779,43 @@ temps, résultats groupés par domaine, triés par gravité, chaque anomalie poi
 ### Le test prouve que ça mord
 11 tests fabriquent des ruptures de chaîne et des ratios faux, et vérifient que chaque invariant se
 déclenche — sans faux positif sur des données saines. Même discipline que v1368.
+
+---
+
+## v1370 — LE DÉTECTEUR SE TROMPAIT : 65 faux positifs sur des ajustements légitimes
+
+Ben lance l'audit sur ses vraies données : **79 anomalies, dont 67 en stock**, presque toutes du type
+« Stock affiché ≠ initiale − consommé » (blancs d'œufs, poudre d'amande…).
+
+**La plupart étaient des faux positifs de MON détecteur.** Le contrôle S3 (v1369) ne connaissait qu'un
+seul chemin de décrémentation : la consommation de production. Or un lot baisse par **trois** chemins :
+1. la **consommation** (production) — connue
+2. la **perte formelle** (casse, péremption, `materialLosses`) — **ignorée**
+3. l'**ajustement d'inventaire** (manque constaté, `inventaireConfirm`) — **ignoré ET non tracé**
+
+Chaque lot où Ben avait jeté de la matière ou corrigé un inventaire à la baisse apparaissait donc à
+tort comme « incohérent ».
+
+> **RÈGLE GRAVÉE (v1370) : un contrôle qui crie au loup sur des données SAINES détruit la confiance
+> aussi sûrement qu'un vrai mensonge.** Un faux positif n'est pas un désagrément mineur : c'est du
+> bruit qui masque le signal — Ben finirait par ignorer TOUTES les alertes, y compris les vraies.
+> Le détecteur lui-même doit être tenu à la barre qu'il impose au reste du code.
+
+### Le correctif — deux temps
+1. **Tracer les ajustements** : `inventaireConfirm` écrit désormais `ajustInventaire` (cumul) sur
+   chaque lot décrémenté par un manque d'inventaire. Sans trace, l'écart est indéductible.
+2. **S3 déduit les trois chemins** : `attendu = initiale − conso − pertes − ajustements`.
+
+### L'honnêteté sur la limite (les données historiques)
+Les ajustements **antérieurs** à v1370 ne sont pas tracés — le champ n'existait pas. Pour ces lots,
+S3 ne peut pas prouver l'écart. Il ne CRIE donc pas « incohérence » :
+- **affiché < attendu, sans trace** → `ECART_NON_TRACE` en **INFO** (ajustement historique probable,
+  pas un mensonge)
+- **affiché > attendu** → `RESTANT_SUPERIEUR` en **ALERTE** (du stock apparu de nulle part : ça, c'est
+  toujours suspect)
+
+Un détecteur honnête distingue « je sais que c'est faux » de « je ne peux pas l'expliquer ».
+
+### Bonus : bug d'affichage corrigé
+Trois libellés du module temps étaient corrompus (« tÃ¢che », « rentabilitÃ© ») par un double
+encodage UTF-8 lors d'une manipulation antérieure. Réécrits proprement.
