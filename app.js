@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1362';
+const APP_VERSION = 'v1363';
 const APP_MAJ = 'LE MONTAGE PYRAMIDE, SANS OUVRIR « MODIFIER » — comme tu l’as demandé. Le résumé d’une commande événement affiche maintenant, d’un coup d’œil : le NOMBRE de pyramides, le TYPE (location ou vendue), le NOMBRE D’ÉTAGES, le modèle de présentoir, et le nombre de macarons par pyramide — avec la mention « pyramide entière » quand tous les plateaux sont utilisés. UNE DIFFICULTÉ QUE JE DOIS TE DIRE : le nombre d’étages N’EST PAS STOCKÉ sur la commande. Seuls le nombre de pyramides et le nombre de macarons le sont. Les étages se DÉDUISENT de tes modèles de présentoirs (chaque modèle a ses plateaux, donc ses paliers cumulés : 4, 11, 21, 34, 50, 69 pour ta pyramide transparente). JE NE DEVINE DONC PAS — JE DÉDUIS, ET JE DIS CE QUE JE SAIS. Si un seul modèle correspond, je l’affiche avec ses étages. Si PLUSIEURS correspondent (34 macarons, c’est 4 étages sur un modèle et 3 sur un autre), je te les LISTE TOUS : trancher en silence reviendrait à décider à ta place. Si AUCUN palier ne correspond, je te dis « montage sur mesure » — sans arrondir au palier voisin, alors que ce serait facile. Et si la répartition n’est pas entière (100 macarons sur 3 pyramides), je te signale que tes pyramides ne seront PAS identiques, au lieu de te laisser croire à un montage équilibré qui n’existe pas. LA RÈGLE QUE J’AI FIGÉE : un nombre d’étages INVENTÉ serait PIRE qu’une absence — il t’enverrait monter le MAUVAIS présentoir le jour J, devant ton client. Une donnée manquante te coûte un aller-retour dans « Modifier » ; une donnée FAUSSE te coûte un événement raté. Le silence est le moindre mal ; le mensonge, jamais. Enfin, pour un bloc plat (non sécable), je n’affiche AUCUN étage : parler d’étages n’aurait aucun sens. Suite : 1397 → 1437 assertions vertes.';
 
 // ============================================================
@@ -45536,6 +45536,13 @@ function lbRenderLignes(prodId){
           onclick="lbPickEmp(${l.uid})">${emp ? `${emp.lettre} · ${esc(emp.nom)}` : '📍 Emplacement'}</button>
         ${tot > 0 ? `<span style="font-size:.72rem;color:#9a8a82">= ${qty(tot)}${multi ? ` (${l.copies} boîtes)` : ''}</span>` : ''}
         <button class="btn ghost sm" style="font-size:.75rem;color:#b3261e" onclick="lbDelLigne(${l.uid})">✕</button>
+        ${l._empOuvert ? `<div style="flex-basis:100%;padding:6px 0 2px">
+          ${EMPLACEMENTS.map(e => `<button class="btn ${l.equipKey === e.key ? 'gold' : 'ghost'} sm"
+            style="font-size:.74rem;margin:2px 4px 2px 0;display:inline-flex;align-items:center;gap:5px"
+            onclick="lbSetEmp(${l.uid},'${e.key}')">
+            <b style="background:${e.type === 'frigo' ? '#6aa3a0' : '#3b6ea5'};color:#fff;border-radius:5px;padding:0 5px">${e.lettre}</b>
+            ${e.icon} ${esc(e.nom)}${l.equipKey === e.key ? ' ✓' : ''}</button>`).join('')}
+        </div>` : ''}
       </div>`;
     }).join('') +
     `<div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
@@ -45557,26 +45564,40 @@ function lbSetLigne(uid, champ, valeur){
 }
 
 // Sélecteur d'emplacement pour UNE ligne. Réutilise EMPLACEMENTS (la source unique).
+// ════════════════════════════════════════════════════════════════════════════
+// [v1363] LE CRASH : UN MODAL PAR-DESSUS UN MODAL DÉTRUIT LE PREMIER.
+//
+// Ben : « En créant les boîtes dans l'onglet étiquettes groupées je subis un crash au moment
+// d'appuyer sur chaque bouton emplacement. À l'issue du crash je perds toutes les informations
+// qui étaient en attente de validation et dois recommencer depuis zéro. »
+//
+// LA CAUSE, ET ELLE EST ENTIÈREMENT DE MON FAIT : l'écran « Étiquettes groupées » EST LUI-MÊME
+// UN MODAL (`labelsBatchForm` appelle `openModal`). Mon `lbPickEmp` appelait `openModal` À SON
+// TOUR — or `openModal` fait `modal.innerHTML = html`. Il ÉCRASE le contenu du modal existant.
+//
+// Résultat : l'écran des étiquettes est DÉTRUIT. En fermant le sélecteur, Ben retrouve un modal
+// vide, et toutes ses lignes en attente sont perdues. Exactement ce qu'il décrit.
+//
+// RÈGLE GRAVÉE (v1363) : ON N'EMPILE PAS LES MODALS. `openModal` n'est pas une pile, c'est un
+// REMPLACEMENT — l'appeler depuis un modal ouvert détruit le contexte de travail en cours.
+// Un sélecteur qui interrompt une saisie doit s'afficher DANS la saisie, jamais par-dessus.
+//
+// LE CORRECTIF : le sélecteur s'affiche EN PLACE, dans la ligne, sans jamais toucher au modal.
+// ════════════════════════════════════════════════════════════════════════════
 function lbPickEmp(uid){
   const l = _lbLignes.find(x => x.uid === +uid);
   if(!l) return;
-  openModal(`<h3>📍 Emplacement</h3>
-    <p class="note">Où ranger ${(+l.copies || 1) > 1 ? `ces <b>${l.copies} boîtes</b>` : 'cette boîte'} ?</p>
-    <div>${EMPLACEMENTS.map(e => `
-      <button class="btn ${l.equipKey === e.key ? 'gold' : 'ghost'} sm"
-        style="min-width:46%;margin:3px 4px 3px 0;justify-content:flex-start;display:inline-flex;gap:6px"
-        onclick="lbSetEmp(${uid},'${e.key}')">
-        <b style="background:${e.type === 'frigo' ? '#6aa3a0' : '#3b6ea5'};color:#fff;border-radius:6px;padding:0 7px">${e.lettre}</b>
-        <span>${e.icon} ${esc(e.nom)}</span>${l.equipKey === e.key ? ' ✓' : ''}
-      </button>`).join('')}</div>
-    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+  // On bascule l'affichage du sélecteur de CETTE ligne (et on referme les autres).
+  _lbLignes.forEach(x => { if(x.uid !== +uid) x._empOuvert = false; });
+  l._empOuvert = !l._empOuvert;
+  lbRenderLignes(l.prodId);
 }
 
 function lbSetEmp(uid, key){
   const l = _lbLignes.find(x => x.uid === +uid);
   if(!l) return;
   l.equipKey = key;
-  closeModal();
+  l._empOuvert = false;   // on referme le sélecteur, on ne ferme PAS le modal
   lbRenderLignes(l.prodId);
 }
 
@@ -45636,10 +45657,12 @@ async function lbRangerEtImprimer(){
 }
 
 // « Oui, toutes au même endroit » → on marque la ligne comme confirmée et on repasse au contrôle.
+// [v1363] La confirmation de dispatch ÉCRASE l'écran des étiquettes (openModal = remplacement).
+// On ne peut donc PAS y revenir avec un simple `lbRenderLignes()` : le DOM n'existe plus.
+// Les lignes vivent dans `_lbLignes` (en mémoire, intactes) — il faut RECONSTRUIRE l'écran.
 function lbConfirmMulti(uid){
   const l = _lbLignes.find(x => x.uid === +uid);
   if(l) l._confirme = true;
-  closeModal();
   // On retire la ligne confirmée du lot de vérification en la scindant en boîtes identiques.
   if(l){
     const n = +l.copies || 1;
@@ -45665,9 +45688,36 @@ function lbDispatchIndividuel(uid){
     _lbLignes.push({ uid: _lbUid++, prodId: pid, copies: 1, pieces,
                      equipKey: (i === 0 ? l.equipKey : null), _boites: 1, _confirme: true });
   }
-  closeModal();
-  lbRenderLignes(pid);
-  toast(`${n} boîtes à placer individuellement`);
+  // [v1363] L'écran a été écrasé par la modale de confirmation : on le RECONSTRUIT.
+  // `_lbLignes` est intact (il vit en mémoire, pas dans le DOM) — Ben retrouve TOUTES ses lignes,
+  // avec les N boîtes désormais éclatées. Sans ça, il tombait sur un écran vide et devait tout
+  // ressaisir : exactement le crash qu'il a signalé.
+  lbRestaurerEcran(pid, `${n} boîtes à placer individuellement`);
+}
+
+// [v1363] Reconstruit l'écran « Étiquettes groupées » après une modale qui l'a écrasé, en
+// restaurant les lignes et les cases cochées depuis `_lbLignes` (la source de vérité).
+async function lbRestaurerEcran(prodIdFocus, msg){
+  // [v1363] PIÈGE : `labelsBatchForm()` fait `_lbLignes = []` (repartir propre à chaque ouverture).
+  // Si on l'appelle sans précaution, il EFFACE exactement ce qu'on cherche à restaurer.
+  // On sauvegarde donc les lignes AVANT, et on les remet APRÈS. Ce correctif contenait lui-même
+  // le bug qu'il corrigeait — la réinitialisation légitime d'une fonction devient destructrice
+  // quand on la rappelle dans un contexte qu'elle n'a pas prévu.
+  const _sauvegarde = _lbLignes.slice();
+  const _uidSauve = _lbUid;
+  await labelsBatchForm();          // rouvre l'écran — MAIS remet _lbLignes à []
+  _lbLignes = _sauvegarde;          // …on restaure
+  _lbUid = _uidSauve;
+  // Re-cocher les lots qui ont des lignes, et re-rendre celles-ci.
+  const pids = [...new Set(_lbLignes.map(l => l.prodId))];
+  pids.forEach(pid => {
+    const cb = document.querySelector('.lb-sel[data-prod="' + pid + '"]');
+    if(cb){ cb.checked = true; }
+    const f = document.getElementById('lbf_' + pid);
+    if(f) f.style.display = 'flex';
+    lbRenderLignes(pid);
+  });
+  if(msg) toast(msg);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
