@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1367';
+const APP_VERSION = 'v1369';
 const APP_MAJ = 'LE MONTAGE PYRAMIDE, SANS OUVRIR « MODIFIER » — comme tu l’as demandé. Le résumé d’une commande événement affiche maintenant, d’un coup d’œil : le NOMBRE de pyramides, le TYPE (location ou vendue), le NOMBRE D’ÉTAGES, le modèle de présentoir, et le nombre de macarons par pyramide — avec la mention « pyramide entière » quand tous les plateaux sont utilisés. UNE DIFFICULTÉ QUE JE DOIS TE DIRE : le nombre d’étages N’EST PAS STOCKÉ sur la commande. Seuls le nombre de pyramides et le nombre de macarons le sont. Les étages se DÉDUISENT de tes modèles de présentoirs (chaque modèle a ses plateaux, donc ses paliers cumulés : 4, 11, 21, 34, 50, 69 pour ta pyramide transparente). JE NE DEVINE DONC PAS — JE DÉDUIS, ET JE DIS CE QUE JE SAIS. Si un seul modèle correspond, je l’affiche avec ses étages. Si PLUSIEURS correspondent (34 macarons, c’est 4 étages sur un modèle et 3 sur un autre), je te les LISTE TOUS : trancher en silence reviendrait à décider à ta place. Si AUCUN palier ne correspond, je te dis « montage sur mesure » — sans arrondir au palier voisin, alors que ce serait facile. Et si la répartition n’est pas entière (100 macarons sur 3 pyramides), je te signale que tes pyramides ne seront PAS identiques, au lieu de te laisser croire à un montage équilibré qui n’existe pas. LA RÈGLE QUE J’AI FIGÉE : un nombre d’étages INVENTÉ serait PIRE qu’une absence — il t’enverrait monter le MAUVAIS présentoir le jour J, devant ton client. Une donnée manquante te coûte un aller-retour dans « Modifier » ; une donnée FAUSSE te coûte un événement raté. Le silence est le moindre mal ; le mensonge, jamais. Enfin, pour un bloc plat (non sécable), je n’affiche AUCUN étage : parler d’étages n’aurait aucun sens. Suite : 1397 → 1437 assertions vertes.';
 
 // ============================================================
@@ -20683,6 +20683,529 @@ function comptaPeriodeDatesLabel(k){
   if(!start) return 'toutes les données';
   return `du ${f(start)} au ${f(todayStr)}`;
 }
+// ════════════════════════════════════════════════════════════════════════════
+//  [v1368] LE DÉTECTEUR D'ANOMALIES COMPTABLES — « traquer toute déviance, tout mensonge »
+//
+//  Ben : « Ma plus grande frustration est d'avoir une app qui crée des mensonges en douce, des
+//  données non traçables. Si les chiffres mentent c'est la fin de la confiance. Construisons l'outil
+//  permettant de tracer à chaque instant toute déviance. »
+//
+//  LE PRINCIPE, ET IL EST FONDATEUR : ce détecteur NE RECALCULE PAS la compta. Il vérifie qu'elle
+//  ne SE CONTREDIT PAS. Un chiffre comptable ne peut pas mentir sans laisser une trace — il suffit
+//  de vérifier qu'il RETOMBE SUR SES LIGNES. Chaque contrôle est un INVARIANT : une égalité qui
+//  DOIT tenir. Si elle ne tient pas, l'anomalie désigne un mensonge précis, avec sa pièce et sa règle.
+//
+//  CE QU'IL NE FAIT PAS : il ne corrige rien tout seul. Réparer en douce serait un mensonge de plus.
+//  Il MONTRE, il localise, il nomme la règle violée — Ben décide.
+//
+//  RÈGLE (v1368) : quand un total ne retombe pas sur la somme de ses lignes, ce n'est pas un détail
+//  d'affichage — c'est le signe qu'une donnée a été inventée quelque part. On la traque jusqu'à sa pièce.
+// ════════════════════════════════════════════════════════════════════════════
+
+// Chaque anomalie : { gravite, code, piece, message, regle, ecart }
+//  gravite : 'critique' (le CA est faux) | 'alerte' (donnée incohérente) | 'info' (à surveiller)
+function _auditAnomalie(gravite, code, piece, message, regle, ecart){
+  return { gravite, code, piece, message, regle, ecart: (ecart==null?null:money2(ecart)) };
+}
+
+async function auditComptable(opts){
+  opts = opts || {};
+  const depuis = opts.depuis || null;
+  const jusqu  = opts.jusqu  || null;
+  const _in = d => { const s=(d||'').slice(0,10); if(depuis && s<depuis) return false; if(jusqu && s>jusqu) return false; return true; };
+
+  const anomalies = [];
+  const orders  = await db.orders.toArray().catch(()=>[]);
+  const markets = await db.markets.toArray().catch(()=>[]);
+
+  // ── INVARIANT 1 : la somme des paiements d'une commande ≤ son montant ────────────
+  // Un encaissement supérieur au dû est soit une double-saisie, soit un montant inventé.
+  // (On tolère l'égalité : payé = dû. On signale le DÉPASSEMENT.)
+  orders.forEach(o=>{
+    if(estReprise && estReprise(o)) return;   // les reprises ont leur propre invariant (n°5)
+    const pays = paiementsDe(o);
+    if(!pays.length) return;
+    const encaisse = money2(pays.reduce((s,p)=>s+((+p.montant)||0),0));
+    const du = money2(+o.montant||0);
+    if(encaisse > du + 0.01){
+      anomalies.push(_auditAnomalie('critique','ENCAISSE_SUP_DU',
+        (typeof orderNumber==='function'?orderNumber(o):('CMD-'+o.id)),
+        `Encaissé ${euro(encaisse)} pour une commande de ${euro(du)} — ${euro(encaisse-du)} de trop.`,
+        'La somme des paiements ne peut pas dépasser le montant de la commande.',
+        encaisse-du));
+    }
+  });
+
+  // ── INVARIANT 2 : une commande « Payé » a un encaissement réel ───────────────────
+  // « Payé » sans aucune écriture ET sans montant, c'est un statut qui ment.
+  // (La rétro-compat orderPaid tolère paiements:[] + Payé SI o.montant>0 : c'est une vraie recette.
+  //  L'anomalie, c'est Payé + montant 0 + aucun paiement : rien n'a été encaissé, le statut est faux.)
+  orders.forEach(o=>{
+    const pays = paiementsDe(o);
+    const aEcriture = pays.some(p=>(+p.montant));
+    if(o.paiement==='Payé' && !aEcriture && !(+o.montant>0)){
+      anomalies.push(_auditAnomalie('alerte','PAYE_SANS_MONTANT',
+        (typeof orderNumber==='function'?orderNumber(o):('CMD-'+o.id)),
+        `Commande marquée « Payé » mais aucun encaissement et montant nul.`,
+        'Un statut « Payé » doit correspondre à une recette réelle.', 0));
+    }
+  });
+
+  // ── INVARIANT 3 : tout encaissement porte une DATE et un MOYEN ───────────────────
+  // Une recette sans date ne peut être ventilée sur aucun mois → elle disparaît du CA d'un mois.
+  // Un moyen « Acompte » (ou vide) est un moyen inventé/manquant (leçon v1362/v1366).
+  orders.forEach(o=>{
+    paiementsDe(o).forEach(p=>{
+      if(!p || !(+p.montant)) return;
+      const ref = (typeof orderNumber==='function'?orderNumber(o):('CMD-'+o.id));
+      if(!p.date && !o.date){
+        anomalies.push(_auditAnomalie('critique','ENCAISSE_SANS_DATE', ref,
+          `Encaissement de ${euro(+p.montant)} sans aucune date — invisible dans le CA mensuel.`,
+          'Toute recette doit être datée pour tomber dans un mois.', +p.montant));
+      }
+      const moyen = (p.moyen||'').trim();
+      if(/^acompte$/i.test(moyen)){
+        anomalies.push(_auditAnomalie('alerte','MOYEN_EST_STATUT', ref,
+          `Encaissement de ${euro(+p.montant)} dont le moyen est « Acompte » — un statut, pas un moyen.`,
+          'Le moyen de paiement et le statut sont deux dimensions distinctes (v1362).', null));
+      }
+    });
+  });
+
+  // ── INVARIANT 4 : cohérence du solde (dû = encaissé + reste) ─────────────────────
+  // orderBalance doit toujours valoir montant - encaissé. Si le statut dit « Payé » mais qu'il
+  // reste un solde positif réel, le statut ment (ou l'inverse).
+  orders.forEach(o=>{
+    if(estReprise && estReprise(o)) return;
+    const solde = orderBalance(o);
+    const ref = (typeof orderNumber==='function'?orderNumber(o):('CMD-'+o.id));
+    if(o.paiement==='Payé' && solde > 0.01){
+      anomalies.push(_auditAnomalie('critique','PAYE_MAIS_SOLDE', ref,
+        `Marquée « Payé » mais il reste ${euro(solde)} à encaisser.`,
+        'Une commande « Payé » a un solde nul.', solde));
+    }
+  });
+
+  // ── INVARIANT 5 : une reprise d'historique EST une recette, datée et chiffrée ─────
+  // (leçon v1361 : les reprises font partie du CA. Ici on vérifie qu'elles sont exploitables.)
+  orders.forEach(o=>{
+    if(!(estReprise && estReprise(o))) return;
+    const ref = (typeof orderNumber==='function'?orderNumber(o):('CMD-'+o.id));
+    if(!(+o.montant>0)){
+      anomalies.push(_auditAnomalie('alerte','REPRISE_SANS_MONTANT', ref,
+        `Reprise d'historique sans montant — elle ne contribue à aucun CA.`,
+        'Une reprise déclarée doit porter le montant réellement encaissé à l’époque.', 0));
+    }
+    if(!o.date){
+      anomalies.push(_auditAnomalie('alerte','REPRISE_SANS_DATE', ref,
+        `Reprise d'historique sans date — impossible à rattacher à un exercice.`,
+        'Une reprise doit être datée pour être rattachée à son exercice.', +o.montant||0));
+    }
+  });
+
+  // ── INVARIANT 6 : un marché clos est cohérent (fond de caisse ≤ espèces) ──────────
+  // Si le fond de caisse dépasse les espèces comptées, la recette espèces calculée serait NÉGATIVE
+  // ou tronquée à 0 → du CA marché s'évapore (leçon v1360 : le fond se déduit des espèces).
+  markets.forEach(mk=>{
+    if(mk.statut!=='clos') return;
+    if(!_in(mk.date)) return;
+    const ca = mk.ca||{};
+    const fond = money2(+mk.fondCaisse||0);
+    const esp  = money2(+ca.especes||0);
+    const ref = 'MARCHE-'+mk.id+(mk.nom?(' '+mk.nom):'');
+    if(fond > esp + 0.01){
+      anomalies.push(_auditAnomalie('critique','FOND_SUP_ESPECES', ref,
+        `Fond de caisse ${euro(fond)} > espèces comptées ${euro(esp)} — la recette espèces serait faussée.`,
+        'Le fond de caisse se déduit des espèces ; il ne peut pas les dépasser.', fond-esp));
+    }
+    const totalCa = money2((+ca.especes||0)+(+ca.cb||0)+(+ca.autre||0));
+    if(mk.statut==='clos' && totalCa<=0){
+      anomalies.push(_auditAnomalie('info','MARCHE_CLOS_VIDE', ref,
+        `Marché clos sans aucune recette enregistrée.`,
+        'Un marché clos porte normalement une recette.', 0));
+    }
+  });
+
+  // ── INVARIANT 7 : le livre des recettes retombe sur le CA encaissé ───────────────
+  // LE contrôle-maître : deux chemins de calcul INDÉPENDANTS doivent donner le MÊME total.
+  // Le livre (livreDesRecettes) et la compta (computeAccounting) partent des mêmes données mais
+  // par des routes différentes. S'ils divergent, l'un des deux ment — et c'est invisible sans ça.
+  try{
+    const lignes = await livreDesRecettes(depuis, jusqu);
+    const totalLivre = money2(lignes.reduce((s,l)=>s+(+l.montant||0),0));
+    const compta = await computeAccounting(depuis||jusqu?{periodeStart:depuis,periodeEnd:jusqu}:{});
+    const totalCA = money2(compta.totalEncaisse||0);
+    // Le livre inclut les reprises (v1361), la compta les exclut (A4). On compare donc le livre
+    // SANS reprises au CA encaissé — même périmètre, sinon l'écart serait normal et trompeur.
+    const totalLivreSansReprises = money2(lignes
+      .filter(l=>l.canal!=='Reprise historique')
+      .reduce((s,l)=>s+(+l.montant||0),0));
+    const ecart = money2(totalLivreSansReprises - totalCA);
+    if(Math.abs(ecart) > 0.01){
+      anomalies.push(_auditAnomalie('critique','LIVRE_VS_CA',
+        'Période '+(depuis||'origine')+' → '+(jusqu||'ce jour'),
+        `Le livre des recettes (${euro(totalLivreSansReprises)} hors reprises) et le CA encaissé `
+        +`(${euro(totalCA)}) divergent de ${euro(Math.abs(ecart))}.`,
+        'Deux calculs indépendants des recettes doivent donner le même total.', ecart));
+    }
+  }catch(e){ swallow(e,'auditComptable livre-vs-ca'); }
+
+  // Tri : critique d'abord, puis alerte, puis info.
+  const rang = { critique:0, alerte:1, info:2 };
+  anomalies.sort((a,b)=> (rang[a.gravite]-rang[b.gravite]) || a.code.localeCompare(b.code));
+  return anomalies;
+}
+
+// ---------------------------------------------------------------------------
+// [v1368] L'ÉCRAN D'AUDIT. Un bouton, une passe sur les vraies données, la vérité brute.
+// ---------------------------------------------------------------------------
+async function auditComptableForm(){
+  const now = new Date();
+  const anneeDebut = now.getFullYear()+'-01-01';
+  openModal(`<h3>🔍 Contrôle de cohérence</h3>
+    <p class="note">Cet outil ne recalcule rien — il vérifie que tes données <b>ne se contredisent pas</b> :
+    comptabilité, chaîne de décrémentation du stock, et temps par recette.
+    Chaque anomalie pointe une pièce précise et la règle qu'elle enfreint. Rien n'est corrigé
+    automatiquement : <b>tu décides</b>.</p>
+    <div class="row2">
+      <div class="field"><label>Du</label><input type="date" id="au_depuis" value="${anneeDebut}"></div>
+      <div class="field"><label>Au</label><input type="date" id="au_jusqu" value=""></div>
+    </div>
+    <p class="note" style="font-size:.75rem">Laisse les dates vides pour auditer <b>tout l'historique</b>.</p>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="auditCompletLancer()">Lancer le contrôle complet</button>
+    </div>`);
+}
+
+async function auditComptableLancer(){
+  const depuis = val('au_depuis')||null;
+  const jusqu  = val('au_jusqu')||null;
+  openModal(`<h3>🔍 Contrôle en cours…</h3><p class="note">Lecture de la base…</p>`);
+  let anomalies=[];
+  try{ anomalies = await auditComptable({depuis, jusqu}); }
+  catch(e){ swallow(e,'auditComptableLancer'); toast('Contrôle impossible'); return; }
+
+  const nCrit = anomalies.filter(a=>a.gravite==='critique').length;
+  const nAlerte = anomalies.filter(a=>a.gravite==='alerte').length;
+  const nInfo = anomalies.filter(a=>a.gravite==='info').length;
+
+  if(!anomalies.length){
+    openModal(`<h3>✅ Aucune anomalie</h3>
+      <p class="note">Sur la période analysée, <b>tous les contrôles de cohérence passent</b> :
+      les encaissements retombent sur leurs commandes, le livre des recettes et le CA encaissé
+      concordent, les marchés sont cohérents.</p>
+      <p class="note" style="font-size:.78rem">C'est ça, la confiance : non pas une app qui promet
+      de ne jamais se tromper, mais une app capable de <b>se contrôler elle-même</b>.</p>
+      <div class="modal-actions"><button class="btn gold" onclick="closeModal()">Fermer</button></div>`);
+    return;
+  }
+
+  const couleur = g => g==='critique'?'#b3261e':(g==='alerte'?'#b06a1e':'#7a6a3b');
+  const label = g => g==='critique'?'CRITIQUE':(g==='alerte'?'ALERTE':'INFO');
+
+  const bloc = anomalies.map(a=>`
+    <div style="border-left:4px solid ${couleur(a.gravite)};background:#faf7f4;padding:8px 10px;margin:6px 0;border-radius:0 8px 8px 0">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
+        <b style="color:${couleur(a.gravite)};font-size:.72rem;letter-spacing:.04em">${label(a.gravite)}</b>
+        <span style="font-size:.74rem;color:#9a8a82">${esc(a.piece)}</span>
+      </div>
+      <div style="margin:3px 0;font-size:.9rem">${esc(a.message)}</div>
+      <div style="font-size:.74rem;color:#7a6a62;font-style:italic">Règle : ${esc(a.regle)}</div>
+    </div>`).join('');
+
+  openModal(`<h3>🔍 ${anomalies.length} anomalie(s)</h3>
+    <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+      ${nCrit?`<span style="background:#b3261e;color:#fff;padding:2px 10px;border-radius:12px;font-size:.78rem">${nCrit} critique(s)</span>`:''}
+      ${nAlerte?`<span style="background:#b06a1e;color:#fff;padding:2px 10px;border-radius:12px;font-size:.78rem">${nAlerte} alerte(s)</span>`:''}
+      ${nInfo?`<span style="background:#7a6a3b;color:#fff;padding:2px 10px;border-radius:12px;font-size:.78rem">${nInfo} info(s)</span>`:''}
+    </div>
+    <p class="note" style="font-size:.76rem">Les anomalies <b>critiques</b> faussent un chiffre comptable.
+    Les <b>alertes</b> signalent une donnée incohérente. Les <b>infos</b> sont à surveiller.</p>
+    <div style="max-height:52vh;overflow:auto">${bloc}</div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="auditComptableForm()">◂ Autre période</button>
+      <button class="btn gold" onclick="closeModal()">Fermer</button>
+    </div>`);
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [v1369] LE DÉTECTEUR ÉTENDU AU STOCK ET AU TEMPS
+//
+//  Ben : « Poursuis en développant cet outil dans les stocks, en particulier la décrémentation des
+//  matières premières consommées à mesure que je produis. Applique-le aussi à l'atelier chrono et au
+//  calcul du temps réel par recette produite. »
+//
+//  LA DIFFÉRENCE AVEC LA COMPTA : en compta, un total doit retomber sur ses lignes. En stock, c'est
+//  une CHAÎNE qui doit rester CONTINUE — chaque prélèvement correspond à une matière qui EXISTAIT, en
+//  quantité suffisante, au moment de la production. Un maillon rompu, et la traçabilité HACCP ment.
+//
+//  Pour le TEMPS, le mensonge est différent : un temps par recette est un RATIO (minutes ÷ macarons).
+//  Un ratio ment quand un de ses termes est absent ou non représentatif — du temps sans production,
+//  de la production sans temps, ou une moyenne calculée sur trop peu pour vouloir dire quelque chose.
+//
+//  MÊME DISCIPLINE QUE v1368 : on ne recalcule pas, on VÉRIFIE LA COHÉRENCE. On ne corrige rien —
+//  on montre, on localise, on nomme la règle. Ben décide.
+// ════════════════════════════════════════════════════════════════════════════
+
+// ---------------------------------------------------------------------------
+// AUDIT STOCK — la chaîne de décrémentation FIFO doit rester continue.
+// ---------------------------------------------------------------------------
+async function auditStock(){
+  const anomalies = [];
+  const lots   = await db.materialLots.toArray().catch(()=>[]);
+  const conso  = (await db.prodConsumption.toArray().catch(()=>[])).filter(c=>!c.annuleeInventaire);
+  const prods  = await db.productions.toArray().catch(()=>[]);
+  const mats   = await db.materials.toArray().catch(()=>[]);
+
+  const lotById  = id => lots.find(l=>+l.id===+id);
+  const prodById = id => prods.find(p=>+p.id===+id);
+  const matNom   = id => { const m=mats.find(x=>+x.id===+id); return m?(m.nom||('#'+id)):('#'+id); };
+
+  // ── INVARIANT S1 : toute consommation pointe un lot QUI EXISTE ───────────────────
+  // Une conso rattachée à un lot supprimé = un prélèvement fantôme. La matière a été « consommée »
+  // sur rien : la traçabilité (d'où vient ce macaron ?) est rompue.
+  conso.forEach(c=>{
+    if(c.materialLotId==null) return;   // conso sans lot (matière libre) : hors périmètre chaîne
+    if(!lotById(c.materialLotId)){
+      const p = prodById(c.productionId);
+      anomalies.push(_auditAnomalie('critique','CONSO_LOT_FANTOME',
+        p?(p.lotProduction||('PROD-'+p.id)):('PROD-'+c.productionId),
+        `Une production a prélevé ${qty(+c.qteConsommee||0)} sur un lot de matière qui n'existe plus.`,
+        'Toute consommation doit pointer un lot réel — sinon la traçabilité est rompue.',
+        null));
+    }
+  });
+
+  // ── INVARIANT S2 : la somme consommée sur un lot ≤ sa quantité initiale ───────────
+  // Si un lot a livré plus que ce qu'il contenait, une décrémentation FIFO a débordé : du stock
+  // a été prélevé là où il n'y en avait pas. C'est LE bug que Ben redoute — la conso « en douce »
+  // sur le mauvais stock.
+  const consoParLot = {};
+  conso.forEach(c=>{ if(c.materialLotId!=null) consoParLot[c.materialLotId] = round3((consoParLot[c.materialLotId]||0) + (+c.qteConsommee||0)); });
+  Object.keys(consoParLot).forEach(lotId=>{
+    const lot = lotById(lotId); if(!lot) return;   // déjà couvert par S1
+    const initiale = round3(+lot.qteInitiale||0);
+    const consomme = consoParLot[lotId];
+    if(consomme > initiale + 0.001){
+      anomalies.push(_auditAnomalie('critique','LOT_SURCONSOMME',
+        `Lot ${matNom(lot.materialId)} #${lot.id}`,
+        `Ce lot a livré ${qty(consomme)} alors qu'il n'en contenait que ${qty(initiale)} — `
+        +`${qty(consomme-initiale)} prélevé(s) sur du stock inexistant.`,
+        'La somme consommée sur un lot ne peut pas dépasser sa quantité initiale.',
+        null));
+    }
+  });
+
+  // ── INVARIANT S3 : qteRestante = qteInitiale − somme des consos actives ───────────
+  // LE contrôle-maître du stock. La quantité affichée doit égaler ce que l'arithmétique impose.
+  // Si elle diverge, soit une conso n'a pas décrémenté, soit une correction a oublié de recréditer :
+  // le stock affiché ment sur ce qu'il reste réellement.
+  lots.forEach(lot=>{
+    const initiale = round3(+lot.qteInitiale||0);
+    const consomme = consoParLot[lot.id] || 0;
+    const attendu  = round3(initiale - consomme);
+    const affiche  = round3(+lot.qteRestante||0);
+    // On tolère un écart d'arrondi. Au-delà, le stock affiché n'est pas celui que la conso impose.
+    if(Math.abs(affiche - attendu) > 0.01){
+      anomalies.push(_auditAnomalie('alerte','RESTANT_INCOHERENT',
+        `Lot ${matNom(lot.materialId)} #${lot.id}`,
+        `Stock affiché ${qty(affiche)}, mais initiale ${qty(initiale)} − consommé ${qty(consomme)} `
+        +`= ${qty(attendu)}. Écart de ${qty(Math.abs(affiche-attendu))}.`,
+        'Le restant d’un lot doit Ã©galer sa quantitÃ© initiale moins ses consommations actives.',
+        null));
+    }
+  });
+
+  // ── INVARIANT S4 : pas de restant négatif ────────────────────────────────────────
+  // Un stock négatif est impossible physiquement — c'est le symptôme franc d'une sur-décrémentation.
+  lots.forEach(lot=>{
+    const r = round3(+lot.qteRestante||0);
+    if(r < -0.001){
+      anomalies.push(_auditAnomalie('critique','RESTANT_NEGATIF',
+        `Lot ${matNom(lot.materialId)} #${lot.id}`,
+        `Stock restant NÉGATIF : ${qty(r)}. Une décrémentation a prélevé plus que disponible.`,
+        'Un stock ne peut pas être négatif.', null));
+    }
+  });
+
+  // ── INVARIANT S5 : une production « faite » a consommé de la matière ──────────────
+  // Une production terminée avec une recette et des pièces, mais SANS aucune consommation, n'a rien
+  // décrémenté : le stock n'a pas bougé alors que la matière a bien été utilisée. Info (pas critique :
+  // certains lots anciens sont pré-migration), mais à surveiller — c'est du stock qui ne se vide pas.
+  const consoParProd = {};
+  conso.forEach(c=>{ consoParProd[c.productionId] = (consoParProd[c.productionId]||0) + 1; });
+  prods.forEach(p=>{
+    if(p.histo) return;                       // reprises : pas de conso attendue
+    if(p.recipeId==null || p.libre) return;   // production libre : pas de recette liée
+    const q = (+p.qteReelle||+p.qteProduite||0);
+    if(!(q>0)) return;
+    const faite = (p.statut==='Terminée' || p.rangee || (+p.qteReelle>0));
+    if(faite && !consoParProd[p.id]){
+      anomalies.push(_auditAnomalie('info','PROD_SANS_CONSO',
+        (p.lotProduction||('PROD-'+p.id)),
+        `Production terminée (${qty(q)}) sans aucune consommation de matière enregistrée.`,
+        'Une production avec recette décrémente normalement de la matière.', null));
+    }
+  });
+
+  return anomalies;
+}
+
+// ---------------------------------------------------------------------------
+// AUDIT TEMPS — le temps par recette est un ratio ; ses deux termes doivent être réels.
+// ---------------------------------------------------------------------------
+async function auditTemps(jours){
+  jours = +jours || 90;
+  const anomalies = [];
+
+  const sessions = (typeof prodSessLoad==='function') ? prodSessLoad() : [];
+  const prods    = await db.productions.toArray().catch(()=>[]);
+  const recipes  = await db.recipes.toArray().catch(()=>[]);
+  const recNom   = rid => { const r=recipes.find(x=>+x.id===+rid); return r?(r.produitNom||('recette #'+rid)):('recette #'+rid); };
+
+  // ── INVARIANT T1 : une tâche chrono a un début ET une fin cohérents ───────────────
+  // Une tâche dont la fin précède le début produit une durée NÉGATIVE, qui empoisonne toute moyenne
+  // où elle entre. Une tâche sans fin (jamais arrêtée) n'est pas mesurée mais peut fausser l'affichage.
+  sessions.forEach(s=>{
+    (s.tasks||[]).forEach(t=>{
+      if(!t.start) return;
+      if(t.end && (new Date(t.end) < new Date(t.start))){
+        anomalies.push(_auditAnomalie('critique','TACHE_DUREE_NEGATIVE',
+          `${recNom(t.recipeId)} · ${(s.date||'').slice(0,10)}`,
+          `Une tâche d'atelier finit avant d'avoir commencé — durée négative, moyenne faussée.`,
+          'La fin d’une tÃ¢che doit Ãªtre postÃ©rieure Ã  son dÃ©but.', null));
+      }
+    });
+  });
+
+  // ── INVARIANT T2 : le temps par recette n'est présenté que s'il est FIABLE ────────
+  // prodTempsParParfum expose un flag `fiable` (assez de temps ET de pièces). Un temps NON fiable
+  // affiché comme une mesure est un mensonge par excès de confiance (leçon v1337 : zéro/peu n'est
+  // pas une mesure). On signale les recettes dont le temps existe mais n'est pas fiable.
+  let parRec = {};
+  try{ parRec = await prodTempsParParfum(jours); }catch(e){ swallow(e,'auditTemps tpp'); }
+  Object.keys(parRec).forEach(rid=>{
+    const e = parRec[rid];
+    if(e && e.minParMac>0 && !e.fiable){
+      anomalies.push(_auditAnomalie('info','TEMPS_NON_FIABLE',
+        recNom(rid),
+        `Temps mesuré (${(e.minParMac).toFixed(2)} min/macaron) mais sur trop peu de données pour être fiable `
+        +`(${e.minAtelier} min d'atelier, ${qty(e.nbMac)} macarons).`,
+        'Un temps par recette n’est fiable qu’avec assez d’atelier et de piÃ¨ces mesurÃ©s.', null));
+    }
+  });
+
+  // ── INVARIANT T3 : du temps d'atelier sur une recette SANS production mesurée ──────
+  // Si une recette a du temps d'atelier cumulé mais zéro macaron produit sur la fenêtre, le ratio est
+  // indéfini (division par zéro) : le temps existe mais ne se rattache à aucune sortie. Le temps est
+  // « perdu » comptablement — il ne coûtera à aucun macaron, faussant la rentabilité par parfum.
+  const msParRec = {};
+  const since = new Date(); since.setDate(since.getDate()-jours);
+  const sinceStr = (typeof ymdLocal==='function') ? ymdLocal(since) : since.toISOString().slice(0,10);
+  sessions.filter(s=>(s.date||'').slice(0,10) >= sinceStr).forEach(s=>{
+    if(typeof prodSessTempsParRecette!=='function') return;
+    const parRecSession = prodSessTempsParRecette(s);
+    Object.keys(parRecSession).forEach(rid=>{ msParRec[rid] = (msParRec[rid]||0) + parRecSession[rid]; });
+  });
+  const macParRec = {};
+  prods.forEach(p=>{
+    const c = p.composant||'complet';
+    if(c!=='complet' && c!=='assemble' && c!=='coques') return;
+    if(p.libre || p.recipeId==null) return;
+    const d = (p.date || (p.prodTimestamp||'').slice(0,10) || '');
+    if(String(d).slice(0,10) < sinceStr) return;
+    const q = (+p.qteReelle||+p.qteProduite||0); if(!(q>0)) return;
+    const macEq = (c==='coques') ? (q / (typeof COQUES_PAR_MACARON!=='undefined'?COQUES_PAR_MACARON:2)) : q;
+    macParRec[p.recipeId] = (macParRec[p.recipeId]||0) + macEq;
+  });
+  Object.keys(msParRec).forEach(rid=>{
+    const minAtelier = msParRec[rid]/60000;
+    if(minAtelier >= 20 && !(macParRec[rid]>0)){
+      anomalies.push(_auditAnomalie('alerte','TEMPS_SANS_PRODUCTION',
+        recNom(rid),
+        `${Math.round(minAtelier)} min d'atelier mesurées mais aucun macaron produit sur ${jours} j — `
+        +`ce temps ne se rattache à aucune sortie.`,
+        'Du temps d’atelier doit correspondre Ã  une production, sinon la rentabilitÃ© par parfum est faussÃ©e.',
+        null));
+    }
+  });
+
+  return anomalies;
+}
+
+// ---------------------------------------------------------------------------
+// [v1369] AUDIT GLOBAL — compta + stock + temps, en une passe.
+// ---------------------------------------------------------------------------
+async function auditComplet(opts){
+  opts = opts || {};
+  const out = { compta:[], stock:[], temps:[] };
+  try{ out.compta = await auditComptable(opts); }catch(e){ swallow(e,'auditComplet compta'); }
+  try{ out.stock  = await auditStock(); }catch(e){ swallow(e,'auditComplet stock'); }
+  try{ out.temps  = await auditTemps(opts.jours||90); }catch(e){ swallow(e,'auditComplet temps'); }
+  return out;
+}
+
+function _auditRenderBloc(titre, anomalies){
+  if(!anomalies.length){
+    return `<div style="margin:8px 0"><b>${esc(titre)}</b> — <span style="color:#3f7d52">✓ aucune anomalie</span></div>`;
+  }
+  const couleur = g => g==='critique'?'#b3261e':(g==='alerte'?'#b06a1e':'#7a6a3b');
+  const label = g => g==='critique'?'CRITIQUE':(g==='alerte'?'ALERTE':'INFO');
+  const items = anomalies.map(a=>`
+    <div style="border-left:4px solid ${couleur(a.gravite)};background:#faf7f4;padding:7px 9px;margin:5px 0;border-radius:0 8px 8px 0">
+      <div style="display:flex;justify-content:space-between;gap:8px">
+        <b style="color:${couleur(a.gravite)};font-size:.7rem;letter-spacing:.04em">${label(a.gravite)}</b>
+        <span style="font-size:.72rem;color:#9a8a82">${esc(a.piece)}</span>
+      </div>
+      <div style="margin:2px 0;font-size:.88rem">${esc(a.message)}</div>
+      <div style="font-size:.72rem;color:#7a6a62;font-style:italic">Règle : ${esc(a.regle)}</div>
+    </div>`).join('');
+  return `<div style="margin:10px 0"><b>${esc(titre)}</b> — ${anomalies.length} anomalie(s)</div>${items}`;
+}
+
+async function auditCompletLancer(){
+  const depuis = val('au_depuis')||null;
+  const jusqu  = val('au_jusqu')||null;
+  openModal(`<h3>🔍 Contrôle en cours…</h3><p class="note">Lecture de la base (compta, stock, temps)…</p>`);
+  let R = {compta:[],stock:[],temps:[]};
+  try{ R = await auditComplet({depuis, jusqu, jours:90}); }
+  catch(e){ swallow(e,'auditCompletLancer'); toast('Contrôle impossible'); return; }
+
+  const tout = [...R.compta, ...R.stock, ...R.temps];
+  const nCrit = tout.filter(a=>a.gravite==='critique').length;
+  const nAlerte = tout.filter(a=>a.gravite==='alerte').length;
+  const nInfo = tout.filter(a=>a.gravite==='info').length;
+
+  if(!tout.length){
+    openModal(`<h3>✅ Aucune anomalie</h3>
+      <p class="note">Sur la période analysée, <b>tous les contrôles passent</b> : la comptabilité
+      concorde, la chaîne de décrémentation du stock est continue, et les temps par recette sont fiables.</p>
+      <p class="note" style="font-size:.78rem">C'est ça, la confiance : une app capable de
+      <b>se contrôler elle-même</b>.</p>
+      <div class="modal-actions"><button class="btn gold" onclick="closeModal()">Fermer</button></div>`);
+    return;
+  }
+
+  openModal(`<h3>🔍 ${tout.length} anomalie(s)</h3>
+    <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+      ${nCrit?`<span style="background:#b3261e;color:#fff;padding:2px 10px;border-radius:12px;font-size:.78rem">${nCrit} critique(s)</span>`:''}
+      ${nAlerte?`<span style="background:#b06a1e;color:#fff;padding:2px 10px;border-radius:12px;font-size:.78rem">${nAlerte} alerte(s)</span>`:''}
+      ${nInfo?`<span style="background:#7a6a3b;color:#fff;padding:2px 10px;border-radius:12px;font-size:.78rem">${nInfo} info(s)</span>`:''}
+    </div>
+    <div style="max-height:56vh;overflow:auto">
+      ${_auditRenderBloc('📊 Comptabilité', R.compta)}
+      ${_auditRenderBloc('📦 Stock & décrémentation', R.stock)}
+      ${_auditRenderBloc('⏱ Temps par recette', R.temps)}
+    </div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="auditComptableForm()">◂ Autre période</button>
+      <button class="btn gold" onclick="closeModal()">Fermer</button>
+    </div>`);
+}
+
+
 async function computeAccounting(opts){
   opts=opts||{};
   const _periodeStart = opts.periodeStart || null; // filtre optionnel par date de début
@@ -26301,6 +26824,7 @@ async function renderCompta(){
      <button class="btn" onclick="view='rentabilite';setActiveView&&setActiveView('rentabilite');renderProfit()">📈 Analyse de rentabilité</button>
      <button class="btn ghost" onclick="exportComptaCSV()">⤓ Export comptable (.csv)</button>
      <button class="btn ghost" onclick="exportEncaissementsForm()" title="Livre des recettes — commandes ET marchés, chaîné et vérifiable">📕 Livre des recettes</button>
+     <button class="btn ghost" onclick="auditComptableForm()" title="Détecter toute incohérence comptable sur tes données réelles">🔍 Contrôle de cohérence</button>
      <button class="btn ghost" onclick="settingsForm()">⚙ Paramètres (taux, emballages)</button>
    </div>
 

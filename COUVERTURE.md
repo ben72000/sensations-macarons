@@ -2688,3 +2688,94 @@ Le livre, ajouté plus tard (v1360), ne l'avait pas. Incohérence que je n'avais
 - **Fermeture après impression** (`window.onafterprint`).
 - **On ne force plus `print()` automatiquement** : sur iPhone, la boîte d'impression forcée pouvait
   re-piéger. Ben déclenche l'impression via le bouton, ou ferme. Il garde la main.
+
+---
+
+## v1368 — LE DÉTECTEUR D'ANOMALIES COMPTABLES
+
+Ben : *« Ma plus grande frustration est d'avoir une app qui crée des mensonges en douce, des données
+non traçables. Si les chiffres mentent c'est la fin de la confiance. Construisons l'outil permettant
+de tracer à chaque instant toute déviance, tout mensonge. »*
+
+### Le principe, et il est fondateur
+Le détecteur **ne recalcule pas** la compta — il vérifie qu'elle **ne se contredit pas**. Un chiffre
+comptable ne peut pas mentir sans laisser de trace : il suffit de vérifier qu'il **retombe sur ses
+lignes**. Chaque contrôle est un **invariant** — une égalité qui DOIT tenir. Sa violation désigne une
+donnée inventée, avec sa pièce et la règle enfreinte.
+
+Il **ne corrige rien** tout seul : réparer en douce serait un mensonge de plus. Il montre, localise,
+nomme. **Ben décide.**
+
+### Les 7 invariants
+| # | Contrôle | Gravité | Ce qu'il attrape |
+|---|---|---|---|
+| 1 | encaissé ≤ dû | critique | double-saisie, montant inventé |
+| 2 | « Payé » ⇒ recette réelle | alerte | statut qui ment |
+| 3 | tout encaissement daté + moyen réel | critique/alerte | recette invisible ; « Acompte » comme moyen (v1362) |
+| 4 | « Payé » ⇒ solde nul | critique | statut incohérent avec le solde |
+| 5 | reprise = recette datée et chiffrée | alerte | reprise inexploitable (v1361) |
+| 6 | fond de caisse ≤ espèces | critique | CA marché évaporé (v1360) |
+| 7 | **livre des recettes = CA encaissé** | critique | **le contrôle-maître** |
+
+**L'invariant 7 est le cœur** : deux calculs **indépendants** des recettes (le livre `livreDesRecettes`
+et la compta `computeAccounting`) doivent donner le **même total**. S'ils divergent, l'un ment — et
+c'est invisible sans ce croisement. Les reprises sont exclues des deux côtés (même périmètre : le livre
+les inclut v1361, la compta les exclut A4).
+
+> **RÈGLE (v1368) : quand un total ne retombe pas sur la somme de ses lignes, ce n'est pas un détail
+> d'affichage — c'est le signe qu'une donnée a été inventée. On la traque jusqu'à sa pièce.**
+
+### Le test prouve que le détecteur MORD
+13 tests fabriquent des données **volontairement fausses** et vérifient que chaque invariant se
+déclenche — et qu'une base **saine** ne produit **aucun faux positif**. Un détecteur qui n'attrape
+jamais rien serait décoratif (leçon v1358).
+
+### Accès
+Comptabilité → **🔍 Contrôle de cohérence** → période (ou tout l'historique) → liste triée par gravité,
+chaque anomalie pointant sa pièce et sa règle.
+
+Ce n'est pas une app qui promet de ne jamais se tromper. C'est une app capable de **se contrôler
+elle-même** — et c'est ça qui rend la confiance.
+
+---
+
+## v1369 — LE DÉTECTEUR ÉTENDU AU STOCK ET AU TEMPS
+
+Ben : *« Poursuis en développant cet outil dans les stocks, en particulier la décrémentation des
+matières premières consommées à mesure que je produis. Applique-le aussi à l'atelier chrono et au
+calcul du temps réel par recette produite. »*
+
+### La nature du mensonge change selon le domaine
+| Domaine | Ce qui doit tenir |
+|---|---|
+| **Compta** (v1368) | un total retombe sur ses lignes |
+| **Stock** | une **chaîne** reste continue : chaque prélèvement = une matière qui existait, en quantité suffisante |
+| **Temps** | un **ratio** (min ÷ macarons) dont les deux termes sont réels et représentatifs |
+
+### Stock — 5 invariants de continuité de la chaîne FIFO
+| # | Contrôle | Gravité | Le mensonge attrapé |
+|---|---|---|---|
+| S1 | conso → lot existant | critique | prélèvement fantôme, traçabilité rompue |
+| S2 | Σ conso ≤ qté initiale du lot | critique | **décrémentation débordée — la conso « en douce » sur du stock inexistant** |
+| S3 | **qteRestante = initiale − Σ conso** | alerte | **le contrôle-maître : le stock affiché ment sur ce qu'il reste** |
+| S4 | restant ≥ 0 | critique | sur-décrémentation franche |
+| S5 | production faite ⇒ conso | info | stock qui ne se vide pas |
+
+**S2 est exactement le bug que Ben redoute** : une production qui prélève dans le mauvais stock via
+FIFO. Si un lot a livré plus qu'il ne contenait, la décrémentation a débordé — et ça se prouve
+arithmétiquement.
+
+### Temps — 3 invariants sur le ratio
+| # | Contrôle | Gravité | Le mensonge attrapé |
+|---|---|---|---|
+| T1 | fin ≥ début | critique | durée négative qui empoisonne la moyenne |
+| T2 | temps affiché ⇒ fiable | info | moyenne calculée sur trop peu (leçon v1337) |
+| T3 | temps d'atelier ⇒ production | alerte | temps rattaché à aucune sortie → rentabilité par parfum faussée |
+
+### Un seul écran, trois domaines
+Comptabilité → **🔍 Contrôle de cohérence** lance désormais l'audit **complet** : compta + stock +
+temps, résultats groupés par domaine, triés par gravité, chaque anomalie pointant sa pièce et sa règle.
+
+### Le test prouve que ça mord
+11 tests fabriquent des ruptures de chaîne et des ratios faux, et vérifient que chaque invariant se
+déclenche — sans faux positif sur des données saines. Même discipline que v1368.
