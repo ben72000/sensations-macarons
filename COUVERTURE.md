@@ -2660,3 +2660,31 @@ Appliquée **partout** : `p.moyen` **ET** `o.reglement` (le repli oublié en v13
 ### Tests mis à jour (pas affaiblis)
 v1360 et v1362 vérifiaient l'ancien code (`'Carte bancaire'`, l'ancienne formule acompte). Alignés
 sur le nouveau comportement — le changement était **légitime**, les tests devaient suivre.
+
+---
+
+## v1367 — LA PAGE D'IMPRESSION DU LIVRE ÉTAIT UN CUL-DE-SAC
+
+Ben : *« quand je clique sur impression livre de recette je n'ai aucun moyen de ressortir de cette
+page, je suis contraint de fermer complètement l'application pour ressortir. »*
+
+### La cause
+`imprimerLivreRecettes` ouvrait une page HTML **sans bouton de fermeture** et **sans fermeture après
+impression**. Sur iPhone en PWA, `window.open('_blank')` ne donne **pas de barre de navigateur** :
+aucune sortie → Ben piégé, obligé de tuer l'app.
+
+L'autre impression de l'app (le bilan mensuel) avait déjà `window.onafterprint = window.close()`.
+Le livre, ajouté plus tard (v1360), ne l'avait pas. Incohérence que je n'avais pas vue.
+
+> **RÈGLE (v1357, ré-appliquée) : une page sans issue est un cul-de-sac. Toute vue plein écran
+> ouverte par l'app doit offrir une sortie visible.**
+
+### Le correctif
+- **Barre d'actions** en haut de la page (« ✕ Fermer » + « 🖨 Imprimer »), **sticky**, **masquée à
+  l'impression** (`@media print`) pour ne pas salir le PDF.
+- **Bouton Fermer robuste** : `window.close()` (vraie popup) **avec repli `history.back()`** (si le
+  HTML s'est écrit dans la fenêtre courante — ce qui arrive quand la popup est bloquée, et explique
+  le piège).
+- **Fermeture après impression** (`window.onafterprint`).
+- **On ne force plus `print()` automatiquement** : sur iPhone, la boîte d'impression forcée pouvait
+  re-piéger. Ben déclenche l'impression via le bouton, ou ferme. Il garde la main.

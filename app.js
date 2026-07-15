@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1366';
+const APP_VERSION = 'v1367';
 const APP_MAJ = 'LE MONTAGE PYRAMIDE, SANS OUVRIR « MODIFIER » — comme tu l’as demandé. Le résumé d’une commande événement affiche maintenant, d’un coup d’œil : le NOMBRE de pyramides, le TYPE (location ou vendue), le NOMBRE D’ÉTAGES, le modèle de présentoir, et le nombre de macarons par pyramide — avec la mention « pyramide entière » quand tous les plateaux sont utilisés. UNE DIFFICULTÉ QUE JE DOIS TE DIRE : le nombre d’étages N’EST PAS STOCKÉ sur la commande. Seuls le nombre de pyramides et le nombre de macarons le sont. Les étages se DÉDUISENT de tes modèles de présentoirs (chaque modèle a ses plateaux, donc ses paliers cumulés : 4, 11, 21, 34, 50, 69 pour ta pyramide transparente). JE NE DEVINE DONC PAS — JE DÉDUIS, ET JE DIS CE QUE JE SAIS. Si un seul modèle correspond, je l’affiche avec ses étages. Si PLUSIEURS correspondent (34 macarons, c’est 4 étages sur un modèle et 3 sur un autre), je te les LISTE TOUS : trancher en silence reviendrait à décider à ta place. Si AUCUN palier ne correspond, je te dis « montage sur mesure » — sans arrondir au palier voisin, alors que ce serait facile. Et si la répartition n’est pas entière (100 macarons sur 3 pyramides), je te signale que tes pyramides ne seront PAS identiques, au lieu de te laisser croire à un montage équilibré qui n’existe pas. LA RÈGLE QUE J’AI FIGÉE : un nombre d’étages INVENTÉ serait PIRE qu’une absence — il t’enverrait monter le MAUVAIS présentoir le jour J, devant ton client. Une donnée manquante te coûte un aller-retour dans « Modifier » ; une donnée FAUSSE te coûte un événement raté. Le silence est le moindre mal ; le mensonge, jamais. Enfin, pour un bloc plat (non sécable), je n’affiche AUCUN étage : parler d’étages n’aurait aucun sens. Suite : 1397 → 1437 assertions vertes.';
 
 // ============================================================
@@ -20140,7 +20140,20 @@ async function imprimerLivreRecettes(depuis, jusqu){
     .ko { color: #b3261e; font-weight: bold; }
     .sig { margin-top: 10mm; font-size: 8.5pt; }
     .sig div { margin-top: 8mm; border-top: .5px solid #000; width: 60mm; padding-top: 1mm; }
+    /* [v1367] Barre d'actions — visible à l'écran, MASQUÉE à l'impression. C'est la SORTIE de secours :
+       sur iPhone en PWA, window.open('_blank') ne donne pas de barre de navigateur, donc sans ce
+       bouton Ben était piégé et devait fermer l'app entière. Une page sans issue est un cul-de-sac. */
+    .lr-bar { position: sticky; top: 0; display: flex; gap: 10px; justify-content: flex-end;
+      background: #f7f3ee; padding: 10px 12px; border-bottom: 1px solid #d9cec6; margin: -8px -8px 12px; }
+    .lr-bar button { font-size: 11pt; padding: 8px 18px; border-radius: 8px; border: 1px solid #b08d57;
+      background: #fff; color: #4a2318; cursor: pointer; }
+    .lr-bar button.pri { background: #4a2318; color: #fff; border-color: #4a2318; }
+    @media print { .lr-bar { display: none !important; } }
   </style></head><body>
+  <div class="lr-bar">
+    <button onclick="try{window.close();}catch(e){};try{history.back();}catch(e){}">✕ Fermer</button>
+    <button class="pri" onclick="window.print()">🖨 Imprimer</button>
+  </div>
   <div class="ent">
     <h1>LIVRE DES RECETTES</h1>
     <p><b>${esc(S.entrepriseNom || 'Sensations Macarons')}</b>${S.siret ? ` — SIRET ${esc(S.siret)}` : ''}</p>
@@ -20186,9 +20199,13 @@ async function imprimerLivreRecettes(depuis, jusqu){
   try{
     const w = window.open('', '_blank');
     if(!w){ toast('Autorise les fenêtres pop-up pour imprimer'); return; }
-    w.document.write(html);
+    // [v1367] La page se ferme d'elle-même après impression — et une barre « Fermer / Imprimer »
+    // (dans le HTML) donne TOUJOURS une sortie, même si Ben n'imprime pas. On n'appelle plus
+    // print() automatiquement : sur iPhone, la boîte d'impression forcée pouvait re-piéger.
+    const htmlAvecSortie = html.replace('</body>',
+      '<script>window.onafterprint=function(){window.close();};<\/script></body>');
+    w.document.write(htmlAvecSortie);
     w.document.close();
-    setTimeout(() => { try{ w.print(); }catch(e){} }, 400);
   }catch(e){
     swallow(e, 'imprimerLivreRecettes');
     toast('Impression impossible');
