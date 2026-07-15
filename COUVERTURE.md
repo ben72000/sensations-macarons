@@ -2537,3 +2537,42 @@ Les acomptes **déjà saisis** portent `moyen:'Acompte'`. Le vrai moyen est **in
 - **Colonne moyen** → « Non précisé » (la **vérité**), jamais « Acompte » (une catégorie de règlement
   **qui n'existe pas**)
 - **Colonne statut** → « Acompte » ✅ **conservé**
+
+---
+
+## v1364 — ATELIER CHRONO : arrêt direct depuis le raccourci + minuteur supprimé
+
+Ben, depuis la fenêtre raccourci (fenêtre flottante) : *« j'ai toutes les difficultés à arrêter des
+étapes en cours. Obligé d'ouvrir l'atelier complet. […] Je voudrais supprimer l'option qui lance un
+chronomètre. Les étapes semi-actives doivent pouvoir se cumuler. »*
+
+### 1. Le bouton ⏹ ne réagissait pas — MÊME DÉFAUT QUE v1363
+`⏹` appelait `prodTaskStopGuard`, qui pour une **meringue partagée** ouvrait un `openModal`. Mais la
+fenêtre flottante vit dans sa **propre couche** (`#chronoFloatHost`) : le modal s'ouvrait **derrière
+elle**, invisible et incliquable. Le bouton semblait mort.
+
+C'est **exactement** le défaut du crash étiquettes (v1363) : **une action qui ouvre un modal depuis
+une couche flottante**.
+
+> **RÈGLE (v1363, re-confirmée v1364) : une couche flottante ne déclenche pas de modal par-dessus elle.**
+
+Ben a tranché : *« supprimer la confirmation : arrêter directement »*. Nouveau `prodTaskStopDirect` —
+il fige le chrono, passe l'étape à l'historique, rafraîchit la fenêtre **sur place**. **Aucun modal**,
+donc aucune couche concurrente, donc plus de bouton mort. (`prodTaskStopGuard` reste pour l'atelier
+complet, où la confirmation a du sens.)
+
+### 2. Le minuteur supprimé
+Lancer une étape passive (foisonnement, cuisson…) ouvrait `atShowDurPrompt` : Ben devait **annoncer
+une durée à l'avance**, et le chrono se **mettait en pause à la sonnerie**. Retiré de `atLaunch`.
+
+Une passive démarre désormais **comme une active** : un chrono qui court et **se cumule**, qu'on
+arrête quand le vrai travail est fini.
+
+> **On MESURE le temps réel, on ne PRÉDIT plus une durée à l'avance** — c'est tout l'objet de l'atelier.
+
+Les libellés « minuteur » qui annonçaient ce comportement disparu ont été retirés du rendu (ils
+auraient trompé l'utilisateur).
+
+### 3. Le cumul des semi-actives : NON TOUCHÉ
+Ben : *« ça marche déjà, ne pas y toucher ».* `prodTaskStartSmart` (qui porte le cumul) reste le point
+de démarrage unique — vérifié par test : les passives passent par le **même** démarrage que les actives.

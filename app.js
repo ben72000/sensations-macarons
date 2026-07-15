@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1363';
+const APP_VERSION = 'v1364';
 const APP_MAJ = 'LE MONTAGE PYRAMIDE, SANS OUVRIR « MODIFIER » — comme tu l’as demandé. Le résumé d’une commande événement affiche maintenant, d’un coup d’œil : le NOMBRE de pyramides, le TYPE (location ou vendue), le NOMBRE D’ÉTAGES, le modèle de présentoir, et le nombre de macarons par pyramide — avec la mention « pyramide entière » quand tous les plateaux sont utilisés. UNE DIFFICULTÉ QUE JE DOIS TE DIRE : le nombre d’étages N’EST PAS STOCKÉ sur la commande. Seuls le nombre de pyramides et le nombre de macarons le sont. Les étages se DÉDUISENT de tes modèles de présentoirs (chaque modèle a ses plateaux, donc ses paliers cumulés : 4, 11, 21, 34, 50, 69 pour ta pyramide transparente). JE NE DEVINE DONC PAS — JE DÉDUIS, ET JE DIS CE QUE JE SAIS. Si un seul modèle correspond, je l’affiche avec ses étages. Si PLUSIEURS correspondent (34 macarons, c’est 4 étages sur un modèle et 3 sur un autre), je te les LISTE TOUS : trancher en silence reviendrait à décider à ta place. Si AUCUN palier ne correspond, je te dis « montage sur mesure » — sans arrondir au palier voisin, alors que ce serait facile. Et si la répartition n’est pas entière (100 macarons sur 3 pyramides), je te signale que tes pyramides ne seront PAS identiques, au lieu de te laisser croire à un montage équilibré qui n’existe pas. LA RÈGLE QUE J’AI FIGÉE : un nombre d’étages INVENTÉ serait PIRE qu’une absence — il t’enverrait monter le MAUVAIS présentoir le jour J, devant ton client. Une donnée manquante te coûte un aller-retour dans « Modifier » ; une donnée FAUSSE te coûte un événement raté. Le silence est le moindre mal ; le mensonge, jamais. Enfin, pour un bloc plat (non sécable), je n’affiche AUCUN étage : parler d’étages n’aurait aucun sens. Suite : 1397 → 1437 assertions vertes.';
 
 // ============================================================
@@ -9378,7 +9378,7 @@ async function atRenderBody(){
         <div class="at-now-txt"><div class="at-now-name">${esc(atShort(t.label))}</div>
           <div class="at-now-sub">${t.passive?'minuteur':'en cours'}</div></div>
         <span class="at-now-chrono" data-prodchrono="${t.id}">${atFmt(el)}</span>
-        <button class="at-now-stop" onclick="prodTaskStopGuard('${t.id}')">⏹</button></div>`;
+        <button class="at-now-stop" onclick="prodTaskStopDirect('${t.id}')">⏹</button></div>`;
     }
   });
   autres.forEach(t=>{
@@ -9399,7 +9399,7 @@ async function atRenderBody(){
   let nextHtml='';
   if(nxt){
     const why = estMut ? 'le temps sera partagé entre les parfums cochés' : (last ? 'suite habituelle' : 'tu commences souvent par là');
-    const mini = prodIsPassive(nxt)?'<span class="at-next-mini">minuteur</span>':'';
+    const mini = '';   // [v1364] plus de minuteur : une passive est un chrono normal
     nextHtml = `<button class="at-next" onclick="atLaunch('${escJs(nxt)}')">
       <span class="at-next-dot"></span><span>${esc(nxt)}${mini}</span><span class="at-next-why">${why}</span></button>`;
   }
@@ -9420,7 +9420,7 @@ async function atRenderBody(){
     listeHtml = prodSortPhases(Object.keys(groups)).map(phase=>{
       const g=groups[phase];
       return `<div class="at-grp"><div class="at-grp-phase" style="color:${g.color}">${esc(phase)}</div>
-        ${g.items.map(l=>`<button class="at-grp-task" onclick="atLaunch('${escJs(l)}')"><span class="at-d"></span>${esc(l)}${prodIsPassive(l)?'<span class="at-pp">minuteur</span>':''}</button>`).join('')}</div>`;
+        ${g.items.map(l=>`<button class="at-grp-task" onclick="atLaunch('${escJs(l)}')"><span class="at-d"></span>${esc(l)}</button>`).join('')}</div>`;
     }).join('');
   }
 
@@ -9469,9 +9469,14 @@ function _atParfumsPourLancement(){
 // Lancer une étape : semi-passive → on demande la durée d'abord ; sinon on lance directement.
 let _atPendingPassive=null;
 function atLaunch(label){
-  if(prodIsPassive(label) && _atPendingPassive!==label){
-    _atPendingPassive=label; atShowDurPrompt(label); return;
-  }
+  // [v1364] LE MINUTEUR SUPPRIMÉ. Avant, lancer une étape passive (foisonnement, cuisson…)
+  // ouvrait `atShowDurPrompt` : Ben devait annoncer une durée À L'AVANCE, et le chrono se mettait
+  // en PAUSE à la sonnerie. Ben : « je voudrais supprimer l'option qui lance un chronomètre […]
+  // les étapes semi-actives doivent pouvoir se cumuler. »
+  //
+  // Une étape passive démarre désormais comme une étape ACTIVE : un chrono qui court et se cumule,
+  // qu'on arrête quand le vrai travail est fini — pas quand une minuterie devinée d'avance sonne.
+  // On ne demande plus de durée : on MESURE, on ne PRÉDIT pas (c'est tout l'objet de l'atelier).
   _atPendingPassive=null;
   const parfs=_atParfumsPourLancement();
   prodTaskStartSmart(label, {recipeId: parfs.length===1?parfs[0]:null, parfums: parfs});
@@ -52842,6 +52847,32 @@ async function _prodArretSuspectMutualise(t){
 
 // Point d'entrée appelé par le bouton ⏹ de l'onglet mutualisé (et du tableau blanc).
 // Si l'arrêt est suspect → modale de confirmation ; sinon → arrêt direct.
+// [v1364] ARRÊT DIRECT depuis la fenêtre raccourci (fenêtre flottante).
+//
+// Ben : « quand je fais mes saisies depuis la fenêtre raccourci j'ai toutes les difficultés à
+// arrêter des étapes en cours. Obligé d'ouvrir l'atelier complet. » — LA CAUSE : le bouton ⏹
+// appelait `prodTaskStopGuard`, qui pour une meringue partagée ouvrait un `openModal`. Mais la
+// fenêtre flottante vit dans sa PROPRE couche (`#chronoFloatHost`) : le modal s'ouvrait DERRIÈRE
+// elle, invisible et incliquable. Le bouton semblait « ne rien faire ».
+//
+// C'est le même défaut que le crash des étiquettes (v1363) : une action qui ouvre un modal depuis
+// une couche flottante. RÈGLE (v1363, confirmée ici) : une couche flottante ne déclenche pas de
+// modal par-dessus elle.
+//
+// Ben a tranché : « supprimer la confirmation : arrêter directement ». On arrête SANS garde-fou —
+// le chrono se fige, l'étape passe à l'historique, la fenêtre se rafraîchit sur place. Pas de modal,
+// donc pas de couche concurrente, donc plus de bouton mort.
+function prodTaskStopDirect(taskId){
+  try{
+    const s = prodSessActive(); if(!s) return;
+    const t = (s.tasks||[]).find(x=>String(x.id)===String(taskId));
+    if(!t || t.end) return;
+    prodTaskStop(taskId);
+    if(typeof chronoFloatRenderBody==='function') chronoFloatRenderBody();
+    if(typeof prodRenderBoard==='function' && document.getElementById('prodBoardHost')) prodRenderBoard();
+  }catch(e){ swallow(e,'prodTaskStopDirect'); }
+}
+
 async function prodTaskStopGuard(taskId){
   try{
     const s = prodSessActive(); if(!s){ return; }
@@ -55074,7 +55105,7 @@ async function prodRenderBoard(){
   let nextHtml='';
   if(nxt){
     const why = estMut ? 'le temps sera partagé entre les parfums cochés' : (last ? 'suite habituelle' : 'tu commences souvent par là');
-    const mini = prodIsPassive(nxt)?'<span class="at-next-mini">minuteur</span>':'';
+    const mini = '';   // [v1364] plus de minuteur : une passive est un chrono normal
     nextHtml = `<button class="at-next" onclick="atLaunch('${escJs(nxt)}')">
       <span class="at-next-dot"></span><span>${esc(nxt)}${mini}</span><span class="at-next-why">${why}</span></button>`;
   }
@@ -55090,7 +55121,7 @@ async function prodRenderBoard(){
     listeHtml = prodSortPhases(Object.keys(groups)).map(phase=>{
       const g=groups[phase];
       return `<div class="at-grp"><div class="at-grp-phase" style="color:${g.color}">${esc(phase)}</div>
-        ${g.items.map(l=>`<button class="at-grp-task" onclick="atLaunch('${escJs(l)}')"><span class="at-d"></span>${esc(l)}${prodIsPassive(l)?'<span class="at-pp">minuteur</span>':''}</button>`).join('')}</div>`;
+        ${g.items.map(l=>`<button class="at-grp-task" onclick="atLaunch('${escJs(l)}')"><span class="at-d"></span>${esc(l)}</button>`).join('')}</div>`;
     }).join('');
   }
   const suggBloc = `<div class="pb-sugg">
