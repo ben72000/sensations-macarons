@@ -53,7 +53,9 @@ console.log('      -> « je ne sais pas » se dit null, jamais « Acompte ».');
 
 console.log('\n-- LE LEGACY : les acomptes DEJA saisis portent moyen:"Acompte"');
 T('le livre neutralise le moyen legacy « Acompte »',
-  () => CODE.includes("(p.moyen === 'Acompte') ? null : p.moyen"), true);
+  // [v1366] la neutralisation passe desormais par _normMoyen (qui renvoie null sur « Acompte »),
+  // et couvre AUSSI le repli o.reglement — le bug que Ben a re-signale apres v1362.
+  () => CODE.includes('_normMoyen(p.moyen)') && CODE.includes('_normMoyen(o.reglement)'), true);
 T('... mais CONSERVE le statut acompte (l information n est pas perdue)',
   () => CODE.includes("p.acompte || p.moyen === 'Acompte'") && CODE.includes("statut = 'Acompte'"), true);
 console.log('      -> l info est remise dans la BONNE COLONNE, pas effacee.');

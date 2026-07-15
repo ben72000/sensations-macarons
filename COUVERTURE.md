@@ -2540,6 +2540,36 @@ Les acomptes **déjà saisis** portent `moyen:'Acompte'`. Le vrai moyen est **in
 
 ---
 
+## v1363 — CRASH DES ÉTIQUETTES : un modal ouvert par-dessus un modal
+
+Ben, dans « Étiquettes groupées » : *« je subis un crash au moment d'appuyer sur chaque bouton
+emplacement. À l'issue du crash je perds toutes les informations qui étaient en attente de validation
+et dois recommencer depuis zéro. »*
+
+### La cause
+L'écran « Étiquettes groupées » **est lui-même un modal** (`openModal`). Le bouton emplacement
+(`lbPickEmp`) rappelait `openModal` — et `openModal` ne crée pas une pile : il fait
+`modal.innerHTML = html`, il **remplace**. Au clic sur « emplacement », l'écran des étiquettes était
+donc **détruit**. En choisissant l'emplacement, `lbSetEmp → lbRenderLignes` cherchait
+`getElementById('lblignes_X')` — un élément **disparu**. D'où le crash, et la perte des lignes.
+
+> **RÈGLE GRAVÉE (v1363) : on n'empile pas les modals. Un sélecteur qui interrompt une saisie
+> s'affiche DANS la saisie, jamais par-dessus.**
+
+### Le correctif
+Le sélecteur d'emplacement s'affiche **dans la ligne** (drapeau `_empOuvert`, rendu par
+`lbRenderLignes`). Aucune fonction `lb*` du flux n'appelle plus `openModal`.
+
+### Le sous-bug attrapé au passage
+La **confirmation de dispatch** (« ces 3 boîtes vont-elles au même endroit ? ») est un modal légitime,
+mais la fonction qui reconstruit l'écran ensuite (`labelsBatchForm`) remet `_lbLignes` à zéro : le
+correctif contenait le bug qu'il corrigeait. On sauvegarde `_lbLignes.slice()` + `_lbUid` **avant**
+de rappeler `labelsBatchForm`, et on restaure **après** (`lbRestaurerEcran`).
+
+Test : `tests/v1363-modal-imbrique.test.js` (12 tests) — aucune fonction `lb*` du flux n'ouvre de modal.
+
+---
+
 ## v1364 — ATELIER CHRONO : arrêt direct depuis le raccourci + minuteur supprimé
 
 Ben, depuis la fenêtre raccourci (fenêtre flottante) : *« j'ai toutes les difficultés à arrêter des
@@ -2576,3 +2606,57 @@ auraient trompé l'utilisateur).
 ### 3. Le cumul des semi-actives : NON TOUCHÉ
 Ben : *« ça marche déjà, ne pas y toucher ».* `prodTaskStartSmart` (qui porte le cumul) reste le point
 de démarrage unique — vérifié par test : les passives passent par le **même** démarrage que les actives.
+
+---
+
+## v1365 — CARTE DE LOT : ne garder que le PDF
+
+Ben, capture à l'appui : *« Dans cet exemple j'ai : PDF, étiquette, image. Je veux garder uniquement
+la fonction PDF, les deux autres ne servent à rien et doivent disparaître. »*
+
+Retrait, sur la **carte de lot** (`renderProductions`, ligne ~10174), des boutons :
+- **⎙ Étiquette** (`printLabel`)
+- **🖼 Image** (`shareLabelImage`)
+
+**📄 PDF** (`shareLabelPDF`) conservé.
+
+### Ce qui n'a PAS été touché, et pourquoi
+- Le **modal de détail** d'un lot (ligne ~15045) garde ses propres boutons Étiquette / Image / PDF :
+  la demande visait la carte, pas le détail.
+- `printLabel` et `shareLabelImage` restent définies — elles servent ailleurs (modal détail,
+  assemblage). **Aucun code mort** à retirer : ôter un bouton n'est pas ôter la fonction.
+
+---
+
+## v1366 — UN MÊME MOYEN DE PAIEMENT N'A QU'UN LIBELLÉ
+
+Ben, dans son livre des recettes :
+1. *« J'ai deux transactions qui devraient être ensemble : "carte" et "carte bancaire". »*
+2. *« Il y a encore des lignes qui affichent "acompte" alors qu'elles devraient afficher le moyen de paiement. »*
+
+**Même nature de bug** : un moyen écrit sous plusieurs formes est ventilé en plusieurs colonnes.
+
+### Bug 1 — « Carte » vs « Carte bancaire » (ma faute, v1360)
+En ajoutant les marchés au livre (v1360), j'ai écrit `moyen: 'Carte bancaire'`. Or le libellé
+canonique (`PAY_METHODS`, la ventilation compta, les couleurs) est **« Carte »**. Résultat : les
+ventes marché CB formaient une **colonne séparée** des ventes commande CB.
+
+### Bug 2 — « Acompte » revient dans la colonne moyen (v1362 incomplet)
+Le v1362 neutralisait `p.moyen === 'Acompte'` **mais pas le repli `o.reglement`**. Sur les vieilles
+commandes converties, `o.reglement` valait lui-même « Acompte » : en repli, **« Acompte » revenait
+par la fenêtre**. Un statut, jamais un moyen (v1362).
+
+### Le correctif : une normalisation unique, à la lecture
+`_normMoyen(m)` en tête de `livreDesRecettes` :
+- `« Carte bancaire »`, `« CB »`, `« carte »` → **« Carte »**
+- `« Acompte »` → **null** (bascule vers le repli, puis « Non précisé »)
+- moyens légitimes (Virement, Espèces, Chèque) → inchangés
+
+Appliquée **partout** : `p.moyen` **ET** `o.reglement` (le repli oublié en v1362).
+
+> **RÈGLE (v1366) : un même moyen n'a qu'UN libellé. La normalisation se fait À LA LECTURE** — sinon
+> l'historique déjà enregistré resterait scindé, même après correction de l'écriture.
+
+### Tests mis à jour (pas affaiblis)
+v1360 et v1362 vérifiaient l'ancien code (`'Carte bancaire'`, l'ancienne formule acompte). Alignés
+sur le nouveau comportement — le changement était **légitime**, les tests devaient suivre.

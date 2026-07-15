@@ -71,8 +71,9 @@ T('... et ne retient que les marches CLOS (recette arretee)',
 T('... le FOND DE CAISSE est deduit des especes',
   () => /especes.*fondCaisse|fond = money2\(\+mk\.fondCaisse/.test(F), true);
 console.log('      -> sinon on declarerait comme recette l argent qui etait deja la le matin.');
-T('chaque MODE DE REGLEMENT est une ligne distincte (especes / CB / autre)',
-  () => F.includes("moyen: 'Espèces'") && F.includes("moyen: 'Carte bancaire'"), true);
+T('chaque MODE DE REGLEMENT est une ligne distincte (especes / carte / autre)',
+  // [v1366] le libelle carte est passe de « Carte bancaire » a « Carte » (canonique PAY_METHODS).
+  () => F.includes("montant: esp") && F.includes("montant: cb") && F.includes("montant: autre"), true);
 
 console.log('\n-- LES MENTIONS OBLIGATOIRES (art. L102 B LPF / 286-I-3 CGI)');
 ['date', 'piece', 'client', 'montant', 'moyen', 'nature'].forEach(champ => {

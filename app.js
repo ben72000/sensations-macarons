@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1365';
+const APP_VERSION = 'v1366';
 const APP_MAJ = 'LE MONTAGE PYRAMIDE, SANS OUVRIR « MODIFIER » — comme tu l’as demandé. Le résumé d’une commande événement affiche maintenant, d’un coup d’œil : le NOMBRE de pyramides, le TYPE (location ou vendue), le NOMBRE D’ÉTAGES, le modèle de présentoir, et le nombre de macarons par pyramide — avec la mention « pyramide entière » quand tous les plateaux sont utilisés. UNE DIFFICULTÉ QUE JE DOIS TE DIRE : le nombre d’étages N’EST PAS STOCKÉ sur la commande. Seuls le nombre de pyramides et le nombre de macarons le sont. Les étages se DÉDUISENT de tes modèles de présentoirs (chaque modèle a ses plateaux, donc ses paliers cumulés : 4, 11, 21, 34, 50, 69 pour ta pyramide transparente). JE NE DEVINE DONC PAS — JE DÉDUIS, ET JE DIS CE QUE JE SAIS. Si un seul modèle correspond, je l’affiche avec ses étages. Si PLUSIEURS correspondent (34 macarons, c’est 4 étages sur un modèle et 3 sur un autre), je te les LISTE TOUS : trancher en silence reviendrait à décider à ta place. Si AUCUN palier ne correspond, je te dis « montage sur mesure » — sans arrondir au palier voisin, alors que ce serait facile. Et si la répartition n’est pas entière (100 macarons sur 3 pyramides), je te signale que tes pyramides ne seront PAS identiques, au lieu de te laisser croire à un montage équilibré qui n’existe pas. LA RÈGLE QUE J’AI FIGÉE : un nombre d’étages INVENTÉ serait PIRE qu’une absence — il t’enverrait monter le MAUVAIS présentoir le jour J, devant ton client. Une donnée manquante te coûte un aller-retour dans « Modifier » ; une donnée FAUSSE te coûte un événement raté. Le silence est le moindre mal ; le mensonge, jamais. Enfin, pour un bloc plat (non sécable), je n’affiche AUCUN étage : parler d’étages n’aurait aucun sens. Suite : 1397 → 1437 assertions vertes.';
 
 // ============================================================
@@ -19860,6 +19860,31 @@ function _lrHashLigne(l, hashPrec){
 async function livreDesRecettes(depuis, jusqu){
   const lignes = [];
 
+  // ════════════════════════════════════════════════════════════════════════
+  // [v1366] NORMALISATION DU MOYEN DE PAIEMENT — un seul libellé par moyen réel.
+  //
+  // DEUX BUGS que Ben a vus dans son livre, et qui ont la MÊME nature : un moyen de paiement
+  // écrit sous plusieurs formes finit ventilé en plusieurs colonnes, alors que c'est le même.
+  //
+  //  1. « Carte bancaire » (ma faute v1360, sur les marchés) VS « Carte » (partout ailleurs,
+  //     PAY_METHODS). Deux libellés, un seul moyen → deux lignes au lieu d'une.
+  //
+  //  2. « Acompte » qui réapparaît dans la colonne MOYEN. Le v1362 neutralisait `p.moyen==='Acompte'`,
+  //     mais PAS `o.reglement`. Sur les vieilles commandes converties, `o.reglement` valait lui-même
+  //     « Acompte » : en repli, « Acompte » revenait par la fenêtre. Un statut, JAMAIS un moyen (v1362).
+  //
+  // RÈGLE (v1366) : un même moyen n'a qu'UN libellé. La normalisation se fait À LA LECTURE — sinon
+  // l'historique déjà enregistré resterait scindé, même après correction de l'écriture.
+  const _normMoyen = (m) => {
+    const v = (m == null ? '' : String(m)).trim();
+    if(!v) return null;
+    // « Acompte » est un STATUT, pas un moyen : il ne doit jamais peupler la colonne moyen.
+    if(/^acompte$/i.test(v)) return null;
+    // Un seul libellé pour la carte, quel que soit le canal.
+    if(/^carte(\s+bancaire)?$/i.test(v) || /^cb$/i.test(v)) return 'Carte';
+    return v;
+  };
+
   // ═══ CANAL 1 : LES COMMANDES ═══
   const orders  = await db.orders.toArray().catch(() => []);
   const clients = await db.clients.toArray().catch(() => []);
@@ -19935,7 +19960,9 @@ async function livreDesRecettes(depuis, jusqu){
       // affiche « Non précisé », qui est la VÉRITÉ, plutôt que « Acompte », qui est une catégorie
       // de règlement N'EXISTANT PAS. Le STATUT est conservé (ligne ci-dessus) : l'information
       // n'est pas perdue — elle est remise dans la BONNE COLONNE.
-      const _moyenReel = (p.moyen === 'Acompte') ? null : p.moyen;
+      // [v1366] on normalise le moyen ET le repli o.reglement — « Acompte » ne doit revenir
+      // par aucun des deux, et « Carte bancaire »/« CB » deviennent « Carte ».
+      const _moyenReel = _normMoyen(p.moyen);
 
       lignes.push({
         date: d,
@@ -19945,7 +19972,7 @@ async function livreDesRecettes(depuis, jusqu){
         piece: o.factureNumero || ((typeof orderNumber === 'function') ? orderNumber(o) : ('CMD-' + o.id)),
         client: o.clientNom || nomClient(o.clientId) || 'Client non identifié',
         montant: money2(+p.montant || 0),
-        moyen: _moyenReel || o.reglement || 'Non précisé',
+        moyen: _moyenReel || _normMoyen(o.reglement) || 'Non précisé',
         nature: o.histo
           ? `Vente de macarons — reprise d'historique${o.histoLabel ? ' (' + o.histoLabel + ')' : ''}`
           : 'Vente de macarons — commande',
@@ -19986,8 +20013,8 @@ async function livreDesRecettes(depuis, jusqu){
       statut: 'Encaissement',
       motif: ''
     };
-    if(esp   > 0) lignes.push(Object.assign({}, base, { montant: esp,   moyen: 'Espèces' }));
-    if(cb    > 0) lignes.push(Object.assign({}, base, { montant: cb,    moyen: 'Carte bancaire' }));
+    if(esp   > 0) lignes.push(Object.assign({}, base, { montant: esp,   moyen: _normMoyen('Espèces') || 'Espèces' }));
+    if(cb    > 0) lignes.push(Object.assign({}, base, { montant: cb,    moyen: 'Carte' }));   // [v1366] libellé canonique (PAY_METHODS)
     if(autre > 0) lignes.push(Object.assign({}, base, { montant: autre, moyen: 'Autre' }));
   });
 
