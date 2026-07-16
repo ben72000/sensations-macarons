@@ -35,6 +35,7 @@ function buildModule(){
     const money2 = n => Math.round(n*100)/100;
     const round3 = n => Math.round(n*1000)/1000;
     ${extractFunction('monthKey')}
+    ${extractFunction('_dansPeriode')}
     ${extractConstLine('ymKey')}
     ${extractFunction('estReprise')}
     ${extractFunction('lineTotalStored')}
@@ -144,7 +145,7 @@ const cmd = (id, dateCmd, montant, paiements, parfums) => ({
     // graphe par client (explicitement étiqueté comme tel en v1333). Ce qu'on interdit, c'est de
     // la LIRE pour afficher un CA mensuel.
     if(/\.ca\s*\+=/.test(l)) return;
-    if(/_SE\.|_SEc\.|src\[/.test(l)) return;                  // déjà sur la nouvelle base
+    if(/_SE\.|_SEc\.|_SEG\.|src\[/.test(l)) return;            // déjà sur la nouvelle base (v1339 : _SEG)
     fautes.push(`ligne ${i+1} : ${l.trim().slice(0,90)}`);
   });
   ok(fautes.length === 0,

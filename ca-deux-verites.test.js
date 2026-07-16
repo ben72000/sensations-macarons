@@ -41,6 +41,7 @@ function buildModule(){
     const round3 = n => Math.round(n*1000)/1000;
     ${extractConstLine('GF_COQUE_RATIO')}
     ${extractFunction('monthKey')}
+    ${extractFunction('_dansPeriode')}
     ${extractConstLine('ymKey')}
     ${extractFunction('estReprise')}
     ${extractFunction('lineTotalStored')}

@@ -36,6 +36,7 @@ function buildModule(){
     const money2 = n => Math.round(n*100)/100;
     const round3 = n => Math.round(n*1000)/1000;
     ${extractFunction('monthKey')}
+    ${extractFunction('_dansPeriode')}
     ${extractConstLine('ymKey')}
     ${extractConstLine('addQty')}
     ${extractConstLine('subQty')}

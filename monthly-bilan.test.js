@@ -26,6 +26,9 @@ function buildModule(fakeDb){
   const money2   = extractConstLine('money2');
   const EVENT_MIN= extractConstLine('EVENT_MIN');
   const monthKey     = extractFunction('monthKey');
+  // [v1372] Depuis la v1342, paiementsDe/computeMonthlyBilan filtrent via _dansPeriode
+  // (mois OU intervalle). Le harnais ne l'extrayait pas → ReferenceError au premier run.
+  const _dansPeriode = extractFunction('_dansPeriode');
   const paiementsDe  = extractFunction('paiementsDe');
   const orderToLines = extractFunction('orderToLines');
   const estReprise   = extractFunction('estReprise');
@@ -45,6 +48,7 @@ function buildModule(fakeDb){
     ${money2}
     ${EVENT_MIN}
     ${monthKey}
+    ${_dansPeriode}
     ${paiementsDe}
     ${orderToLines}
     ${estReprise}

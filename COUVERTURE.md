@@ -2819,3 +2819,234 @@ Un détecteur honnête distingue « je sais que c'est faux » de « je ne peux p
 ### Bonus : bug d'affichage corrigé
 Trois libellés du module temps étaient corrompus (« tÃ¢che », « rentabilitÃ© ») par un double
 encodage UTF-8 lors d'une manipulation antérieure. Réécrits proprement.
+
+---
+
+## 2026-07-16 — Chantier fiabilité 1/3 : LE STOCKAGE UNIFIÉ + LE JOURNAL D'AUDIT  (v1370 → **v1372**)
+
+**Décidé par Benjamin** (chantier fiabilité, à exécuter dans l'ordre) :
+> « 1. IndexedDB unifié + Audit trail (sécurité + conformité) — 2. Schéma de validation — 3. State
+> machine des dépendances. On fait les trois dans l'ordre. »
+
+*(Note de numérotation : une v1371 — journal copilote rendu durable — a été perdue dans une session
+interrompue. Son objectif est ré-absorbé ici : `sm_aiJournal` est une clé métier du stockage unifié.)*
+
+### Ouverture de chantier : la suite arrivait ROUGE
+La base v1370 livrée avait **5 harnais** jamais mis à jour après v1342 (l'extraction de
+`_dansPeriode` manquait : monthly-bilan, ca-deux-verites, une-seule-verite, canal-oublie,
+total-et-lots) et **2 gardes** de la vague 56 ancrées sur une **fenêtre de 1200 octets** que
+l'insertion de `_aiRaisonAveu` avait décalée — la garde testait la mise en page, pas la règle.
+Ré-ancrées sur le dossier de justification lui-même (+ garde G0 : il reste ATTACHÉ à la liste).
+**Et 18 suites (vagues 63-71) n'avaient jamais été inscrites dans `run-all.js`** : des gardes qui ne
+tournaient jamais dans l'agrégat — « un if qui ne tirera jamais » (vague 59). Toutes inscrites.
+
+### Le constat (l'angle mort v1341, en pire)
+Les données vivaient dans DEUX mondes : IndexedDB (sauvegardé, vérifié) et localStorage — dont une
+partie seulement partait en sauvegarde. L'inventaire complet :
+- les **modèles de pyramides** (`sm_pyraModels`) : perdus à toute restauration — l'angle mort déclaré
+  de la vague 62 ;
+- le **compteur légal de factures** (`sm_factSeq`) : hors sauvegarde, alors que **son propre
+  commentaire affirmait le contraire**. Un commentaire qui ment est pire qu'une absence : il dispense
+  de vérifier. (Le ré-ancrage sur la plus haute facture définitive limitait la casse — pas le point
+  de départ réglé avant la première facture.) ;
+- le **journal des vraies requêtes du copilote** (`sm_aiJournal`) : la mesure qui doit trancher la
+  question du LLM embarqué mourait avec l'appareil ;
+- les **motifs de suppression saisis par Ben** (`sm_deletionLog`) : hors sauvegarde depuis toujours —
+  attrapés par la nouvelle garde A2 **à son premier passage**.
+
+> **RÈGLE GRAVÉE (v1372) : une donnée métier qui ne survit pas à une restauration n'est pas
+> stockée — elle est en sursis.** Et son corollaire : **UN STOCKAGE NON CLASSÉ EST UN STOCKAGE NON
+> PENSÉ** — chaque clé localStorage appartient à une famille déclarée, et le test refuse toute
+> clé orpheline (il interdit le MOTIF : les clés futures aussi).
+
+### L'architecture — deux supports, UNE règle d'autorité
+localStorage reste le support d'**exécution** (les lectures synchrones de 60 000 lignes ne bougent
+pas) ; la table Dexie **`kv`** devient le support **durable** (sauvegardée, vérifiée, restaurée).
+- **L'ordre d'écriture est une règle, pas un détail** : localStorage d'abord, `kv` ensuite (file +
+  flush 300 ms, flush immédiat au passage en arrière-plan). `kv` peut donc RETARDER, jamais devancer.
+- **La réconciliation au boot en découle entièrement** : localStorage vide + `kv` garni →
+  **restauration** (LE cas réparé : purge iOS, changement d'appareil, restauration de sauvegarde) ;
+  les deux garnis et différents → localStorage gagne, et la divergence est **journalisée** — une
+  divergence résolue en silence est une information détruite.
+- **Le point de passage est unique** : `setItem`/`removeItem` de l'instance sont enveloppés. Aucune
+  liste de sites d'appel à maintenir — le code futur est couvert d'office (vagues 49-50 : interdire
+  le motif, pas le cas). Une panne de la copie durable ne casse JAMAIS l'écriture locale (prouvé), et
+  elle est comptée + affichée à l'écran Sauvegardes.
+- **17 clés métier** classées (réglages, compteurs légaux, modèles de pyramides, journaux copilote,
+  charges récurrentes, temps appris, signature, motifs de suppression…) ; **31 clés d'appareil**
+  déclarées comme telles (marqueurs de migration, chronos en cours, positions d'écran) — et c'est un
+  choix écrit, pas un oubli.
+
+### Le journal d'audit (`auditLog`)
+« Cette commande a été modifiée quand, et qu'est-ce qui a changé ? » n'avait pour réponse : rien.
+- **Hooks Dexie** sur toutes les tables (création / modification / suppression) : là encore un point
+  de passage unique. Modifications tracées **champ par champ** (avant → après, notation pointée
+  suivie ; absent = `null`, jamais 0 — v1326/v1337).
+- Tampon **par transaction, flush au COMMIT** : une écriture annulée n'a pas eu lieu, elle n'est pas
+  journalisée (prouvé).
+- Entrées **bornées** (1200 car.) : tronquer en le DISANT (taille réelle + champs touchés), jamais en
+  silence (v1333). Rétention **2000 entrées**, affichée à l'écran.
+- Exclusions ÉCRITES : `auditLog` (récursion) et `backups` (payloads-mammouths, le tableau des
+  sauvegardes est déjà son propre journal).
+- `journalCompta` (v1359) reste le journal LÉGAL des encaissements ; `auditLog` est le journal
+  OPÉRATIONNEL de tout le reste. Les deux ne se remplacent pas.
+- Écran : **Sauvegarde & sécurité → 📜 Voir le journal des écritures** (filtre par table, détail
+  champ par champ, écran d'origine).
+
+### Le piège évité : la somme de contrôle rétroactive
+Ajouter `kv`/`auditLog` à `TABLES` aurait fait recalculer la somme des VIEILLES sauvegardes sur un
+périmètre qu'elles ne connaissent pas → **toutes** déclarées « modifiées ou tronquées ». Une alarme
+injustifiée finit ignorée — y compris le jour où elle a raison (vague 59).
+> **RÈGLE GRAVÉE : une somme de contrôle dont le périmètre bouge sans être écrit dans le fichier
+> n'en est pas une.** Les sauvegardes v1372+ embarquent leur périmètre (`_checksumTables`) ; les
+> anciennes sont vérifiées sur la liste HÉRITÉE, figée à jamais. Prouvé dans les deux sens (H4/H5).
+
+### Restauration — trois protections
+1. une sauvegarde d'AVANT v1372 n'efface NI `kv` NI `auditLog` (règle prodSessions généralisée : un
+   journal d'audit qu'une restauration peut vider n'est pas un journal d'audit) ;
+2. après restauration, `kv` → localStorage : les clés métier reflètent la sauvegarde, comme les tables ;
+3. `kvBoot()` s'exécute AVANT les migrations du boot — elles lisent localStorage, il doit être
+   re-garni d'abord.
+
+### Suite v1372 : 49 assertions (78 suites au total, toutes vertes)
+Chaque garde prouvée par réintroduction : clé fantôme injectée → détectée (A3) ; panne kv →
+l'écriture locale survit (D4) ; transaction annulée → rien au journal (G4) ; somme naïve → aurait
+invalidé tout l'historique (H5).
+
+### Angles morts déclarés
+- Le journal d'audit ne connaît pas le POURQUOI d'un changement — seulement le quoi/quand/où.
+  `logDeletion` (motifs saisis) reste complémentaire, désormais durable.
+- Les écritures des ~300 dernières ms avant un crash brutal peuvent manquer à `kv` — localStorage les
+  a, la réconciliation du boot suivant les rattrape (« pousser »). La fenêtre est structurelle, dite,
+  et bornée.
+- Deux appareils simultanés ne sont PAS réconciliés champ à champ (hors périmètre du chantier 1 —
+  c'est l'axe 6 « vector clock », non retenu à ce stade).
+
+---
+
+## 2026-07-16 — Chantier fiabilité 2/3 : LES SCHÉMAS DE VALIDATION À L'ENTRÉE  (v1372 → **v1373**)
+
+**La promesse de l'axe choisi par Benjamin** : « je remets un string où on attend un number »
+devient **impossible** — refusé à l'écriture, motif lisible, avant de polluer la base.
+
+### La leçon v1370 appliquée au validateur lui-même
+Un contrôle qui refuse des données SAINES détruit la confiance aussi sûrement qu'un vrai mensonge.
+D'où **deux niveaux**, et la frontière est une règle :
+- **BLOQUANT** — uniquement ce qui est PROUVABLEMENT faux quel que soit le contexte : type erroné
+  (montant non numérique, NaN, date malformée, tableau attendu), champ d'identité absent à la
+  **création**. Chaque règle bloquante est fondée sur le **site de création réel** du code, cité
+  dans le schéma (cmdSave, saveCharge, ttConfirmStop, marketAddRetour, v1359…) — pas sur une
+  supposition.
+- **ALERTE** — le suspect non prouvé : énumération inconnue, signe inhabituel. L'écriture **passe**,
+  l'anomalie est **journalisée** (op « suspect » dans `auditLog`). Même discipline que le détecteur
+  d'anomalies v1368-70 : détecter sans bloquer quand on ne peut pas prouver.
+
+Clin d'œil qui n'en est pas un : **« embarque »**, le type fantôme qui a lancé la vague 59, serait
+aujourd'hui signalé **à l'écriture même** (E1).
+
+### Le mécanisme
+- 21 tables couvertes (`VALIDE_SCHEMAS`) ; types en français (`nombreFini`, `dateJ`, `idRef` — qui
+  accepte 0 : « sans fournisseur », `horoMs`…).
+- **Hooks Dexie** `creating`/`updating` : lever une exception dans un hook AVORTE l'opération et sa
+  transaction — le refus est réel, pas cosmétique. Installés **avant** les hooks d'audit : une
+  écriture refusée n'est jamais proposée au journal des écritures commises.
+- **Les modifications ne valident que les champs écrits** (les `mods` Dexie) : une fiche ancienne au
+  champ hérité bancal reste éditable tant qu'on ne touche pas ce champ. On valide l'ENTRÉE, on ne
+  juge pas le stock existant. Chemins pointés non déclarés : passent — limite DITE.
+- **Restauration/fusion : hooks suspendus** (`_importEnCours`, audit compris) — rejouer des données
+  qui ont déjà vécu en base remplirait le journal de fausses créations et jugerait l'historique.
+  Chaque restauration/fusion laisse **une** entrée récapitulative (op « restauration » / « fusion »).
+- Le refus n'est **jamais muet** : exception typée `ValidationRefusee` + toast + journal (« rejet »).
+
+### La soupape (parce que je peux me tromper)
+Ben n'a pas de développeur sous la main. L'écran Sauvegardes porte un interrupteur **« validation
+stricte »** (activée par défaut). Désactivée : plus rien n'est refusé, mais chaque refus évité est
+journalisé (« rejet-ignoré ») et une bannière ambre le rappelle — une protection débranchée en
+silence serait la fausse sécurité de v1329. Compteurs de session (refus/suspects) affichés.
+
+### Corrigé au passage (v1372 durci)
+Les écritures de journal lancées depuis un hook ou un rappel `complete` héritent de la **zone**
+Dexie de la transaction morte → `Dexie.ignoreTransaction` partout où le journal écrit depuis un
+hook (l'issue documentée). Le flush d'audit de v1372 est corrigé de même.
+
+### Suite v1373 : 32 assertions (79 suites au total, toutes vertes)
+La moitié de la suite est un **corpus de 11 fixtures à la forme réelle** (relevées aux sites de
+création) que le validateur accepte sans erreur **ni alerte** — l'anti-cri-au-loup est un test,
+pas une intention. Preuves : le montant-chaîne refusé et nommé (C1), NaN nommé (C4), le refus est
+une vraie exception (F1), le débrayage journalise (F4), les hooks dorment pendant les restaurations
+(G2/G3).
+
+### Angles morts déclarés
+- `orders.statut` n'a **pas** d'énumération d'alerte : deux dimensions cohabitent dans le code
+  (statut de préparation « À préparer/En cours/Terminée/Livrée » et champ `paiement` « Payé/Partiel »)
+  et je ne fige pas un vocabulaire que je ne peux pas prouver complet — v1370.
+- La validation ne voit pas `bulkPut` interne de `kv` pendant qu'elle est suspendue (restauration) —
+  assumé : ces lignes sortent d'une sauvegarde déjà vérifiée par somme de contrôle.
+- Les objets libres (lignes de commande, `ca` d'un marché) ne sont pas validés en profondeur —
+  limite dite en D3.
+
+---
+
+## 2026-07-16 — Chantier fiabilité 3/3 : LA CARTE DES DÉPENDANCES ENTRE LES CHIFFRES  (v1373 → **v1374**)
+
+**L'axe choisi par Benjamin** : « "CA" dépend de "cash receipts" ; "point mort" dépend de "charges
+fixes" ET "CA" ; si l'une se recalcule, les autres cascadent. Le gain : quand tu changes une source,
+le compilo te dit ce qu'il faut retester. »
+
+### Le constat
+La structure de dépendance des chiffres n'existait NULLE PART : elle vivait de session en session
+dans la tête de l'assistant, et chaque bug de source (v1331 : CA à la date de commande ; v1339 :
+deux vérités de stock) a été découvert APRÈS coup. La carte la rend **explicite, vérifiée, visible**.
+
+> **RÈGLE GRAVÉE (v1374) : une carte fausse est pire que pas de carte** — c'est le commentaire qui
+> ment (v1372), à l'échelle de l'architecture. La carte est donc tenue par des gardes : chaque
+> fonction citée existe dans le code, chaque table citée existe au schéma Dexie, chaque clé kv citée
+> est une clé métier CLASSÉE (v1372), chaque suite citée existe sur disque, et le graphe n'a pas de
+> cycle (détecté ET nommé, chemin compris — D1).
+
+### La carte (`FIGURES`) — 11 chiffres déclarés
+CA encaissé, CA marchés, charges fixes, coût de revient (FIFO), point mort, stock fini par parfum,
+prévisionnel, revenu horaire, sérénité, audit comptable, audit stock & temps. Chaque figure porte :
+ses **sources** (tables Dexie et clés kv — `kv:sm_recurringCharges` est une source comme une autre),
+ses **amonts** (point mort ← charges fixes + coût de revient), sa **règle gelée en une ligne**
+(celle de la vague qui l'a établie), et ses **suites de tests**.
+
+### Le moteur
+- `_figAval` : l'aval transitif — toucher `charges` périme charges fixes → point mort ET CA
+  encaissé → revenu horaire, mais PAS le stock par parfum (B1/B2 : l'aval est précis, pas « tout
+  est lié à tout »).
+- `_figSuitesPour` : l'union exacte des suites à relancer, triée, dédupliquée, existante.
+- **`node tests/quoi-retester.js charges kv:sm_settings [--run]`** : la moitié « compilo » de la
+  promesse — répond « voici les chiffres périmés, voici les suites », et les lance avec `--run`.
+  Une source inconnue de la carte est DITE (trou possible), jamais avalée.
+
+### Au commit, jamais au hasard
+Le flush d'audit (v1372) est le seul moment honnête pour dire « ces sources ont changé » : il
+signale la carte (`_figSignale`), les écritures kv **par clé**, et émet `sm-figures-perimees`.
+**Non-but déclaré et testé (E3)** : AUCUN re-rendu automatique — recharger un écran sous les doigts
+de Ben (modale ouverte, saisie en cours) créerait des régressions pires que le mal. Le rail est
+posé ; les écrans s'y brancheront quand chacun aura sa preuve. Après une restauration, TOUT est
+signalé périmé, une fois.
+
+### Visible pour Ben
+**Sauvegarde & sécurité → 🕸 Carte des chiffres** : chaque chiffre, ses sources en clair
+(« réglage sm_recurringCharges », « table orders »), ce qu'il alimente, sa règle, ses protections —
+et un badge « données modifiées depuis l'ouverture » sur ce qui est périmé.
+
+### Le ratchet des angles morts (A7)
+EXACTEMENT une figure sans suite dédiée aujourd'hui : la **sérénité** — déclarée, pas oubliée.
+Ajouter demain une figure sans test sans toucher ce compte fait échouer la suite : l'angle mort
+restera un CHOIX conscient.
+
+### Suite v1374 : 23 assertions (80 suites au total — 1779 assertions, toutes vertes)
+Preuves par réintroduction : cycle injecté détecté et nommé (D1) ; figure fantôme attrapée sur ses
+trois mensonges — fonction, amont, suite (D2). Le commit prévient la carte, sources dédupliquées
+(G3b, ajouté à la suite v1372).
+
+### Angles morts déclarés
+- La sérénité n'a pas de suite dédiée (A7 la tient à l'œil).
+- La carte déclare les dépendances de PREMIER ordre vérifiables ; les lectures indirectes profondes
+  (ex. un écran qui pioche ad hoc) ne sont pas toutes cartographiées — la carte grandira vague
+  par vague, gardes à l'appui.
+- L'événement `sm-figures-perimees` n'a pas encore de consommateur d'écran : rail posé, branchement
+  à prouver écran par écran.

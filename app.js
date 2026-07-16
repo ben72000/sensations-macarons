@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1370';
+const APP_VERSION = 'v1374';
 const APP_MAJ = 'LE MONTAGE PYRAMIDE, SANS OUVRIR « MODIFIER » — comme tu l’as demandé. Le résumé d’une commande événement affiche maintenant, d’un coup d’œil : le NOMBRE de pyramides, le TYPE (location ou vendue), le NOMBRE D’ÉTAGES, le modèle de présentoir, et le nombre de macarons par pyramide — avec la mention « pyramide entière » quand tous les plateaux sont utilisés. UNE DIFFICULTÉ QUE JE DOIS TE DIRE : le nombre d’étages N’EST PAS STOCKÉ sur la commande. Seuls le nombre de pyramides et le nombre de macarons le sont. Les étages se DÉDUISENT de tes modèles de présentoirs (chaque modèle a ses plateaux, donc ses paliers cumulés : 4, 11, 21, 34, 50, 69 pour ta pyramide transparente). JE NE DEVINE DONC PAS — JE DÉDUIS, ET JE DIS CE QUE JE SAIS. Si un seul modèle correspond, je l’affiche avec ses étages. Si PLUSIEURS correspondent (34 macarons, c’est 4 étages sur un modèle et 3 sur un autre), je te les LISTE TOUS : trancher en silence reviendrait à décider à ta place. Si AUCUN palier ne correspond, je te dis « montage sur mesure » — sans arrondir au palier voisin, alors que ce serait facile. Et si la répartition n’est pas entière (100 macarons sur 3 pyramides), je te signale que tes pyramides ne seront PAS identiques, au lieu de te laisser croire à un montage équilibré qui n’existe pas. LA RÈGLE QUE J’AI FIGÉE : un nombre d’étages INVENTÉ serait PIRE qu’une absence — il t’enverrait monter le MAUVAIS présentoir le jour J, devant ton client. Une donnée manquante te coûte un aller-retour dans « Modifier » ; une donnée FAUSSE te coûte un événement raté. Le silence est le moindre mal ; le mensonge, jamais. Enfin, pour un bloc plat (non sécable), je n’affiche AUCUN étage : parler d’étages n’aurait aucun sens. Suite : 1397 → 1437 assertions vertes.';
 
 // ============================================================
@@ -545,7 +545,854 @@ try{
   });
 }catch(e){ console.error('db.on blocked', e); }
 
+// v32 : [v1372] UNIFICATION DU STOCKAGE + JOURNAL D'AUDIT DES ÉCRITURES.
+//
+// LE CONSTAT (chantier « fiabilité », axe 1) : les données de l'app vivaient dans DEUX mondes.
+// IndexedDB, sauvegardé, vérifié par somme de contrôle — et localStorage, dont une partie
+// seulement partait dans les sauvegardes (BACKUP_LS_KEYS), le reste étant simplement PERDU à
+// la première restauration ou purge iOS. La vague 62 l'avait déclaré pour les modèles de
+// pyramides (sm_pyraModels) ; l'inventaire complet est pire :
+//   • le COMPTEUR LÉGAL de factures (sm_factSeq) vivait hors sauvegarde, alors que son propre
+//     commentaire affirmait « inclus dans les sauvegardes ». Un commentaire qui ment est pire
+//     qu'une absence de commentaire : il DISPENSE de vérifier. (Le compteur se ré-ancre certes
+//     sur la plus haute facture définitive — mais un point de départ réglé avant la première
+//     facture était, lui, perdu sans bruit.)
+//   • le journal des vraies requêtes du copilote (sm_aiJournal) — la MESURE qui doit trancher
+//     la question du LLM embarqué — disparaissait avec l'appareil.
+//
+// LE PRINCIPE (gelé) : UNE DONNÉE MÉTIER QUI NE SURVIT PAS À UNE RESTAURATION N'EST PAS
+// STOCKÉE — ELLE EST EN SURSIS. localStorage reste le support d'EXÉCUTION (lectures synchrones
+// partout dans 60 000 lignes : les convertir en async serait un chantier à régressions), mais
+// la base devient le support DURABLE : chaque clé métier est recopiée dans la table `kv`,
+// qui part dans les sauvegardes comme n'importe quelle table.
+//
+// L'ORDRE D'ÉCRITURE EST UNE RÈGLE, PAS UN DÉTAIL : localStorage d'abord (synchrone), `kv`
+// ensuite (file + flush). Donc `kv` peut RETARDER sur localStorage (au pire une écriture, si
+// l'app meurt avant le flush) mais jamais l'inverse. La réconciliation au démarrage en découle
+// entièrement : si les deux existent et diffèrent, localStorage a raison ; `kv` ne fait
+// autorité QUE si localStorage est vide (purge iOS, restauration, nouvel appareil). Sans cette
+// règle, chaque divergence serait un pile-ou-face — v1331 a montré où mènent deux vérités.
+//
+// LE JOURNAL D'AUDIT : chaque écriture en base (création, modification, suppression) laisse
+// une trace {quand, table, clé, quoi} dans `auditLog` — champ par champ pour les
+// modifications. Interception par les hooks Dexie : le POINT DE PASSAGE est unique, aucun
+// site d'appel à retrouver, et le code futur est couvert d'office (on interdit le MOTIF,
+// pas le cas — vagues 49-50). `journalCompta` reste le journal LÉGAL des encaissements
+// (v1359, inaltérable) ; `auditLog` est le journal OPÉRATIONNEL de tout le reste, avec une
+// rétention bornée et affichée. Les deux ne se remplacent pas.
+db.version(32).stores({
+  kv: 'cle',                 // colonnes libres : cle, valeur (string, sémantique localStorage), ts
+  auditLog: '++id, ts, tbl'  // colonnes libres : op, cle, resume (string JSON borné), ecran, v
+});
 
+// ────────────────────────────────────────────────────────────────────────────
+// [v1372] CLASSIFICATION DES CLÉS localStorage — exhaustive, et PROUVÉE exhaustive.
+// Chaque clé `sm_*` du code appartient à UNE des deux familles ci-dessous (le test
+// v1372 extrait toutes les clés littérales de app.js et refuse toute clé non classée :
+// un stockage non classé est un stockage non pensé).
+//   • MÉTIER   → recopiée dans `kv`, donc sauvegardée, donc restaurable.
+//   • APPAREIL → décrit CET appareil (marqueurs de migration, préférences d'écran,
+//     chronos en cours…) ; reste en localStorage, et c'est un choix, pas un oubli.
+// ────────────────────────────────────────────────────────────────────────────
+const KV_METIER = {
+  sm_settings:         "Réglages de l'app (taux URSSAF, emballages, mentions CGV…)",
+  sm_facture:          "Émetteur des factures (identité, SIRET, coordonnées)",
+  sm_factSeq:          "Compteur légal de numérotation des factures (art. 242 nonies A CGI)",
+  sm_avoirSeq:         "Compteur légal de numérotation des avoirs",
+  sm_pyraModels:       "Modèles de pyramides (plateaux → étages) — l'angle mort déclaré de la vague 62",
+  sm_aiJournal:        "Journal des vraies requêtes du copilote (la mesure qui tranchera la question du LLM)",
+  sm_aiUsage:          "Habitudes d'usage du copilote (suggestions personnalisées)",
+  sm_recurringCharges: "Charges récurrentes (alimentent charges fixes et point mort)",
+  sm_mrp_times:        "Temps de production appris (planification MRP)",
+  sm_availability:     "Disponibilités de production (planning)",
+  sm_availExceptions:  "Exceptions ponctuelles de disponibilité",
+  sm_planPrioOrder:    "Priorités du plan de production",
+  sm_optimBatch:       "Optimisation des batches (préférence de gestion)",
+  sm_autoPay:          "Encaissement automatique (préférence de gestion)",
+  sm_mailSignature:    "Signature e-mail rédigée",
+  sm_coursesExtra:     "Articles ajoutés à la main à la liste de courses",
+  sm_deletionLog:      "Motifs de suppression saisis par Ben (traçabilité) — attrapée par la garde A2 à son premier passage : elle vivait hors sauvegarde depuis sa création"
+};
+// Clés d'APPAREIL : elles décrivent l'état de CE téléphone, pas le métier. Les recopier sur un
+// autre appareil serait au mieux inutile (position de la mascotte), au pire FAUX (marqueurs de
+// migration : dire à un appareil neuf « la migration UUID est déjà faite » l'empêcherait de la
+// faire). Certaines figurent aussi dans BACKUP_LS_KEYS (héritage) : on n'en retire AUCUNE —
+// règle de livraison cumulative — mais leur famille est désormais dite.
+const KV_APPAREIL = new Set([
+  'sm_privacyMode','sm_nav_adv','sm_navFavoris','sm_navUsage',
+  'sm_lastExport','sm_lastICloud','sm_autoBackupDate','sm_exportSnooze',
+  'sm_persistStorage','sm_dbBlocked','sm_prodSessDexieKo',
+  'sm_prodSessions','sm_prodSessDeleted',                    // cache d'exécution ; la vérité est en base (table prodSessions)
+  'sm_debug','sm_unsaved','sm_mascot_pos','sm_mascot_home',
+  'sm_forecastSeen','sm_gasp_ready_dismiss',
+  'sm_pkg_migr_20251128_v2','sm_uuidMigrated','sm_fixSplitComp','sm_ir_tranche_init_2026',
+  'sm_workSession_start','sm_workSession_act','sm_workSession_paused','sm_workSession_pauseAt',
+  'sm_ttSessions',                                           // chronos EN COURS sur cet appareil (l'historique, lui, vit en base : workSessions)
+  'sm_tt_pos',                                               // position de la barre chrono déplaçable (écran de CET appareil)
+  'sm_valideStricte',                                        // [v1373] interrupteur de la validation stricte (levier opérationnel de CET appareil)
+  'sm_pmsEod'                                                // marqueur « bilan de fin de journée fait » (un jour, un appareil)
+]);
+// Préfixes de clés construites dynamiquement (ex. 'sm_ttw_'+i : positions de fouets déplaçables).
+const KV_PREFIXES_APPAREIL = ['sm_ttw_'];
+
+// ---- Réconciliation localStorage ↔ kv (PURE, testée) --------------------------------------
+// Décide, pour UNE clé, qui a raison au démarrage. `ls` et `kv` sont les valeurs string ou null.
+// Retour : {action:'rien'|'semer'|'restaurer'|'pousser', divergence:bool}
+//   semer     : localStorage existe, kv non → première recopie vers la base.
+//   restaurer : localStorage vide, kv existe → LE cas que ce chantier répare (purge/restauration).
+//   pousser   : les deux existent et diffèrent → localStorage gagne (règle d'ordre d'écriture
+//               ci-dessus : kv ne peut que retarder), et on NOTE la divergence — une divergence
+//               silencieusement résolue est une information détruite.
+function _kvReconcilie(ls, kv){
+  const aLs = (ls !== null && ls !== undefined);
+  const aKv = (kv !== null && kv !== undefined);
+  if(!aLs && !aKv) return { action:'rien', divergence:false };
+  if(aLs && !aKv)  return { action:'semer', divergence:false };
+  if(!aLs && aKv)  return { action:'restaurer', divergence:false };
+  if(ls === kv)    return { action:'rien', divergence:false };
+  return { action:'pousser', divergence:true };
+}
+
+// ---- File d'écriture vers kv (localStorage d'abord, kv ensuite) ----------------------------
+const _kvFile = new Map();          // cle → {valeur:string|null} (null = suppression)
+let _kvFlushTimer = null;
+let _kvEnPanne = 0;                 // compteur de flushs échoués (affiché à l'écran Sauvegardes)
+function _kvPousse(cle, valeur){
+  _kvFile.set(cle, valeur);
+  if(_kvFlushTimer) clearTimeout(_kvFlushTimer);
+  _kvFlushTimer = setTimeout(_kvFlush, 300);
+}
+async function _kvFlush(){
+  if(_kvFlushTimer){ clearTimeout(_kvFlushTimer); _kvFlushTimer = null; }
+  if(!_kvFile.size) return;
+  const lot = [..._kvFile.entries()]; _kvFile.clear();
+  const ts = Date.now();
+  const aMettre = lot.filter(([,v]) => v !== null).map(([cle, valeur]) => ({cle, valeur, ts}));
+  const aOter   = lot.filter(([,v]) => v === null).map(([cle]) => cle);
+  try{
+    if(aMettre.length) await db.kv.bulkPut(aMettre);
+    if(aOter.length)   await db.kv.bulkDelete(aOter);
+    _kvEnPanne = 0;
+  }catch(e){
+    // On ne réessaie pas en boucle : localStorage a la valeur, la réconciliation du prochain
+    // démarrage rattrapera (« pousser »). Mais on COMPTE l'échec et l'écran Sauvegardes le dit :
+    // une panne silencieuse de la copie durable serait exactement la fausse protection de v1329.
+    _kvEnPanne++;
+    lot.forEach(([c, v]) => { if(!_kvFile.has(c)) _kvFile.set(c, v); });
+    swallow(e, '_kvFlush');
+  }
+}
+
+// ---- Interception des écritures localStorage (LE point de passage unique) -------------------
+// On enveloppe setItem/removeItem de l'INSTANCE localStorage : toute écriture — présente OU
+// FUTURE — d'une clé métier est recopiée vers kv. Pas de liste de sites d'appel à maintenir :
+// c'est le MOTIF qui est couvert. Fonction pure vis-à-vis de son support (injectable) pour
+// être testée hors navigateur.
+function _kvInstallePatch(storage, surCleMetier){
+  const setBrut = storage.setItem.bind(storage);
+  const delBrut = storage.removeItem.bind(storage);
+  storage.setItem = function(cle, valeur){
+    setBrut(cle, valeur);                                   // localStorage D'ABORD, toujours
+    try{ if(Object.prototype.hasOwnProperty.call(KV_METIER, cle)) surCleMetier(cle, String(valeur)); }
+    catch(e){ swallow(e, 'kv setItem'); }
+  };
+  storage.removeItem = function(cle){
+    delBrut(cle);
+    try{ if(Object.prototype.hasOwnProperty.call(KV_METIER, cle)) surCleMetier(cle, null); }
+    catch(e){ swallow(e, 'kv removeItem'); }
+  };
+  return { setBrut, delBrut };
+}
+try{ _kvInstallePatch(localStorage, _kvPousse); }catch(e){ console.error('kv patch', e); }
+// Flush immédiat quand l'app passe en arrière-plan : sur iPhone, c'est souvent la dernière
+// occasion d'écrire avant une mise en veille prolongée.
+try{
+  document.addEventListener('visibilitychange', () => { if(document.hidden) _kvFlush(); });
+  window.addEventListener('pagehide', () => { _kvFlush(); });
+}catch(e){ swallow(e, 'kv flush listeners'); }
+
+// ---- Réconciliation au démarrage ------------------------------------------------------------
+// Appelée EN PREMIER dans la séquence de boot : les migrations et les écrans lisent localStorage,
+// il doit donc être re-garni AVANT eux si l'appareil a été purgé ou restauré.
+async function kvBoot(){
+  let restaurees = 0, semees = 0, divergences = 0;
+  try{
+    const enBase = new Map((await db.kv.toArray()).map(r => [r.cle, r.valeur]));
+    const ts = Date.now();
+    const aPousser = [];
+    for(const cle of Object.keys(KV_METIER)){
+      let ls = null; try{ ls = localStorage.getItem(cle); }catch(e){ swallow(e,'kvBoot get'); }
+      const decision = _kvReconcilie(ls, enBase.has(cle) ? enBase.get(cle) : null);
+      if(decision.action === 'semer'){ aPousser.push({cle, valeur:ls, ts}); semees++; }
+      else if(decision.action === 'restaurer'){
+        // LE cas réparé : la valeur ne vit plus qu'en base → on re-garnit localStorage.
+        // On passe par setBrut ? Non : passer par le setItem patché re-poussera la même valeur
+        // vers kv (idempotent) et garde UN SEUL chemin d'écriture — deux chemins divergent.
+        try{ localStorage.setItem(cle, enBase.get(cle)); restaurees++; }catch(e){ swallow(e,'kvBoot restore'); }
+      }
+      else if(decision.action === 'pousser'){
+        aPousser.push({cle, valeur:ls, ts}); divergences++;
+        // Une divergence est une INFORMATION : on la journalise (qui a divergé, tailles), sans
+        // stocker les contenus complets — le journal d'audit n'est pas une poubelle à blobs.
+        try{ await db.auditLog.add({ ts, tbl:'kv', op:'reconciliation', cle,
+          resume: JSON.stringify({ garde:'localStorage', tailleLS:(ls||'').length, tailleKv:(enBase.get(cle)||'').length }),
+          ecran:'boot', v:APP_VERSION }); }catch(e){ swallow(e,'kvBoot auditDiv'); }
+      }
+    }
+    if(aPousser.length) await db.kv.bulkPut(aPousser);
+    if(restaurees){
+      // Jamais silencieux : Ben doit SAVOIR que des réglages sont revenus de la base — c'est
+      // aussi le signal qu'une purge a eu lieu (et qu'un export récent serait bienvenu).
+      try{ setTimeout(() => toast(`${restaurees} réglage(s) métier restauré(s) depuis la base ✓`), 800); }catch(e){ swallow(e,'kvBoot toast'); }
+    }
+  }catch(e){ console.error('kvBoot', e); }
+  return { restaurees, semees, divergences };
+}
+// Après une RESTAURATION de sauvegarde : la table kv vient d'être remplacée par celle du fichier,
+// localStorage porte encore les valeurs d'avant → on réapplique kv → localStorage pour les clés
+// métier présentes en base. (Les clés absentes du fichier gardent leur valeur locale : une
+// sauvegarde ancienne ne doit pas EFFACER ce qu'elle ignorait — même règle que prodSessions.)
+async function kvRestaureLSDepuisBase(){
+  let n = 0;
+  try{
+    const rows = await db.kv.toArray();
+    rows.forEach(r => {
+      if(!Object.prototype.hasOwnProperty.call(KV_METIER, r.cle)) return;
+      try{ localStorage.setItem(r.cle, r.valeur); n++; }catch(e){ swallow(e,'kvRestaureLS'); }
+    });
+  }catch(e){ console.error('kvRestaureLSDepuisBase', e); }
+  return n;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// [v1372] JOURNAL D'AUDIT DES ÉCRITURES EN BASE.
+// « Cette commande a été modifiée quand, et qu'est-ce qui a changé ? » avait pour seule
+// réponse : rien. Le journal répond, champ par champ, avec une rétention bornée et DITE.
+// ────────────────────────────────────────────────────────────────────────────
+const AUDIT_MAX_ENTREES = 2000;   // rétention (les plus récentes) — affichée à l'écran
+const AUDIT_MAX_RESUME  = 1200;   // taille max du résumé JSON d'une entrée (caractères)
+// Tables exclues des hooks — et POURQUOI (une exclusion sans raison écrite redeviendra un mystère) :
+//   auditLog : s'auditer soi-même = récursion infinie.
+//   backups  : chaque sauvegarde automatique embarque TOUTE la base en payload ; l'auditer
+//              gonflerait le journal d'entrées-mammouth sans rien apprendre (le tableau des
+//              sauvegardes EST déjà son propre journal, daté et compté).
+const AUDIT_TABLES_EXCLUES = new Set(['auditLog','backups']);
+// [v1373] Pendant une RESTAURATION ou un IMPORT-FUSION, les hooks (audit ET validation) sont
+// suspendus : ces données ont déjà vécu en base — les rejouer ligne à ligne remplirait le
+// journal de milliers de fausses « créations », et la validation à l'entrée jugerait un STOCK
+// historique qu'elle n'a pas vocation à juger (on valide l'entrée, pas l'existant). La
+// restauration elle-même est journalisée en UNE entrée récapitulative (op « restauration »).
+let _importEnCours = false;
+
+// Diff champ par champ d'une modification (PURE, testée).
+// `mods` est l'objet de modifications Dexie (clés éventuellement en notation pointée 'a.b').
+// On lit la valeur AVANT dans l'objet d'origine en suivant le chemin ; undefined → null
+// (sémantique JSON : « absent », par opposition à 0 ou '' — v1326/v1337, zéro n'est pas une absence).
+function _auditDiff(avant, mods){
+  const d = {};
+  Object.keys(mods || {}).forEach(chemin => {
+    let ancien = avant;
+    for(const seg of String(chemin).split('.')){
+      ancien = (ancien === null || ancien === undefined) ? undefined : ancien[seg];
+    }
+    d[chemin] = { avant: (ancien === undefined ? null : ancien), apres: (mods[chemin] === undefined ? null : mods[chemin]) };
+  });
+  return d;
+}
+// Borne un objet d'entrée d'audit à AUDIT_MAX_RESUME caractères (PURE, testée).
+// Si trop gros : on garde la LISTE des champs touchés et les tailles — tronquer en le DISANT,
+// jamais en silence (v1333 : un paramètre jeté sans un mot est le pire des deux mondes).
+function _auditResume(objet, max){
+  const M = max || AUDIT_MAX_RESUME;
+  let s;
+  try{ s = JSON.stringify(objet); }catch(e){ s = null; }
+  if(s === null || s === undefined) s = '{"_illisible":true}';
+  if(s.length <= M) return s;
+  const champs = (objet && typeof objet === 'object') ? Object.keys(objet).slice(0, 40) : [];
+  return JSON.stringify({ _tronque:true, taille:s.length, champs });
+}
+// Empile une entrée sur la transaction en cours, flush à son COMMIT — on n'audite pas une
+// écriture annulée : un journal qui note des faits qui n'ont pas eu lieu n'est pas un journal.
+function _auditPousse(trans, entree){
+  try{
+    entree.ts = Date.now();
+    entree.ecran = (typeof view !== 'undefined' && view) ? String(view) : '';
+    entree.v = APP_VERSION;
+    if(!trans){ _horsTransaction(() => db.auditLog.add(entree).catch(e => swallow(e,'audit direct'))); return; }
+    if(!trans._smAudit){
+      trans._smAudit = [];
+      trans.on('complete', () => {
+        const lot = trans._smAudit; trans._smAudit = null;
+        // [v1373] Hors de la zone Dexie : le rappel « complete » hérite de la zone de la
+        // transaction MORTE — y lancer une écriture rejouerait cette transaction close.
+        // Dexie.ignoreTransaction est l'issue documentée pour écrire depuis un hook/rappel.
+        if(lot && lot.length) _horsTransaction(() => db.auditLog.bulkAdd(lot).catch(e => swallow(e,'audit flush')));
+        // [v1374] Le commit est le SEUL moment honnête pour dire « ces sources ont changé » :
+        // la carte des chiffres marque l'aval périmé et émet l'événement.
+        if(lot && lot.length){
+          const sources = [...new Set(lot.map(e => (e.tbl === 'kv' && e.cle) ? ('kv:' + e.cle) : e.tbl))];
+          _figSignale(sources);
+        }
+      });
+    }
+    trans._smAudit.push(entree);
+  }catch(e){ swallow(e, '_auditPousse'); }
+}
+function auditInstalle(){
+  db.tables.forEach(t => {
+    if(AUDIT_TABLES_EXCLUES.has(t.name)) return;
+    t.hook('creating', function(pk, obj, trans){
+      if(_importEnCours) return;                       // [v1373] restauration/fusion : une seule entrée récapitulative
+      const entree = { tbl:t.name, op:'creation', cle:(pk === undefined ? null : pk), resume:_auditResume(obj) };
+      // Pour les clés auto (++id), la clé n'existe qu'après insertion : Dexie nous la donne ici.
+      this.onsuccess = k => { entree.cle = k; };
+      _auditPousse(trans, entree);
+    });
+    t.hook('updating', function(mods, pk, obj, trans){
+      if(_importEnCours) return;
+      if(!mods || !Object.keys(mods).length) return;
+      _auditPousse(trans, { tbl:t.name, op:'modification', cle:pk, resume:_auditResume(_auditDiff(obj, mods)) });
+    });
+    t.hook('deleting', function(pk, obj, trans){
+      if(_importEnCours) return;
+      _auditPousse(trans, { tbl:t.name, op:'suppression', cle:pk, resume:_auditResume(obj) });
+    });
+  });
+}
+// Rétention : on ne garde que les AUDIT_MAX_ENTREES plus récentes. Taillé au boot (pas à chaque
+// écriture : inutile et coûteux). La borne est AFFICHÉE à l'écran Sauvegardes — une limite tue
+// n'existe pas pour celui qui lit le journal.
+async function _auditPrune(){
+  try{
+    const n = await db.auditLog.count();
+    if(n <= AUDIT_MAX_ENTREES) return 0;
+    const surplus = n - AUDIT_MAX_ENTREES;
+    const vieux = await db.auditLog.orderBy('ts').limit(surplus).primaryKeys();
+    await db.auditLog.bulkDelete(vieux);
+    return surplus;
+  }catch(e){ swallow(e, '_auditPrune'); return 0; }
+}
+// Libellés du journal — parler à Ben, pas à un développeur.
+function _auditOpLabel(op){
+  return ({creation:'création', modification:'modification', suppression:'suppression', reconciliation:'réconciliation'})[op] || op;
+}
+async function renderAuditModal(filtreTbl){
+  let rows = [];
+  try{
+    let q = db.auditLog.orderBy('ts').reverse();
+    rows = await q.limit(400).toArray();
+    if(filtreTbl) rows = rows.filter(r => r.tbl === filtreTbl);
+  }catch(e){ console.error('renderAuditModal', e); }
+  const tables = [...new Set(rows.map(r => r.tbl))].sort();
+  const opts = ['<option value="">Toutes les tables</option>']
+    .concat(tables.map(t => `<option value="${esc(t)}" ${t===filtreTbl?'selected':''}>${esc(t)}</option>`)).join('');
+  const lignes = rows.slice(0, 200).map(r => {
+    let detail = '';
+    try{
+      const o = JSON.parse(r.resume || 'null');
+      if(o && o._tronque) detail = `<i>entrée volumineuse (${o.taille} car.) — champs : ${esc((o.champs||[]).join(', '))}</i>`;
+      else if(r.op === 'modification' && o){
+        detail = Object.keys(o).map(k => `<b>${esc(k)}</b> : ${esc(JSON.stringify(o[k].avant))} → ${esc(JSON.stringify(o[k].apres))}`).join('<br>');
+      }else if(o){ detail = esc(JSON.stringify(o).slice(0, 240)); }
+    }catch(e){ detail = esc(String(r.resume||'').slice(0, 240)); }
+    return `<tr><td style="white-space:nowrap">${new Date(r.ts).toLocaleString('fr-FR')}</td>
+      <td>${esc(r.tbl)}${r.cle!=null?` <span style="opacity:.6">#${esc(String(r.cle))}</span>`:''}</td>
+      <td><span class="tag ${r.op==='suppression'?'low':(r.op==='creation'?'ok':'warn')}">${_auditOpLabel(r.op)}</span></td>
+      <td style="font-size:.78rem">${detail}${r.ecran?`<br><span style="opacity:.5;font-size:.72rem">écran : ${esc(r.ecran)}</span>`:''}</td></tr>`;
+  }).join('');
+  openModal(`
+    <h2 style="margin-top:0">Journal des écritures</h2>
+    <p class="note">Chaque création, modification ou suppression en base laisse une trace : quand, quelle table,
+    quel enregistrement, et champ par champ ce qui a changé. Rétention : les ${AUDIT_MAX_ENTREES} plus récentes
+    (les encaissements ont EN PLUS leur journal légal inaltérable, dans Comptabilité).</p>
+    <select onchange="renderAuditModal(this.value)" style="margin-bottom:8px">${opts}</select>
+    <div style="max-height:52vh;overflow:auto"><table class="tbl"><thead>
+    <tr><th>Quand</th><th>Table</th><th>Opération</th><th>Détail</th></tr></thead>
+    <tbody>${lignes || '<tr><td colspan="4"><i>Aucune écriture journalisée pour le moment.</i></td></tr>'}</tbody></table></div>
+    ${rows.length > 200 ? `<p class="note">200 lignes affichées sur ${rows.length} chargées — affine avec le filtre table.</p>` : ''}
+  `);
+}
+
+
+
+
+// ────────────────────────────────────────────────────────────────────────────
+// [v1373] CHANTIER FIABILITÉ 2/3 — LES SCHÉMAS DE VALIDATION À L'ENTRÉE.
+//
+// LE CONSTAT : v1326 (0 confondu avec null), v1328 (regex explosée par une
+// saisie), v1329 (échappement) — les données arrivent parfois mal typées, et
+// chaque bug de type a coûté une vague entière. La promesse de ce chantier :
+// « je remets un string où on attend un number » devient IMPOSSIBLE — refusé à
+// l'écriture, avec un motif lisible, avant de polluer la base.
+//
+// LA LEÇON v1370 APPLIQUÉE À CE VALIDATEUR : un contrôle qui refuse des données
+// SAINES détruit la confiance aussi sûrement qu'un vrai mensonge. Donc DEUX
+// niveaux, et la frontière est une règle :
+//   • BLOQUANT — uniquement ce qui est PROUVABLEMENT faux quel que soit le
+//     contexte : un type erroné (montant non numérique, NaN, date malformée,
+//     tableau attendu), un champ d'identité absent à la CRÉATION. Chaque règle
+//     bloquante est fondée sur le site de création réel du code, pas sur une
+//     supposition.
+//   • ALERTE — ce qui est SUSPECT sans être prouvé faux : une valeur d'énumé-
+//     ration inconnue, un signe inhabituel. L'écriture PASSE, l'anomalie est
+//     journalisée (op « suspect » dans auditLog). Même philosophie que le
+//     détecteur d'anomalies (v1368-70) : détecter sans bloquer quand on ne
+//     peut pas prouver.
+//
+// LES MODIFICATIONS ne valident QUE les champs réellement écrits (les `mods`
+// Dexie) : une fiche ancienne au champ hérité bancal reste ÉDITABLE tant qu'on
+// ne touche pas ce champ — on valide l'ENTRÉE, on ne juge pas le stock existant.
+//
+// LA SOUPAPE : je peux m'être trompé dans une règle, et Ben n'a pas de
+// développeur sous la main. L'écran Sauvegardes porte donc un interrupteur
+// « validation stricte » (activée par défaut). Désactivée : PLUS RIEN n'est
+// refusé, mais chaque refus évité est journalisé (« rejet-ignoré ») et une
+// bannière ambre le rappelle — une protection débranchée en silence serait la
+// fausse sécurité de v1329.
+// ────────────────────────────────────────────────────────────────────────────
+// Les types — chacun répond à UNE question, en français.
+const VALIDE_TYPES = {
+  nombreFini:   v => typeof v === 'number' && Number.isFinite(v),
+  entier:       v => typeof v === 'number' && Number.isInteger(v),
+  chaine:       v => typeof v === 'string',
+  chaineNonVide:v => typeof v === 'string' && v.trim().length > 0,
+  booleen:      v => typeof v === 'boolean',
+  tableau:      v => Array.isArray(v),
+  objet:        v => v !== null && typeof v === 'object' && !Array.isArray(v),
+  // Une date-jour de l'app : 'AAAA-MM-JJ' (le format de today()/ymdLocal, partout).
+  dateJ:        v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v),
+  // Une référence d'enregistrement : nombre fini (id Dexie) ou chaîne non vide (uuid).
+  // 0 est accepté : le code s'en sert comme « sans fournisseur » (supplierId:0).
+  idRef:        v => (typeof v === 'number' && Number.isFinite(v)) || (typeof v === 'string' && v.length > 0),
+  // Un horodatage en millisecondes (Date.now()) : entier positif plausible.
+  horoMs:       v => typeof v === 'number' && Number.isInteger(v) && v > 0
+};
+// Le schéma par table. `requisCreation` : champs exigés à la CRÉATION (fondés sur le site
+// de création réel — cité). `champs` : type exigé QUAND le champ est écrit (absent = libre :
+// on ne valide que ce qu'on connaît, on n'invente pas de règle — v1370). `alertes` : le
+// niveau non bloquant (enums relevées dans le code, signes attendus).
+const VALIDE_SCHEMAS = {
+  orders: {
+    requisCreation: ['date','statut'],                    // cmdSave : date + statut toujours posés
+    champs: { date:'dateJ', statut:'chaineNonVide', clientId:'idRef', montant:'nombreFini',
+              lignes:'tableau', paiements:'tableau', remiseGlobale:'nombreFini', remiseGlobaleEur:'nombreFini',
+              fraisLivraison:'nombreFini', distanceKm:'nombreFini', tempsLivraisonMin:'nombreFini',
+              persoMacarons:'nombreFini', dateEvenement:'chaine', heureLivraison:'chaine' },
+    alertes: { montant:{ min:0 } }
+  },
+  orderItems: {
+    requisCreation: ['orderId'],                          // add : {orderId, productionId, qte}
+    champs: { orderId:'idRef', productionId:'idRef', qte:'nombreFini', batchId:'idRef' },
+    alertes: { qte:{ min:0 } }
+  },
+  clients: {
+    requisCreation: ['nom'],                              // saveClient : nom exigé par le formulaire
+    champs: { nom:'chaineNonVide', tel:'chaine', email:'chaine', adresse:'chaine', type:'chaine', notes:'chaine' }
+  },
+  charges: {
+    requisCreation: ['date','montant'],                   // saveCharge : « Date obligatoire », « Montant obligatoire »
+    champs: { date:'dateJ', montant:'nombreFini', categorie:'chaine', libelle:'chaine' },
+    alertes: { montant:{ min:0 } }                        // le formulaire impose > 0 ; ailleurs, on signale sans bloquer
+  },
+  markets: {
+    requisCreation: ['date'],
+    champs: { date:'dateJ', nom:'chaine', statut:'chaine', ca:'objet', prevuQte:'nombreFini' }
+  },
+  marketMoves: {
+    requisCreation: ['marketId','type'],                  // chaque add pose marketId + type (+ qte)
+    champs: { marketId:'idRef', productionId:'idRef', type:'chaineNonVide', qte:'nombreFini', date:'dateJ', parfum:'chaine' },
+    alertes: { type:{ enum:['sortie','retour','don','perte','degustation'] }, qte:{ min:0 } }
+  },
+  losses: {
+    requisCreation: ['qte'],
+    champs: { qte:'nombreFini', date:'dateJ', motif:'chaine', parfum:'chaine' },
+    alertes: { qte:{ min:0 } }
+  },
+  materialLosses: {
+    requisCreation: ['materialId'],                       // v30 : {materialId, lotId, date, motif}
+    champs: { materialId:'idRef', lotId:'idRef', date:'dateJ', motif:'chaine', qte:'nombreFini', cout:'nombreFini' },
+    alertes: { qte:{ min:0 }, cout:{ min:0 } }
+  },
+  materials: {
+    requisCreation: ['nom'],
+    champs: { nom:'chaineNonVide', unite:'chaine', prix:'nombreFini', capacite:'nombreFini' }
+  },
+  materialLots: {
+    requisCreation: ['materialId'],                       // réception : {materialId, supplierId, lotFournisseur…}
+    champs: { materialId:'idRef', supplierId:'idRef', lotFournisseur:'chaine', qte:'nombreFini',
+              qteRestante:'nombreFini', prix:'nombreFini', dlc:'chaine', date:'dateJ', ajustInventaire:'nombreFini' }
+  },
+  recipes: {
+    requisCreation: ['nom'],
+    champs: { nom:'chaineNonVide' }
+  },
+  recipeItems: {
+    requisCreation: ['recipeId','materialId'],
+    champs: { recipeId:'idRef', materialId:'idRef', qte:'nombreFini' },
+    alertes: { qte:{ min:0 } }
+  },
+  productions: {
+    requisCreation: [],                                   // plusieurs chemins de création : on ne fige que les types
+    champs: { recipeId:'idRef', date:'dateJ', qte:'nombreFini', dlc:'chaine' }
+  },
+  prodConsumption: {
+    requisCreation: ['productionId','materialLotId'],
+    champs: { productionId:'idRef', materialLotId:'idRef', qte:'nombreFini' },
+    alertes: { qte:{ min:0 } }
+  },
+  workSessions: {
+    requisCreation: ['date'],                             // ttConfirmStop : {date, debut, fin, dureeMin, tauxHoraire…}
+    champs: { date:'dateJ', debut:'chaine', fin:'chaine', dureeMin:'nombreFini', dureeHeures:'nombreFini',
+              pauseMin:'nombreFini', activite:'chaine', tauxHoraire:'nombreFini', coutTotal:'nombreFini' },
+    alertes: { dureeMin:{ min:0 }, tauxHoraire:{ min:0 } }
+  },
+  documents: {
+    requisCreation: ['type'],                             // devis/facture/avoir : type toujours posé
+    champs: { type:'chaineNonVide', statut:'chaine', numero:'chaine', clientId:'idRef', montant:'nombreFini',
+              lignes:'tableau', orderIds:'tableau', createdAt:'horoMs', acompte:'nombreFini' },
+    alertes: { type:{ enum:['devis','facture','avoir'] } }
+  },
+  batches: {
+    requisCreation: ['statut'],                           // v29 : {nom, orderIds[], statut, createdAt}
+    champs: { statut:'chaineNonVide', nom:'chaine', orderIds:'tableau', createdAt:'horoMs' },
+    alertes: { statut:{ enum:['ouvert','en_cours','clos'] } }
+  },
+  packagingConsumption: {
+    requisCreation: [],
+    champs: { qte:'nombreFini', date:'dateJ' },
+    alertes: { qte:{ min:0 } }
+  },
+  journalCompta: {
+    requisCreation: ['type','ts'],                        // v1359 : chaque écriture porte type + ts
+    champs: { type:'chaineNonVide', ts:'horoMs', orderId:'idRef', montant:'nombreFini', montantAvant:'nombreFini', montantApres:'nombreFini' }
+  },
+  kv: {
+    requisCreation: ['cle','valeur'],                     // v1372 : {cle, valeur, ts}
+    champs: { cle:'chaineNonVide', valeur:'chaine', ts:'horoMs' }
+  }
+};
+// Valide UNE valeur contre UN type déclaré (PURE). null/undefined passent toujours ici :
+// l'ABSENCE n'est pas une faute de type — elle n'est fautive qu'en création d'un champ requis
+// (v1326 : ne jamais confondre « absent » et « faux »).
+function _valideChamp(type, valeur){
+  if(valeur === null || valeur === undefined) return true;
+  const t = VALIDE_TYPES[type];
+  return t ? t(valeur) : true;   // type inconnu au schéma → on n'invente pas de règle
+}
+// Valide un objet contre le schéma de sa table (PURE).
+//   mode 'creation'      : requisCreation exigés + tous les champs présents typés.
+//   mode 'modification'  : SEULS les champs présents dans `obj` (les mods Dexie) sont jugés.
+//     Les chemins pointés ('a.b') ne sont validés que si le schéma les déclare tels quels —
+//     limite déclarée : on ne devine pas la forme interne d'un objet libre.
+// Retour : { ok, erreurs:[textes], alertes:[textes] } — des PHRASES, pas des codes : le motif
+// doit être lisible dans le toast et dans le journal.
+function _valideObjet(table, obj, mode){
+  const schema = VALIDE_SCHEMAS[table];
+  const res = { ok:true, erreurs:[], alertes:[] };
+  if(!schema || !obj || typeof obj !== 'object') return res;
+  if(mode === 'creation'){
+    (schema.requisCreation || []).forEach(ch => {
+      const v = obj[ch];
+      if(v === null || v === undefined || (typeof v === 'string' && v.trim() === '')){
+        res.erreurs.push(`champ requis absent : « ${ch} »`);
+      }
+    });
+  }
+  Object.keys(obj).forEach(ch => {
+    const type = schema.champs && schema.champs[ch];
+    if(type && !_valideChamp(type, obj[ch])){
+      res.erreurs.push(`« ${ch} » devrait être ${type} (reçu : ${_valideDecrit(obj[ch])})`);
+    }
+    const al = schema.alertes && schema.alertes[ch];
+    const v = obj[ch];
+    if(al && v !== null && v !== undefined){
+      if(Array.isArray(al.enum) && typeof v === 'string' && !al.enum.includes(v)){
+        res.alertes.push(`« ${ch} » vaut « ${v} », hors du vocabulaire connu (${al.enum.join(', ')})`);
+      }
+      if(typeof al.min === 'number' && typeof v === 'number' && Number.isFinite(v) && v < al.min){
+        res.alertes.push(`« ${ch} » vaut ${v}, sous le minimum habituel (${al.min})`);
+      }
+    }
+  });
+  res.ok = res.erreurs.length === 0;
+  return res;
+}
+// Décrit une valeur fautive pour le message d'erreur (PURE) — courte et honnête.
+function _valideDecrit(v){
+  if(typeof v === 'number') return Number.isNaN(v) ? 'NaN' : ('le nombre ' + v);
+  if(typeof v === 'string') return `la chaîne « ${v.length > 40 ? v.slice(0, 40) + '…' : v} »`;
+  if(Array.isArray(v)) return 'un tableau';
+  if(v && typeof v === 'object') return 'un objet';
+  return String(v);
+}
+// L'interrupteur. Activée par défaut : seule la valeur explicite '0' la débranche.
+function valideStricteActive(){
+  try{ return localStorage.getItem('sm_valideStricte') !== '0'; }catch(e){ return true; }
+}
+function valideStricteBascule(){
+  const off = !valideStricteActive();
+  localStorage.setItem('sm_valideStricte', off ? '1' : '0');
+  toast(off ? 'Validation stricte réactivée ✓' : 'Validation stricte DÉSACTIVÉE — les refus seront seulement journalisés');
+  if(view === 'backup' || view === 'backups') renderBackups();
+}
+// Compteur de session (affiché à l'écran Sauvegardes) : rejets et suspects depuis l'ouverture.
+const _valideCompteurs = { rejets:0, suspects:0 };
+// Journalise hors de la transaction en cours : depuis un hook, la zone Dexie active ne
+// contient pas auditLog — Dexie.ignoreTransaction est l'issue documentée (setTimeout en repli).
+function _horsTransaction(fn){
+  try{
+    if(typeof Dexie !== 'undefined' && Dexie.ignoreTransaction) return void Dexie.ignoreTransaction(fn);
+  }catch(e){ swallow(e, '_horsTransaction'); }
+  setTimeout(fn, 0);
+}
+// L'erreur typée du refus — son nom apparaît tel quel dans les console.error des appelants.
+class ValidationRefusee extends Error {
+  constructor(table, erreurs){
+    super(`Écriture refusée (${table}) : ${erreurs.join(' ; ')}`);
+    this.name = 'ValidationRefusee';
+    this.table = table; this.erreurs = erreurs;
+  }
+}
+// Traite le verdict d'un hook : alertes → journal ; erreurs → refus (strict) ou journal (souple).
+// Le refus n'est JAMAIS muet : toast immédiat + entrée de journal, que la validation soit
+// stricte ou débranchée — un refus évité en silence redeviendrait un mystère.
+function _valideApplique(table, verdict, op){
+  if(verdict.alertes.length){
+    _valideCompteurs.suspects += verdict.alertes.length;
+    _horsTransaction(() => db.auditLog.add({ ts:Date.now(), tbl:table, op:'suspect', cle:null,
+      resume:_auditResume({ operation:op, alertes:verdict.alertes }),
+      ecran:(typeof view !== 'undefined' && view) ? String(view) : '', v:APP_VERSION }).catch(e => swallow(e, 'valide suspect')));
+  }
+  if(verdict.ok) return;
+  const strict = valideStricteActive();
+  _valideCompteurs.rejets++;
+  _horsTransaction(() => db.auditLog.add({ ts:Date.now(), tbl:table, op:(strict ? 'rejet' : 'rejet-ignore'), cle:null,
+    resume:_auditResume({ operation:op, erreurs:verdict.erreurs }),
+    ecran:(typeof view !== 'undefined' && view) ? String(view) : '', v:APP_VERSION }).catch(e => swallow(e, 'valide rejet')));
+  if(strict){
+    try{ toast(`⛔ ${verdict.erreurs[0]} (${table}) — écriture refusée`); }catch(e){ swallow(e, 'valide toast'); }
+    throw new ValidationRefusee(table, verdict.erreurs);
+  }
+}
+// Installe la validation sur chaque table qui a un schéma. Lever une exception dans un hook
+// Dexie AVORTE l'opération et sa transaction : c'est le mécanisme documenté — le refus est
+// donc réel, pas cosmétique. S'installe AVANT les hooks d'audit : une écriture refusée ne
+// doit même pas être proposée au journal des écritures commises.
+function valideInstalle(){
+  Object.keys(VALIDE_SCHEMAS).forEach(nom => {
+    let t = null;
+    try{ t = db.table(nom); }catch(e){ swallow(e, 'valideInstalle ' + nom); }
+    if(!t) return;
+    t.hook('creating', function(pk, obj){
+      if(_importEnCours) return;                       // on valide l'ENTRÉE, pas l'existant restauré
+      _valideApplique(nom, _valideObjet(nom, obj, 'creation'), 'création');
+    });
+    t.hook('updating', function(mods){
+      if(_importEnCours) return;
+      if(!mods || !Object.keys(mods).length) return;
+      _valideApplique(nom, _valideObjet(nom, mods, 'modification'), 'modification');
+    });
+  });
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// [v1374] CHANTIER FIABILITÉ 3/3 — LA CARTE DES DÉPENDANCES ENTRE LES CHIFFRES.
+//
+// LE CONSTAT : les vagues 44-71 l'ont montré une à une — chaque chiffre de
+// l'app dépend d'autres chiffres et de tables précises, mais cette structure
+// n'existait NULLE PART : elle vivait dans ma tête de session en session, et
+// chaque bug de source (v1331 : CA à la date de commande vs d'encaissement ;
+// v1339 : deux vérités de stock) a été découvert APRÈS coup. La carte rend
+// cette structure EXPLICITE, VÉRIFIÉE et VISIBLE :
+//   • chaque figure déclare ses SOURCES (tables Dexie, clés kv) et ses AMONTS
+//     (les figures dont elle dépend) — plus sa RÈGLE gelée en une ligne, et
+//     les SUITES de tests qui la protègent ;
+//   • le moteur en déduit l'AVAL transitif : « telle table a changé → tels
+//     chiffres sont périmés → telles suites sont à relancer » ;
+//   • la garde v1374 vérifie que la carte ne MENT pas : chaque fonction citée
+//     existe, chaque table existe au schéma, chaque suite existe sur disque,
+//     et le graphe n'a pas de cycle. Une carte fausse est pire que pas de
+//     carte (le commentaire qui ment, v1372).
+//
+// CE QUE LA CARTE NE FAIT PAS (déclaré) : elle ne déclenche AUCUN re-rendu
+// automatique — recharger un écran sous les doigts de Ben (modale ouverte,
+// saisie en cours) créerait des régressions pires que le mal. Elle ÉMET un
+// événement ('sm-figures-perimees') et tient l'ensemble des figures périmées :
+// le rail est posé, les écrans s'y brancheront quand chacun aura sa preuve.
+// Consommateurs actuels : l'écran « Carte des chiffres » (fraîcheur), et
+// l'outil `node tests/quoi-retester.js <table…>` qui répond à « j'ai touché X,
+// qu'est-ce que je reteste ? ».
+// ────────────────────────────────────────────────────────────────────────────
+// Sources : un nom de table Dexie ('orders') ou une clé du stockage unifié
+// ('kv:sm_recurringCharges'). `fn` : la fonction de calcul RÉELLE (existence
+// vérifiée). `amont` : figures dont celle-ci dépend. `suites` : fichiers de
+// tests/ qui protègent cette figure (existence vérifiée par la suite v1374).
+const FIGURES = {
+  ca_encaisse: {
+    libelle:'CA encaissé (mois ou période)', fn:'computeMonthlyBilan',
+    tables:['orders','markets','marketMoves','charges'], amont:[],
+    regle:"compté à la date d'ENCAISSEMENT (paiements[]), jamais à la date de commande (v1331)",
+    suites:['monthly-bilan.test.js','ca-deux-verites.test.js','une-seule-verite.test.js','mois-partout.test.js','canal-oublie.test.js','pilotage-ca.test.js','v1342-periodes.test.js']
+  },
+  ca_marches: {
+    libelle:'CA des marchés (par jour et par mode)', fn:'caMarchesDuMois',
+    tables:['markets','marketMoves'], amont:[],
+    regle:"le CA saisi à la clôture fait foi ; les sorties/retours mesurent les volumes, pas l'argent",
+    suites:['market-channel.test.js','market-costs.test.js','marche-temps.test.js','canal-oublie.test.js']
+  },
+  charges_fixes: {
+    libelle:'Charges fixes mensuelles', fn:'chargesFixesMensuelles',
+    tables:['charges','kv:sm_recurringCharges','kv:sm_settings'], amont:[],
+    regle:'récurrentes matérialisées + charges saisies ; jamais les matières (elles vivent en lots)',
+    suites:['point-mort-verite.test.js','accounting.test.js']
+  },
+  cout_revient_recette: {
+    libelle:'Coût de revient (recette, FIFO)', fn:'coutRevientRecette',
+    tables:['recipes','recipeItems','materials','materialLots','kv:sm_settings'], amont:[],
+    regle:'coût au prix RÉEL des lots consommés (FIFO), pas au prix indicatif de la fiche matière',
+    suites:['fifo-materiel.test.js','fifo-stock.test.js','order-margins.test.js','cout-temps-marge.test.js','emballage-gratuit.test.js']
+  },
+  point_mort: {
+    libelle:'Point mort (seuil de rentabilité)', fn:'computePointMortVerite',
+    tables:['orders','kv:sm_settings'], amont:['charges_fixes','cout_revient_recette'],
+    regle:'charges fixes ÷ marge de contribution NETTE (URSSAF + IR déduits — v1324)',
+    suites:['point-mort.test.js','point-mort-verite.test.js','seuils-fiscaux.test.js']
+  },
+  stock_fini_parfum: {
+    libelle:'Stock fini par parfum', fn:'stockFiniParParfum',
+    tables:['productions','orderItems','marketMoves','losses','batches'], amont:[],
+    regle:'UNE seule vérité de reste par lot (v1339) ; pertes et sorties marché décomptées',
+    suites:['total-et-lots.test.js','reste-du.test.js','assembly-decrement.test.js','pertes-visibles.test.js','dlc-anti-recongel.test.js']
+  },
+  previsionnel: {
+    libelle:'Prévisionnel de production et de matières', fn:'computeForecast',
+    tables:['orders','recipes','recipeItems','materials','materialLots','kv:sm_mrp_times'], amont:['stock_fini_parfum'],
+    regle:'les besoins se déduisent des commandes À VENIR moins le stock réellement disponible',
+    suites:['forecast.test.js','prevision-revenu.test.js','material-needs.test.js','sales-velocity.test.js']
+  },
+  revenu_horaire: {
+    libelle:'Revenu horaire réel', fn:'revenuHoraireCalcul',
+    tables:['workSessions'], amont:['ca_encaisse'],
+    regle:'un temps non fiable est DIT non fiable, jamais moyenné en silence (v1337, v1369)',
+    suites:['revenu-horaire.test.js','temps-par-macaron.test.js','prestation-temps.test.js','marche-temps.test.js','v1364-atelier-chrono.test.js']
+  },
+  serenite: {
+    libelle:'Score de sérénité (charge vs capacité)', fn:'calculateSerenityScore',
+    tables:['orders','markets','productions'], amont:['stock_fini_parfum'],
+    regle:'la charge se mesure sur la fenêtre à venir ; les manques par parfum sont listés, pas lissés',
+    suites:[]   // angle mort DÉCLARÉ : aucune suite dédiée à ce jour (voir COUVERTURE v1374)
+  },
+  audit_comptable: {
+    libelle:'Audit de cohérence comptable (invariants)', fn:'auditComptable',
+    tables:['orders','journalCompta','documents','charges'], amont:[],
+    regle:'chaque rupture pointe sa pièce et sa règle ; pas de faux positif sur du sain (v1370)',
+    suites:['v1368-audit-comptable.test.js','v1359-inalterabilite.test.js','numerotation-legale.test.js']
+  },
+  audit_stock_temps: {
+    libelle:'Audit de cohérence stock & temps (invariants)', fn:'auditStock',
+    tables:['materialLots','prodConsumption','materialLosses','productions','workSessions'], amont:[],
+    regle:'attendu = initiale − conso − pertes − ajustements ; « inexplicable » ≠ « faux » (v1370)',
+    suites:['v1369-audit-stock-temps.test.js','gaspillage.test.js']
+  }
+};
+// Détection de cycle (PURE) : parcours en profondeur sur les arêtes `amont`.
+// Retourne null si le graphe est sain, sinon LE chemin du cycle (pour le dire, pas juste le compter).
+function _figCycle(figures){
+  const etats = {};   // 0/absent = vierge, 1 = en cours, 2 = fini
+  let cycle = null;
+  function visite(id, chemin){
+    if(cycle) return;
+    if(etats[id] === 1){ cycle = chemin.slice(chemin.indexOf(id)).concat(id); return; }
+    if(etats[id] === 2 || !figures[id]) return;
+    etats[id] = 1;
+    (figures[id].amont || []).forEach(a => visite(a, chemin.concat(id)));
+    etats[id] = 2;
+  }
+  Object.keys(figures).forEach(id => visite(id, []));
+  return cycle;
+}
+// L'AVAL transitif (PURE) : quelles figures sont périmées quand `source` change ?
+// `source` : un nom de table ('orders'), une clé kv ('kv:sm_settings') ou un id de figure.
+function _figAval(figures, source){
+  const touchees = new Set();
+  Object.keys(figures).forEach(id => {
+    if((figures[id].tables || []).includes(source)) touchees.add(id);
+  });
+  if(figures[source]) touchees.add(source);
+  let bouge = true;
+  while(bouge){
+    bouge = false;
+    Object.keys(figures).forEach(id => {
+      if(touchees.has(id)) return;
+      if((figures[id].amont || []).some(a => touchees.has(a))){ touchees.add(id); bouge = true; }
+    });
+  }
+  return touchees;
+}
+// Les suites à relancer pour un ensemble de sources modifiées (PURE, triées, dédupliquées).
+function _figSuitesPour(figures, sources){
+  const figs = new Set();
+  (sources || []).forEach(s => _figAval(figures, s).forEach(f => figs.add(f)));
+  const suites = new Set();
+  figs.forEach(f => (figures[f].suites || []).forEach(s => suites.add(s)));
+  return { figures:[...figs].sort(), suites:[...suites].sort() };
+}
+// Vérification au démarrage — une carte fausse est pire que pas de carte.
+// Non bloquant : on SIGNALE (console) sans empêcher l'app de démarrer ; la suite v1374
+// fait la même vérification en dur, elle, et casse la livraison si la carte ment.
+function _figVerifie(){
+  try{
+    const c = _figCycle(FIGURES);
+    if(c) console.error('Carte des chiffres : CYCLE — ' + c.join(' → '));
+    Object.keys(FIGURES).forEach(id => {
+      const f = FIGURES[id];
+      try{
+        if(typeof globalThis[f.fn] !== 'function') console.error(`Carte des chiffres : fonction absente — ${id} → ${f.fn}`);
+      }catch(e){ swallow(e, '_figVerifie fn'); }
+      (f.amont || []).forEach(a => { if(!FIGURES[a]) console.error(`Carte des chiffres : amont inconnu — ${id} → ${a}`); });
+    });
+  }catch(e){ swallow(e, '_figVerifie'); }
+}
+// L'ensemble des figures périmées depuis le dernier passage sur leur écran, et l'événement.
+// (Pas de re-rendu automatique — voir l'en-tête du bloc : le rail est posé, pas forcé.)
+const _figPerimees = new Set();
+function _figSignale(sources){
+  try{
+    const r = _figSuitesPour(FIGURES, sources);
+    if(!r.figures.length) return;
+    r.figures.forEach(f => _figPerimees.add(f));
+    if(typeof document !== 'undefined' && typeof CustomEvent === 'function'){
+      document.dispatchEvent(new CustomEvent('sm-figures-perimees', { detail:{ sources, figures:r.figures } }));
+    }
+  }catch(e){ swallow(e, '_figSignale'); }
+}
+// La carte, à l'écran — la structure invisible devient lisible.
+function renderFiguresModal(){
+  const aval = {};   // id → figures qui en dépendent (pour afficher « alimente »)
+  Object.keys(FIGURES).forEach(id => (FIGURES[id].amont || []).forEach(a => { (aval[a] = aval[a] || []).push(id); }));
+  const srcLabel = s => s.startsWith('kv:') ? `réglage ${s.slice(3)}` : `table ${s}`;
+  const blocs = Object.keys(FIGURES).map(id => {
+    const f = FIGURES[id];
+    const perimee = _figPerimees.has(id);
+    return `<div class="panel" style="margin-bottom:8px">
+      <b>${esc(f.libelle)}</b> ${perimee ? '<span class="tag warn">données modifiées depuis l\'ouverture</span>' : ''}
+      <p class="note" style="margin:4px 0">
+        Se calcule depuis : ${f.tables.map(t => `<b>${esc(srcLabel(t))}</b>`).join(', ')}${f.amont.length ? ' — et les chiffres : ' + f.amont.map(a => esc(FIGURES[a] ? FIGURES[a].libelle : a)).join(', ') : ''}.<br>
+        ${aval[id] && aval[id].length ? 'Alimente : ' + aval[id].map(a => esc(FIGURES[a].libelle)).join(', ') + '.<br>' : ''}
+        Règle : ${esc(f.regle)}.<br>
+        ${f.suites.length ? `Protégé par ${f.suites.length} suite(s) de tests.` : '<b>⚠ Aucune suite dédiée à ce jour</b> (angle mort déclaré).'}
+      </p>
+    </div>`;
+  }).join('');
+  openModal(`
+    <h2 style="margin-top:0">🕸 Carte des chiffres</h2>
+    <p class="note">Chaque chiffre de l'app déclare ici d'où il vient (tables, réglages, autres chiffres),
+    la règle qui le gouverne, et les tests qui le protègent. Quand une source change, les chiffres en aval
+    sont marqués « données modifiées ». La carte est VÉRIFIÉE par la suite v1374 : fonctions existantes,
+    tables existantes, suites existantes, aucun cycle.</p>
+    <div style="max-height:56vh;overflow:auto">${blocs}</div>
+  `);
+}
 
 const FLAVORS = [
   'Citron crémeux','Chocolat au lait','Chocolat noir','Framboise','Vanille',
@@ -8148,8 +8995,13 @@ function docEstDefinitif(d){ return d && d.type==='facture' && (d.statut==='emis
 // attribué n'est JAMAIS réutilisé ni recalculé. On NE déduit donc PAS le prochain numéro en
 // scannant les factures existantes (source de trous si une facture est supprimée/réimportée) :
 // on conserve un compteur persistant qui ne fait que s'incrémenter.
-// La dernière valeur ATTRIBUÉE est mémorisée dans localStorage 'sm_factSeq' (inclus dans les
-// sauvegardes). Démarre de sorte que la 1re facture porte le n°24.
+// La dernière valeur ATTRIBUÉE est mémorisée sous 'sm_factSeq'. [v1372] Ce commentaire affirmait
+// « inclus dans les sauvegardes » alors que la clé ne figurait PAS dans BACKUP_LS_KEYS — un
+// commentaire qui ment est pire qu'une absence de commentaire : il dispense de vérifier.
+// C'est VRAI depuis la v1372 : la clé est métier (KV_METIER), donc recopiée dans la table `kv`,
+// donc sauvegardée et restaurée avec le reste. (Le garde-fou ci-dessous, qui ré-ancre la séquence
+// sur la plus haute facture définitive, reste en place : deux filets valent mieux qu'un pour une
+// obligation légale.) Démarre de sorte que la 1re facture porte le n°24.
 const FACT_SEQ_KEY = 'sm_factSeq';
 function _factSeqGet(){
   const raw = parseInt(localStorage.getItem(FACT_SEQ_KEY), 10);
@@ -36358,6 +37210,12 @@ const APP_KB = [
     tags:'sauvegarde backup restauration export import donnees fichier rappel ios safari perte purge securite icloud cloud drive partage',
     r:`<p>Onglet <b>Sauvegarde &amp; sécurité</b>. Le plus simple : <b>☁️ Sauvegarder sur iCloud</b> — l'app ouvre le partage iOS, choisis <b>« Enregistrer dans Fichiers » → iCloud Drive</b> (le dossier est mémorisé, les fois suivantes vont plus vite). Tu peux aussi <b>Exporter</b> un fichier .json à ranger ailleurs (e-mail, autre cloud), puis le <b>réimporter</b> pour restaurer (remplacement ou fusion). ⚠️ Important : effacer l'historique Safari <b>supprime aussi la base de l'app</b> (limite iOS) — seule une copie hors appareil (iCloud, fichier) te protège. À l'ouverture, l'app fait une <b>sauvegarde interne quotidienne</b> et te <b>propose automatiquement</b> d'enregistrer sur iCloud si ta dernière sauvegarde dépasse le délai réglé (mets <b>1 jour</b> pour un rappel quotidien). Note : une app web ne peut pas écrire seule dans iCloud sans ce petit geste de validation — c'est une sécurité d'iOS.</p>
     <p>🔧 <b>Corriger la consommation d'un lot</b> : si tu as ajouté un ingrédient au BOM <b>après</b> avoir produit un lot (cas classique : une crème oubliée dans la recette), ce lot n'a pas décrémenté cet ingrédient. Cet outil (dans cette rubrique) <b>rattache la consommation manquante</b> en FIFO, avec la traçabilité préservée, sans rien supprimer. Pense à sauvegarder avant.</p>` },
+  { id:'stockage-audit', titre:'Stockage unifié, journal des écritures, validation & carte des chiffres',
+    tags:'stockage unifie kv audit journal ecritures trace historique modification suppression qui quand pyramide compteur facture restauration purge reglages validation refus type carte chiffres dependances retester',
+    r:`<p>Depuis la <b>v1372</b>, tes réglages métier (modèles de pyramides, compteur légal de factures, journal du copilote, charges récurrentes, temps appris…) sont <b>recopiés dans la base</b> en plus du stockage local : ils partent dans <b>chaque sauvegarde</b> et <b>survivent à une restauration ou une purge iOS</b>. Si l'appareil est purgé, l'app les restaure toute seule au démarrage et te le dit.</p>
+    <p>Chaque <b>écriture en base</b> (création, modification, suppression) laisse une <b>trace datée</b> : quelle table, quel enregistrement, et <b>champ par champ</b> ce qui a changé, depuis quel écran. Consulte-la via <b>Sauvegarde &amp; sécurité → 📜 Voir le journal des écritures</b> (rétention : les 2000 plus récentes). Les <b>encaissements</b> gardent en plus leur journal légal inaltérable dans Comptabilité.</p>
+    <p>Depuis la <b>v1373</b>, chaque écriture est <b>validée à l'entrée</b> : une donnée prouvablement mal formée (montant en texte, date malformée…) est <b>refusée avec un motif lisible</b> ; une donnée seulement suspecte passe et est journalisée. Si un refus te bloque à tort : <b>Sauvegarde &amp; sécurité → ⏸ Désactiver la validation stricte</b> (les refus évités restent journalisés).</p>
+    <p>Depuis la <b>v1374</b>, la <b>🕸 Carte des chiffres</b> (même écran) montre d'où vient chaque chiffre (tables, réglages, autres chiffres), sa règle, et les tests qui le protègent — et marque « données modifiées » ce qui est périmé.</p>` },
   { id:'assistant', titre:'Assistant IA (hors-ligne)',
     tags:'assistant ia aide question stock commande tendance rupture comment fonctionne localiser ou sont joindre piece fichier photo txt notes coller',
     r:`<p>L'assistant fonctionne <b>hors-ligne</b>. Il sait : <b>localiser tes macarons</b> (« où sont mes macarons vanille ? »), <b>créer une commande en langage naturel</b>, répondre sur le stock, le CA, les tendances, les ruptures, et expliquer le fonctionnement. Tu peux <b>📎 Joindre</b> un <b>fichier texte (.txt)</b> : son contenu est ajouté à ta demande. Une <b>photo</b> peut être jointe comme simple <b>aperçu visuel temporaire</b> (l'assistant ne lit pas son contenu, et rien n'est enregistré dans l'app). Depuis l'app Notes de l'iPhone, fais <b>Copier</b> puis colle le texte dans le champ (l'accès direct aux notes Apple n'est pas possible). Toute action critique demande validation. Envoi : touche <b>Entrée</b>.</p>` },
@@ -47136,7 +47994,16 @@ async function handleTraceAnchor(){
 }
 
 
-const TABLES = ['suppliers','materials','materialLots','recipes','recipeItems','productions','prodConsumption','clients','orders','orderItems','events','products','charges','markets','marketMoves','losses','workSessions','pmsEquipments','temperatureLogs','pmsTasks','cleaningLogs','prodSessions','storageBoxes','equipmentSpecs','documents','components','packagingConsumption','fixJournal','batches'];
+const TABLES = ['suppliers','materials','materialLots','recipes','recipeItems','productions','prodConsumption','clients','orders','orderItems','events','products','charges','markets','marketMoves','losses','workSessions','pmsEquipments','temperatureLogs','pmsTasks','cleaningLogs','prodSessions','storageBoxes','equipmentSpecs','documents','components','packagingConsumption','fixJournal','batches',
+  'kv','auditLog'];   // [v1372] stockage unifié + journal d'audit — dans les sauvegardes comme le reste
+// [v1372] LISTE FIGÉE des tables telles qu'elles étaient AVANT la v1372. La somme de contrôle
+// d'une sauvegarde est calculée sur une liste de tables : si cette liste change en silence,
+// TOUTES les sauvegardes passées deviennent « invalides » aux yeux du vérificateur — non parce
+// qu'elles sont corrompues, mais parce qu'on a changé de règle sans le dire. Règle gelée :
+// UNE SOMME DE CONTRÔLE DONT LE PÉRIMÈTRE BOUGE SANS ÊTRE ÉCRIT DANS LE FICHIER N'EN EST PAS UNE.
+// Les nouvelles sauvegardes embarquent donc leur propre périmètre (_checksumTables) ; les
+// anciennes, qui n'en ont pas, sont vérifiées sur cette liste-ci, figée à jamais.
+const TABLES_CHECKSUM_HERITAGE = ['suppliers','materials','materialLots','recipes','recipeItems','productions','prodConsumption','clients','orders','orderItems','events','products','charges','markets','marketMoves','losses','workSessions','pmsEquipments','temperatureLogs','pmsTasks','cleaningLogs','prodSessions','storageBoxes','equipmentSpecs','documents','components','packagingConsumption','fixJournal','batches'];
 const BACKUP_VERSION = 2;
 const MAX_BACKUPS = 20; // historique conservé en base (les plus anciens sont purgés)
 
@@ -47161,7 +48028,8 @@ async function buildDump(){
     }
   }catch(e){swallow(e,'buildDump')}
   dump._localStorage = collectLocalSettings(); // réglages hors IndexedDB (emballages, charges, préférences…)
-  dump._checksum = backupChecksum(dump);        // checksum calculé sur les TABLES uniquement
+  dump._checksumTables = TABLES.slice();        // [v1372] le périmètre de la somme voyage AVEC le fichier
+  dump._checksum = backupChecksum(dump);        // checksum calculé sur les tables du périmètre uniquement
   return dump;
 }
 // Clés localStorage incluses dans les sauvegardes (réglages persistants, hors état purement transitoire).
@@ -47180,8 +48048,12 @@ function applyLocalSettings(dump){
 }
 // Somme de contrôle simple et déterministe (hash 32 bits, type DJB2) sur les données (hors méta).
 function backupChecksum(dump){
+  // [v1372] Le PÉRIMÈTRE de la somme est celui écrit DANS le fichier (_checksumTables).
+  // À défaut (sauvegardes d'avant v1372), on vérifie sur la liste héritée figée — jamais sur
+  // TABLES courant : sinon chaque table ajoutée « invaliderait » rétroactivement tout l'historique.
+  const perimetre = Array.isArray(dump && dump._checksumTables) ? dump._checksumTables : TABLES_CHECKSUM_HERITAGE;
   let str='';
-  for(const t of TABLES){ str += t+':'+JSON.stringify(dump[t]||[])+';'; }
+  for(const t of perimetre){ str += t+':'+JSON.stringify(dump[t]||[])+';'; }
   let h=5381;
   for(let i=0;i<str.length;i++){ h=((h<<5)+h+str.charCodeAt(i))|0; }
   return (h>>>0).toString(16); // non signé, hexadécimal
@@ -47230,6 +48102,8 @@ function verifyBackup(dump){
 // et les clés étrangères internes au dump sont remappées (clientId, marketId, recipeId, etc.).
 // Retourne un récapitulatif {table:nbAjouté}.
 async function mergeDump(dump){
+  // [v1373] Import-fusion = hooks suspendus (audit + validation) : voir _importEnCours.
+  _importEnCours = true;
   const added={};
   // ordre d'insertion : les "parents" d'abord pour pouvoir remapper les enfants
   const order=['suppliers','materials','clients','recipes','products','events',
@@ -47270,12 +48144,19 @@ async function mergeDump(dump){
       }
       added[t]=n;
     }
-  });
+  }).finally(()=>{ _importEnCours = false; });
+  // UNE entrée récapitulative au journal — la fusion a eu lieu, table par table.
+  try{ await db.auditLog.add({ ts:Date.now(), tbl:'*', op:'fusion', cle:null,
+    resume:_auditResume(added),
+    ecran:(typeof view!=='undefined'&&view)?String(view):'', v:APP_VERSION }); }catch(e){ swallow(e,'audit fusion'); }
   return added;
 }
 
 // ---- Application d'un dump à la base (remplacement atomique) ----
 async function applyDump(dump){
+  // [v1373] Restauration = hooks suspendus (audit + validation) : voir _importEnCours.
+  _importEnCours = true;
+  try{
   // PROTECTION sessions d'atelier : si le dump importé ne contient PAS de sessions, on préserve
   // celles déjà présentes (cache + base) au lieu de les effacer. Une restauration de sauvegarde
   // ancienne/partielle ne doit jamais détruire des sessions absentes du fichier.
@@ -47288,11 +48169,20 @@ async function applyDump(dump){
     for(const t of TABLES){
       // on ne vide pas prodSessions si le dump n'en contient pas (préservation)
       if(t==='prodSessions' && !dumpAUneSession) continue;
+      // [v1372] MÊME RÈGLE pour kv et auditLog : une sauvegarde d'AVANT v1372 ne connaît pas
+      // ces tables — la restaurer ne doit pas EFFACER le stockage unifié ni le journal d'audit.
+      // Un journal d'audit qu'une restauration peut vider n'est pas un journal d'audit.
+      if((t==='kv' || t==='auditLog') && !Array.isArray(dump[t])) continue;
       await db.table(t).clear();
       if(Array.isArray(dump[t]) && dump[t].length) await db.table(t).bulkAdd(dump[t]);
     }
   });
   applyLocalSettings(dump); // réapplique les réglages (emballages, charges, préférence de menu…) si présents
+  // [v1372] La table kv vient (peut-être) d'être remplacée par celle du fichier ; localStorage
+  // porte encore les valeurs d'AVANT la restauration → on réapplique kv → localStorage pour que
+  // les clés métier (modèles de pyramides, compteur de factures, journal copilote…) reflètent
+  // bien la sauvegarde restaurée, comme les tables.
+  try{ await kvRestaureLSDepuisBase(); }catch(e){ console.error('restore kv→LS', e); }
   // Resynchronise le cache localStorage des sessions. Si le dump n'avait pas de sessions, on
   // réinjecte celles qu'on a préservées (et on les remet en base par sécurité).
   try{
@@ -47310,6 +48200,13 @@ async function applyDump(dump){
   try{ await syncAfterMaterialChange(); }catch(e){ console.error('restore sync mats', e); }
   try{ await refreshEmbEstRatioMarches(); }catch(e){ console.error('restore sync marches', e); }
   try{ if(typeof refreshMoCtx==='function') await refreshMoCtx(); }catch(e){ console.error('restore sync moCtx', e); }
+  }finally{ _importEnCours = false; }
+  // [v1374] Après une restauration, TOUT est potentiellement périmé : on le signale une fois.
+  try{ _figSignale(TABLES.slice()); }catch(e){ swallow(e,'fig restauration'); }
+  // UNE entrée récapitulative au journal — la restauration a eu lieu, avec son ampleur.
+  try{ await db.auditLog.add({ ts:Date.now(), tbl:'*', op:'restauration', cle:null,
+    resume:_auditResume({ enregistrements:dumpRecordCount(dump), date:dump._date||null, version:dump._version||null }),
+    ecran:(typeof view!=='undefined'&&view)?String(view):'', v:APP_VERSION }); }catch(e){ swallow(e,'audit restauration'); }
 }
 
 // ---- EXPORT MANUEL (fichier .json téléchargé) ----
@@ -50567,6 +51464,22 @@ async function renderBackups(){
      </div>
      <p class="note"><b>☁️ Sauvegarder sur iCloud</b> : ouvre le partage iOS — choisis <b>« Enregistrer dans Fichiers » → iCloud Drive</b> (le dossier est mémorisé ensuite). « Sauvegarder maintenant » garde une copie dans l'app. L'import « Importer » <b>remplace</b> tout ; « en fusion » <b>ajoute</b> sans rien effacer. Une sauvegarde automatique se fait à l'ouverture.</p>
    </div>
+   ${await (async()=>{ // [v1372] Stockage unifié + journal des écritures
+     let nKv=0, nAudit=0; try{ nKv=await db.kv.count(); }catch(e){swallow(e,'renderBackups kv')} try{ nAudit=await db.auditLog.count(); }catch(e){swallow(e,'renderBackups audit')}
+     const nMetier=Object.keys(KV_METIER).length;
+     const panne=_kvEnPanne>0?`<div class="banner" style="background:#fdf3f2;border-color:#f0c9c4">⚠ <div>La copie durable a échoué ${_kvEnPanne} fois d'affilée — les réglages restent dans l'app mais ne sont <b>pas encore</b> recopiés en base. Réessaie plus tard ou exporte une sauvegarde.</div></div>`:'';
+     const strict=valideStricteActive();
+     const banValide=!strict?`<div class="banner" style="background:#fdf3e7;border-color:#e0a458">⚠ <div><b>Validation stricte désactivée</b> — les écritures mal typées ne sont plus refusées, seulement journalisées. Réactive-la dès que possible.</div></div>`:'';
+     return `<div class="panel"><h2>🗄️ Stockage unifié &amp; journal des écritures</h2>
+     ${panne}${banValide}
+     <p class="note" style="margin-bottom:8px">Depuis la v1372, les <b>${nMetier} réglages métier</b> (modèles de pyramides, compteur légal de factures, journal du copilote, charges récurrentes…) sont recopiés dans la base (<b>${nKv}</b> présents) : ils partent dans les sauvegardes et <b>survivent à une restauration ou à une purge iOS</b> — ce qui n'était pas le cas avant. Chaque écriture en base laisse une trace datée, champ par champ (<b>${nAudit}</b> entrées, rétention ${AUDIT_MAX_ENTREES}). Les encaissements gardent en plus leur journal légal inaltérable.</p>
+     <p class="note" style="margin-bottom:8px">Depuis la v1373, chaque écriture est aussi <b>validée à l'entrée</b> (types, champs requis) : une donnée prouvablement mal formée est <b>refusée</b> avec un motif lisible ; une donnée seulement suspecte (vocabulaire inconnu, signe inhabituel) <b>passe et est journalisée</b>. Cette session : <b>${_valideCompteurs.rejets}</b> refus, <b>${_valideCompteurs.suspects}</b> suspects. Si un refus te bloque à tort, désactive temporairement la validation stricte ci-dessous — chaque refus évité restera journalisé.</p>
+     <div class="flex" style="flex-wrap:wrap;gap:8px">
+       <button class="btn ghost" onclick="renderAuditModal('')">📜 Voir le journal des écritures</button>
+       <button class="btn ghost" onclick="valideStricteBascule()">${strict?'⏸ Désactiver la validation stricte':'▶ Réactiver la validation stricte'}</button>
+       <button class="btn ghost" onclick="renderFiguresModal()">🕸 Carte des chiffres</button>
+     </div>
+   </div>`;})()}
    <div class="panel"><h2>🔧 Corriger la consommation d'un lot</h2>
      <p class="note" style="margin-bottom:8px">Si un ingrédient a été <b>ajouté au BOM après</b> la production d'un lot, ce lot n'a pas décrémenté cet ingrédient. Cet outil rattache la consommation manquante (FIFO, traçabilité préservée) sans rien supprimer.</p>
      <button class="btn" onclick="consoFixForm()">🔧 Rattacher une consommation manquante</button>
@@ -66132,6 +67045,15 @@ function startClock(){
 (async()=>{
   // Le rendu ne doit JAMAIS être bloqué par une migration ou un seed.
   // On enveloppe toute la préparation ; quoi qu'il arrive, render() est appelé.
+  // [v1372] Stockage unifié : les hooks d'audit s'installent AVANT toute écriture de la session
+  // (sinon les écritures des migrations/seeds échapperaient au journal), et la réconciliation
+  // localStorage ↔ kv se fait AVANT les migrations — elles LISENT localStorage (sm_settings,
+  // sm_recurringCharges…), il doit donc être re-garni d'abord si l'appareil a été purgé/restauré.
+  try{ valideInstalle(); }catch(e){ console.error('valideInstalle', e); }   // [v1373] la validation refuse AVANT que l'audit ne journalise
+  try{ auditInstalle(); }catch(e){ console.error('auditInstalle', e); }
+  try{ await kvBoot(); }catch(e){ console.error('kvBoot', e); }
+  try{ _auditPrune(); }catch(e){ swallow(e,'boot auditPrune'); }   // rétention — sans bloquer le rendu
+  try{ _figVerifie(); }catch(e){ swallow(e,'boot figVerifie'); }    // [v1374] une carte fausse est pire que pas de carte
   try{
     migratePackaging202511();   // inscrit les tarifs emballage 28/11/2025 (une seule fois)
     migrateIRTranche2026();     // règle le taux marginal d'imposition à 30 % s'il n'a jamais été fixé (une seule fois)

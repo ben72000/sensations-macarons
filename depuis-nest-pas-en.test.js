@@ -190,7 +190,17 @@ console.log('\n=== TESTS — Vague 56 : « depuis » n\'est pas « en » ===\n')
 // fabriquant précisément le chiffre plausible et faux que cette série traque.
 {
   const i = APP.indexOf('const AI_INTENTS_MOIS_ATTENDU');
-  const zone = APP.slice(Math.max(0, i - 1200), i + 300);
+  // [v1372] La fenêtre était FIXE (1200 caractères avant la const). Une vague ultérieure a
+  // inséré _aiRaisonAveu (la fonction qui PORTE désormais les aveux) entre la justification
+  // et la liste : le vocabulaire a glissé hors fenêtre, et G1/G2 ont crié au loup sur du code
+  // sain. Une garde ancrée sur une DISTANCE EN OCTETS teste la mise en page, pas la règle.
+  // On ancre désormais sur le DOSSIER de justification lui-même (« LES TROIS QUI RESTENT »),
+  // et G0 vérifie qu'il reste ATTACHÉ à la liste (< 8000 caractères) : la justification peut
+  // grossir, pas déménager.
+  const j = APP.lastIndexOf('LES TROIS QUI RESTENT', i);
+  ok(j !== -1 && i - j < 8000,
+     'G0 · le dossier de justification reste ATTACHÉ à la liste des aveux (pas ailleurs dans le fichier)');
+  const zone = APP.slice(Math.max(0, j), i + 300);
 
   ok(/PLAUSIBLE ET FAUX/.test(zone),
      'G1 · la rentabilité est justifiée : filtrer ses seules commandes donnerait un chiffre PLAUSIBLE ET FAUX');

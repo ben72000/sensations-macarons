@@ -68,7 +68,33 @@ const SUITES = [
   'canal-oublie.test.js',         // vague 57+58 : le CA des MARCHÉS + le fond de caisse + « zéro n'est pas une mesure »
   'vocabulaire.test.js',          // vague 59 : audit de vocabulaire — aucune comparaison contre une valeur qui n'existe pas
   'total-et-lots.test.js',        // vague 60 : le total EST la somme du détail + l'état « en cours » des lots (vrai câblage)
-  'reste-du.test.js'              // vague 61 : le total ET le reste dû (un trop-perçu ne paie pas la commande d'à côté)
+  'reste-du.test.js',             // vague 61 : le total ET le reste dû (un trop-perçu ne paie pas la commande d'à côté)
+  'pyramide-montage.test.js',     // vague 62 : le montage pyramide dans la vue rapide (étages déduits, jamais inventés)
+  // [v1372] LES 18 SUITES ORPHELINES. Les vagues 63 à 71 ont chacune livré leur fichier de test —
+  // aucun n'avait été inscrit ici. Une suite qui ne tourne jamais dans l'agrégat est une garde
+  // MORTE (vague 59 : « un if qui ne tirera jamais ») : elle rassure sans protéger. Toutes
+  // signalent l'échec par leur code de sortie, comme les autres ; l'agrégateur les voit donc.
+  'v1342-periodes.test.js',        // vague 63 : le mois ET la semaine (_dansPeriode, prorata journalier)
+  'v1343-associations.test.js',    // v1343 : associations coffrets (capture de composition)
+  'v1345-routage.test.js',         // v1345 : routage copilote (compléments)
+  'v1350-generateur.test.js',      // v1350 : générateur (Studio Com)
+  'v1351-schema-dexie.test.js',    // v1351 : le schéma Dexie déclaré = le schéma réel
+  'v1352-cablage.test.js',         // v1352 : câblage des écrans
+  'v1355-volumes.test.js',         // v1355 : volumes normalisés
+  'v1357-onclick.test.js',         // v1357 : onclick échappés (héritier de la vague 50)
+  'v1358-batch-rangement.test.js', // v1358 : rangement des lots
+  'v1359-inalterabilite.test.js',  // v1359 : inaltérabilité des encaissements (contrepassation)
+  'v1360-livre-recettes.test.js',  // v1360 : livre des recettes chaîné par empreintes
+  'v1362-acompte.test.js',         // v1362 : acomptes
+  'v1363-modal-imbrique.test.js',  // v1363 : modales imbriquées
+  'v1364-atelier-chrono.test.js',  // v1364 : chrono d'atelier
+  'v1366-moyen-normalise.test.js', // v1366 : moyens normalisés
+  'v1367-livre-sortie.test.js',    // v1367 : sorties du livre
+  'v1368-audit-comptable.test.js', // v1368 : détecteur d'anomalies comptables (invariants)
+  'v1369-audit-stock-temps.test.js', // v1369-70 : détecteur d'anomalies stock & temps
+  'v1372-stockage-unifie.test.js', // v1372 : stockage unifié (kv) + journal d'audit + périmètre de somme versionné
+  'v1373-validation.test.js',      // v1373 : schémas de validation à l'entrée (bloquant typé + alerte journalisée)
+  'v1374-carte-figures.test.js'    // v1374 : la carte des dépendances entre les chiffres (aval transitif, quoi-retester)
 ];
 
 let allOk = true;
