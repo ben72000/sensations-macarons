@@ -96,7 +96,9 @@ const SUITES = [
   'v1373-validation.test.js',      // v1373 : schémas de validation à l'entrée (bloquant typé + alerte journalisée)
   'v1374-carte-figures.test.js',   // v1374 : la carte des dépendances entre les chiffres (aval transitif, quoi-retester)
   'v1375-etiquettes-boites.test.js', // v1375 : les deux bugs d'étiquettes de mise en boîte (modèle vs DOM, modal en place)
-  'v1376-fusion-boites.test.js'     // v1376 : fusion de deux boîtes du même lot (règle stricte + traçabilité)
+  'v1376-fusion-boites.test.js',    // v1376 : fusion de deux boîtes du même lot (règle stricte + traçabilité)
+  'v1377-rebascule-devis.test.js',   // v1377 : rebascule commande→devis (zone morte) + devis périmé/régénération
+  'v1378-rappel-pesee.test.js'      // v1378 : plus de rappel de pesée sur les deux étapes meringue
 ];
 
 let allOk = true;

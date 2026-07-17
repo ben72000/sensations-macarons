@@ -3141,3 +3141,81 @@ dédié, sélection à exactement 2, entrée écran, mode QR).
 Fusionner la boîte-fille d'une boîte déjà fusionnée (scission d'une boîte) sort de « même lot » au sens
 `etiquetteDe` et est refusée — volontaire : au-delà d'un niveau, la provenance physique n'est plus
 univoque.
+
+---
+
+## 2026-07-17 — DEVIS ↔ COMMANDE : rebascule réparée + devis périmé/régénération  (v1376 → **v1377**)
+
+Signalé par Ben (après vérification de l'état du code avant toute modif) : un devis accepté passe en
+commande ; modifier la commande ne met pas le devis à jour ; et **repasser la commande en devis
+affiche une erreur** (« impossible après acceptation »). Diagnostic d'abord, correctif ensuite.
+
+### BUG ① — la rebascule commande→devis plantait (zone morte temporelle)
+`cmdToDevisConfirm` contenait `const today = today();`. Le `const today` (portée bloc) **masque** la
+fonction globale `today()` et l'appelle **avant son initialisation** → `ReferenceError: Cannot access
+'today' before initialization`. Reproduit à l'identique en isolé. Le `catch` affichait le message
+générique « Erreur pendant la transformation en devis ». Les garde-fous amont (paiement, batch,
+emballage) bloquaient déjà les cas non convertibles ; une commande **propre** (devis accepté par
+erreur, sans paiement — le cas de Ben) passait les gardes puis plantait sur la zone morte.
+> **FIX** : renommer la variable (`const auj = today();`) pour que l'appel vise la fonction globale.
+> L'oubli était ISOLÉ : les 3 autres `o.date||today()` du fichier gardent leurs parenthèses (corrects).
+> Prouvé par reproduction (A1) + garde anti-réintroduction (A2).
+
+### FEATURE ③ — le devis ne suivait pas la commande : périmé + régénérer + envoyer
+Décision métier de Ben : **marquer le devis périmé** (pas le synchroniser en douce), pouvoir le
+**régénérer** depuis la commande, puis **proposer l'envoi au client**. Un devis accepté est une copie
+figée de l'offre ; on ne le réécrit jamais silencieusement.
+- `_devisPerime(devis, order)` (PURE) : vrai si lignes ou montant divergent (`money2` lisse les
+  centimes). Base de comparaison identique à l'acceptation (qui copie `lignes`/`montant` du devis) →
+  **aucune fausse alerte** tant que Ben n'a rien changé (v1370).
+- `saveCmd` (édition de commande) **pose ou lève** le drapeau `perimeCommande` sur le(s) devis liés —
+  jamais le contenu du document, juste le signal.
+- L'écran document affiche, pour un devis converti mais divergent, un bandeau « ce devis ne correspond
+  plus à la commande » + bouton **🔄 Régénérer depuis la commande**. Un devis à jour garde son simple
+  « ✓ Converti en commande ».
+- `devisRegenererDepuisCommande(dvId)` recopie le contenu ACTUEL de la commande dans le devis (mêmes
+  numéro et statut « accepté »), lève le drapeau, puis **propose l'envoi** (« Visualiser & envoyer »
+  via `genererDevisDoc`, réutilisant le canal d'envoi existant). N'écrit QUE le document.
+
+### Suite v1377 : 22 assertions (83 suites au total, toutes vertes)
+Reproduction de la zone morte (A1) + antipattern banni (A2) ; `_devisPerime` comportemental (identique
+→ pas périmé, montant/ligne changés → périmé, centime sous l'arrondi ignoré) ; régénération (recopie
+commande, lève le drapeau, propose l'envoi, ne touche pas la commande) ; câblage saveCmd + bandeau.
+
+### Angle mort déclaré
+La comparaison de péremption porte sur `lignes` + `montant`. Un changement de livraison/remise SANS
+impact sur le montant total ne lève pas le drapeau — assumé : le montant est le signal fiable de
+divergence d'offre. La régénération, elle, recopie tous ces champs annexes.
+
+---
+
+## 2026-07-17 — ATELIER : le rappel de pesée ne s'ouvre plus sur les deux étapes meringue  (v1377 → **v1378**)
+
+**Demande de Ben** : pendant une production, la fiche de pesée (grammages des ingrédients) s'auto-ouvre
+au lancement d'une étape de pesée dans l'atelier. Il veut la **retirer pour exactement deux étapes** —
+« Pesée des ingrédients meringue » et « Pesée de la meringue pour division » — et la **garder pour le
+tant pour tant ». À ces deux étapes les ingrédients sont déjà pesés : le rappel est du bruit.
+
+### Diagnostic préalable (avant toute modif)
+Deux rappels coexistent : (A) la fiche recette complète, auto-ouverte à chaque lancement de batch
+(`lancerBatchAvecFiche`, « TOUJOURS ») ; (B) la fiche de pesée, auto-ouverte au lancement d'une étape
+de pesée (`atLaunch` → `atFichePesee`). Table des déclencheurs actuels de (B), vérifiée : tant pour
+tant → oui ; ingrédients meringue → oui ; meringue pour division → oui ; ingrédients (générique),
+macaronnage, cuisson, garnissage → non. Ben visait le rappel **B**.
+
+### Le changement — on sépare la POLITIQUE de l'IDENTIFICATEUR
+`_atPeseeKind(label)` gardait un double rôle implicite : nommer le type de pesée ET décider de
+l'auto-ouverture. On introduit `_atRappelPesee(label)` (PURE) qui porte la **politique** d'ouverture :
+elle ne renvoie que `'tpt'`, sinon `null`. `atLaunch` décide désormais via `_atRappelPesee`.
+> **Pourquoi ne pas juste retirer la branche meringue de `_atPeseeKind` ?** Parce que retirer un
+> rappel ne doit pas faire MENTIR l'identificateur : `_atPeseeKind` doit continuer à reconnaître une
+> pesée meringue (C1) pour tout usage futur. On coupe la décision, pas la connaissance.
+
+### Suite v1378 : 11 assertions (84 suites au total, toutes vertes)
+La demande au mot (A1/A2 : les deux étapes meringue ne rappellent plus ; A3 : le tant pour tant si) ;
+rien d'autre n'a bougé (B) ; l'identificateur `_atPeseeKind` est intact (C) ; le câblage passe par la
+politique et bannit le retour de `'meringue'` (D3, garde anti-réintroduction).
+
+### Non touché (déclaré)
+Le rappel (A) — fiche recette complète au lancement de batch — reste inchangé : Ben visait
+explicitement le rappel B. Les grammages meringue restent consultables via cette fiche complète.
