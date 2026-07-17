@@ -3050,3 +3050,94 @@ trois mensonges — fonction, amont, suite (D2). Le commit prévient la carte, s
   par vague, gardes à l'appui.
 - L'événement `sm-figures-perimees` n'a pas encore de consommateur d'écran : rail posé, branchement
   à prouver écran par écran.
+
+---
+
+## 2026-07-17 — MISE EN BOÎTE 1/2 : deux bugs d'étiquettes (audit du flux)  (v1374 → **v1375**)
+
+Audit demandé par Ben du flux de mise en boîte, avant remaniement. Deux bugs trouvés en lisant le code.
+
+### BUG#2 (critique) — les quantités saisies étaient ignorées à la génération
+Dans « Étiquettes groupées », `lbGenerate` lisait `document.getElementById('lbcopies_'+id)` et
+`'lbpieces_'+id` — des identifiants qui **n'existent dans AUCUN élément** (les champs rendus par
+`lbRenderLignes` n'ont pas d'`id` ; les saisies vivent dans le modèle `_lbLignes` via `lbSetLigne`).
+Conséquence exacte décrite par Ben : `getElementById` → null → `+undefined||1` force **copies=1**, et
+`nbPieces` reste **null** → en aval `buildLabelsPDF` ne pose pas l'override et retombe sur la quantité
+du lot (« l'ancienne valeur en dur »). Tout ce que Ben tapait était perdu.
+> **RÈGLE GRAVÉE (v1375) : L'ÉCRAN ET LE GÉNÉRATEUR LISENT LE MÊME MODÈLE.** Un bouton qui relit le
+> DOM par des `id` hérités d'une version antérieure du balisage produit un troisième chiffre (v1339 /
+> v1374 : le lecteur et le modèle ne divergent jamais). FIX : `lbGenerate` lit `_lbLignes` (comme le
+> rangement) et imprime dès `copies>0` — ce qui **honore aussi plusieurs boîtes par lot** (3×20 + 1×12),
+> que l'écran laissait déjà saisir mais que le générateur écrasait. Preuve à DOM vide (A7) : le
+> résultat n'est plus le profil dégénéré de l'ancien bug.
+
+Nuance corrigée en cours de route : filtrer sur `lbTotalLigne>0` excluait les lignes « pièces = auto »
+(pièces null → total 0), pourtant imprimables avec la quantité du lot. Le bon critère d'impression est
+« au moins une étiquette » (copies>0) ; le rangement, lui, garde `lbTotalLigne>0` (on ne range pas une
+quantité inconnue). Même modèle, critères d'inclusion propres à chaque usage.
+
+### BUG#1 — l'étiquette générée mais « aucun menu » pour l'imprimer/enregistrer
+Depuis Stock par parfum → « Étiquettes (boîtes) », `_etiqValiderGo` faisait `closeModal()` puis
+`_etiqResultats()` (ré-ouverture). Or `closeModal` appelle `history.back()`, dont le `popstate`
+**différé** se déclenche après la ré-ouverture et referme le modal de résultats. Ben voyait le toast
+de validation, mais le menu Imprimer/Enregistrer disparaissait.
+> **RÈGLE GRAVÉE (v1375) : on ne ferme-puis-rouvre JAMAIS un modal à travers un saut async** (cousin
+> direct de v1363 : on n'empile pas les modals). FIX : `_etiqValiderGo` ne ferme plus avant les
+> résultats ; `_etiqResultats` REMPLACE le contenu du modal EN PLACE quand il est déjà ouvert.
+
+### Suite v1375 : 17 assertions (81 suites au total, toutes vertes)
+Preuve comportementale du BUG#2 à DOM vide (le vrai `lbGenerate` assemblé avec le vrai `lbTotalLigne`),
++ gardes statiques du BUG#1 (plus de closeModal avant résultats, remplacement en place). NB : la
+confirmation en conditions réelles (caméra/partage iOS) reste à faire sur l'appareil de Ben — le
+harnais node ne rejoue pas le DOM.
+
+### Angle mort déclaré
+Les correctifs de contrôle de flux d'un modal async sont vérifiés par gardes statiques (le harnais ne
+lance pas de navigateur). La règle « même modèle » (BUG#2), elle, est prouvée comportementalement.
+
+---
+
+## 2026-07-17 — MISE EN BOÎTE 2/2 : fusion de deux boîtes du même lot  (v1375 → **v1376**)
+
+**Besoin (Ben)** : un même lot est souvent réparti en plusieurs boîtes ; quand les stocks baissent, il
+veut les RAPPROCHER facilement, sans jamais perdre la traçabilité.
+
+**Décision métier de Ben, gravée** : on ne fusionne QUE deux boîtes du **même parfum ET du même lot**.
+> « Le mélange de lot ou de boîte fait perdre la traçabilité physique. » Toute autre combinaison est
+> REFUSÉE. Le garde-fou vise le MOTIF, pas le cas — prouvé par réintroduction (lots différents, parfums
+> différents, stades différents, déclassé, même boîte, non-boîte, boîtes vides : 8 refus testés).
+
+### « Même lot » = identité physique, pas devinette
+Une boîte est une ligne `productions` issue de `prodPreparerBoites`, qui porte `etiquetteDe` = l'id du
+LOT PARENT. Deux boîtes du même lot partagent donc ce champ (leur `lotProduction` diffère par le suffixe
+-B1/-B2). C'est le signal retenu, corroboré par `recipeId` + `composant` + `degDeclasse`.
+
+### Ce qu'on préserve à la fusion
+- **Quantité** : somme des restes ET des quantités produites/réelles → l'invariant *produit − consommé
+  = reste* reste intact (D4).
+- **DLC** : la plus COURTE des deux (la plus prudente) — deux boîtes à des températures différentes
+  peuvent porter des DLC différentes.
+- **Traçabilité** : la boîte gardée conserve `etiquetteDe` et `assembleFrom` ; la boîte absorbée est
+  consignée dans `fusionHisto` (id, lot, quantité, DLC, horodatage) — et fusionner à nouveau EMPILE
+  l'historique (D8). Plus une entrée d'audit dédiée « fusion-boite » (lisible), en sus des écritures
+  auto journalisées par les hooks v1372.
+- **Sécurité** : `snapshotBackup('avant-fusion-boites')` AVANT l'opération (elle supprime une boîte),
+  et mise à jour + suppression dans UNE transaction (tout ou rien).
+
+### Deux modes (comme demandé)
+- **Sélection manuelle** : liste des lots ayant ≥2 boîtes ; on coche exactement deux boîtes d'un même
+  lot (même lot GARANTI par le groupe `etiquetteDe`) → confirmation → fusion.
+- **Flash QR** : scan de la 1ʳᵉ boîte (réutilise `openScanner`/`_extractLot`), puis la 2ᵉ (scan ou tap
+  dans la liste du même lot). Un QR qui n'est pas une boîte issue d'un lot est refusé dès le scan.
+Entrée : bouton « 🔀 Fusionner des boîtes » sur l'écran Stock par parfum. Confirmation qui prévient si
+les emplacements ou les DLC diffèrent.
+
+### Suite v1376 : 35 assertions (82 suites au total, toutes vertes)
+Validation pure (accepte le sain, refuse tout le reste avec motif), DLC la plus courte, calcul de fusion
+(somme, invariant, historique empilé), et câblage (re-validation en profondeur, transaction, audit
+dédié, sélection à exactement 2, entrée écran, mode QR).
+
+### Limite déclarée
+Fusionner la boîte-fille d'une boîte déjà fusionnée (scission d'une boîte) sort de « même lot » au sens
+`etiquetteDe` et est refusée — volontaire : au-delà d'un niveau, la provenance physique n'est plus
+univoque.

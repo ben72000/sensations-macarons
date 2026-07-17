@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1374';
+const APP_VERSION = 'v1376';
 const APP_MAJ = 'LE MONTAGE PYRAMIDE, SANS OUVRIR « MODIFIER » — comme tu l’as demandé. Le résumé d’une commande événement affiche maintenant, d’un coup d’œil : le NOMBRE de pyramides, le TYPE (location ou vendue), le NOMBRE D’ÉTAGES, le modèle de présentoir, et le nombre de macarons par pyramide — avec la mention « pyramide entière » quand tous les plateaux sont utilisés. UNE DIFFICULTÉ QUE JE DOIS TE DIRE : le nombre d’étages N’EST PAS STOCKÉ sur la commande. Seuls le nombre de pyramides et le nombre de macarons le sont. Les étages se DÉDUISENT de tes modèles de présentoirs (chaque modèle a ses plateaux, donc ses paliers cumulés : 4, 11, 21, 34, 50, 69 pour ta pyramide transparente). JE NE DEVINE DONC PAS — JE DÉDUIS, ET JE DIS CE QUE JE SAIS. Si un seul modèle correspond, je l’affiche avec ses étages. Si PLUSIEURS correspondent (34 macarons, c’est 4 étages sur un modèle et 3 sur un autre), je te les LISTE TOUS : trancher en silence reviendrait à décider à ta place. Si AUCUN palier ne correspond, je te dis « montage sur mesure » — sans arrondir au palier voisin, alors que ce serait facile. Et si la répartition n’est pas entière (100 macarons sur 3 pyramides), je te signale que tes pyramides ne seront PAS identiques, au lieu de te laisser croire à un montage équilibré qui n’existe pas. LA RÈGLE QUE J’AI FIGÉE : un nombre d’étages INVENTÉ serait PIRE qu’une absence — il t’enverrait monter le MAUVAIS présentoir le jour J, devant ton client. Une donnée manquante te coûte un aller-retour dans « Modifier » ; une donnée FAUSSE te coûte un événement raté. Le silence est le moindre mal ; le mensonge, jamais. Enfin, pour un bloc plat (non sécable), je n’affiche AUCUN étage : parler d’étages n’aurait aucun sens. Suite : 1397 → 1437 assertions vertes.';
 
 // ============================================================
@@ -24023,7 +24023,7 @@ async function renderStockParfums(){
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Stock par parfum</h1>
      <p>${enStock} parfum(s) en stock · ${qty(totalDispo)} macaron(s) vendable(s)</p></div>
-     <div class="flex"><button class="btn" onclick="goView('productions')">🍩 Productions →</button></div></div>
+     <div class="flex"><button class="btn ghost" onclick="fusionOuvrir()">🔀 Fusionner des boîtes</button><button class="btn" onclick="goView('productions')">🍩 Productions →</button></div></div>
    <div class="stock-switch">${_swBtn('liste','📋 Liste')}${_swBtn('froid','❄️ Espaces froids')}</div>
    ${_vue==='froid' ? froidHtml : listeHtml}`;
 }
@@ -37210,6 +37210,10 @@ const APP_KB = [
     tags:'sauvegarde backup restauration export import donnees fichier rappel ios safari perte purge securite icloud cloud drive partage',
     r:`<p>Onglet <b>Sauvegarde &amp; sécurité</b>. Le plus simple : <b>☁️ Sauvegarder sur iCloud</b> — l'app ouvre le partage iOS, choisis <b>« Enregistrer dans Fichiers » → iCloud Drive</b> (le dossier est mémorisé, les fois suivantes vont plus vite). Tu peux aussi <b>Exporter</b> un fichier .json à ranger ailleurs (e-mail, autre cloud), puis le <b>réimporter</b> pour restaurer (remplacement ou fusion). ⚠️ Important : effacer l'historique Safari <b>supprime aussi la base de l'app</b> (limite iOS) — seule une copie hors appareil (iCloud, fichier) te protège. À l'ouverture, l'app fait une <b>sauvegarde interne quotidienne</b> et te <b>propose automatiquement</b> d'enregistrer sur iCloud si ta dernière sauvegarde dépasse le délai réglé (mets <b>1 jour</b> pour un rappel quotidien). Note : une app web ne peut pas écrire seule dans iCloud sans ce petit geste de validation — c'est une sécurité d'iOS.</p>
     <p>🔧 <b>Corriger la consommation d'un lot</b> : si tu as ajouté un ingrédient au BOM <b>après</b> avoir produit un lot (cas classique : une crème oubliée dans la recette), ce lot n'a pas décrémenté cet ingrédient. Cet outil (dans cette rubrique) <b>rattache la consommation manquante</b> en FIFO, avec la traçabilité préservée, sans rien supprimer. Pense à sauvegarder avant.</p>` },
+  { id:'fusion-boites', titre:'Fusionner deux boîtes du même lot',
+    tags:'fusion fusionner boite boites regrouper rapprocher meme lot stock baisse QR scan tracabilite consolider',
+    r:`<p>Quand un lot a été réparti en plusieurs boîtes et que les stocks baissent, tu peux <b>en regrouper deux en une</b> — mais <b>uniquement du même parfum et du même lot</b> (sinon on perdrait la traçabilité physique, donc c'est refusé).</p>
+    <p>Depuis <b>Stock par parfum → 🔀 Fusionner des boîtes</b> : soit tu coches <b>deux boîtes d'un même lot</b> dans la liste, soit tu <b>scannes les deux QR</b>. L'app te montre le résultat (quantités additionnées, <b>DLC la plus courte gardée</b>) avant de confirmer. La boîte absorbée est tracée dans l'historique et au journal des écritures. Pense que la fusion <b>supprime une boîte</b> — une sauvegarde de sécurité est prise automatiquement avant.</p>` },
   { id:'stockage-audit', titre:'Stockage unifié, journal des écritures, validation & carte des chiffres',
     tags:'stockage unifie kv audit journal ecritures trace historique modification suppression qui quand pyramide compteur facture restauration purge reglages validation refus type carte chiffres dependances retester',
     r:`<p>Depuis la <b>v1372</b>, tes réglages métier (modèles de pyramides, compteur légal de factures, journal du copilote, charges récurrentes, temps appris…) sont <b>recopiés dans la base</b> en plus du stockage local : ils partent dans <b>chaque sauvegarde</b> et <b>survivent à une restauration ou une purge iOS</b>. Si l'appareil est purgé, l'app les restaure toute seule au démarrage et te le dit.</p>
@@ -46769,8 +46773,12 @@ async function _etiqValiderGo(){
   if(!sim.ok){ toast(sim.raison||'Répartition invalide'); return; }
   try{ await snapshotBackup('avant-etiquette-boites'); }catch(e){swallow(e,'_etiqValiderGo')}
   const res = await prodPreparerBoites(d.prodId, d.rows, {});
-  closeModal(); window._etiqDraft=null;
-  if(!res.ok){ toast(res.raison||'Échec'); return; }
+  // [v1375] NE PAS fermer le modal ici : `_etiqResultats` REMPLACE son contenu en place. Le
+  // `closeModal()` d'avant déclenchait un `history.back()` dont le `popstate` différé refermait le
+  // modal de résultats juste après son ouverture — Ben voyait le toast de validation mais « aucun
+  // menu » pour imprimer/enregistrer. (Voir la règle gravée dans `_etiqResultats`.)
+  window._etiqDraft=null;
+  if(!res.ok){ closeModal(); toast(res.raison||'Échec'); return; }
   if(res.simple){
     // cas simple : rien créé, on imprime le lot tel quel comme avant.
     toast('Prêt à imprimer');
@@ -46805,8 +46813,18 @@ async function _etiqResultats(boxes){
         <button class="btn ghost sm" onclick="shareLabelImage(${b.id})">🖼 Image</button>
       </div></div>`);
   }
-  openModal(`<h3>🏷 Étiquettes prêtes</h3>${_prelevCss()}${rows.join('')}
-    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+  const html = `<h3>🏷 Étiquettes prêtes</h3>${_prelevCss()}${rows.join('')}
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`;
+  // ════════════════════════════════════════════════════════════════════════════
+  // [v1375] RÈGLE GRAVÉE : ON NE FERME-PUIS-ROUVRE PAS UN MODAL À TRAVERS UN SAUT ASYNC.
+  // Quand le formulaire d'étiquetage est déjà ouvert (le cas normal), on REMPLACE son contenu en
+  // place plutôt que d'appeler openModal après un closeModal. Sinon le `history.back()` de
+  // closeModal émet un `popstate` DIFFÉRÉ qui se déclenche après la ré-ouverture et referme le
+  // modal de résultats — le menu Imprimer/Enregistrer disparaissait sous les doigts de Ben.
+  // (Cousin direct de v1363 : on n'empile pas les modals ; ici, on ne les fait pas clignoter.)
+  // ════════════════════════════════════════════════════════════════════════════
+  if(overlay && overlay.classList.contains('show') && modal){ modal.innerHTML = html; }
+  else openModal(html);
 }
 
 async function shareLabelPDF(prodId){
@@ -47410,15 +47428,39 @@ function lbRowToggle(prodId){
 }
 
 async function lbGenerate(){
-  const checks = Array.from(document.querySelectorAll('.lb-sel:checked'));
-  if(!checks.length){ toast('Coche au moins un lot'); return; }
-  const items = checks.map(cb=>{
-    const id = +cb.getAttribute('data-prod');
-    const copies = +(document.getElementById('lbcopies_'+id)||{}).value || 1;
-    const pv = (document.getElementById('lbpieces_'+id)||{}).value;
-    const nbPieces = (pv!=null && pv!=='') ? +pv : null;
-    return { prodId:id, copies, nbPieces };
-  });
+  // ════════════════════════════════════════════════════════════════════════════
+  // [v1375] LE BUG : cette fonction lisait `document.getElementById('lbcopies_'+id)` et
+  // `'lbpieces_'+id` — des identifiants qui N'EXISTENT DANS AUCUN élément du DOM (les champs
+  // rendus par `lbRenderLignes` n'ont pas d'`id`, ils écrivent dans `_lbLignes` via `lbSetLigne`).
+  //
+  // Conséquence, exactement ce que Ben décrivait : `getElementById(...)` renvoie null →
+  // `(null||{}).value` → undefined → `+undefined || 1` force **copies = 1**, et `nbPieces` reste
+  // **null** → en aval `buildLabelsPDF` NE POSE PAS l'override et retombe sur la quantité du lot
+  // (« l'ancienne valeur en dur »). Tout ce que Ben tapait était donc ignoré au moment de générer.
+  //
+  // LE CORRECTIF : lire la SOURCE DE VÉRITÉ `_lbLignes`, exactement comme le font déjà le rangement
+  // (`lbExecuter`, `lbRangerEtImprimer`). Bonus : `_lbLignes` porte PLUSIEURS lignes par lot avec
+  // des pièces/boîte différentes — le PDF les honore désormais (l'écran laissait déjà les saisir,
+  // seul le générateur ne les lisait pas).
+  //
+  // RÈGLE GRAVÉE (v1375) : L'ÉCRAN ET LE GÉNÉRATEUR LISENT LE MÊME MODÈLE. Un bouton qui relit le
+  // DOM par des `id` hérités d'une version antérieure du balisage produit un TROISIÈME chiffre
+  // (v1339 / v1374 : le lecteur et le modèle ne doivent jamais diverger). Prouvé par la garde
+  // v1375 (le motif `lbcopies_`/`lbpieces_` est banni du fichier).
+  // ════════════════════════════════════════════════════════════════════════════
+  // On imprime une ligne dès qu'elle a AU MOINS une étiquette (copies > 0). Le nombre de pièces par
+  // boîte peut, lui, rester vide (« auto ») : nbPieces=null → buildLabelsPDF retombe sur la quantité
+  // du lot (comportement historique de l'écran). NB : le rangement, lui, exige un total réel — d'où
+  // son filtre `lbTotalLigne > 0` DIFFÉRENT : on ne range pas une quantité inconnue, mais on peut
+  // l'imprimer. Même modèle `_lbLignes`, critères d'inclusion propres à chaque usage.
+  const lignes = _lbLignes.filter(l => (+l.copies || 0) > 0);
+  if(!lignes.length){ toast('Coche un lot et indique un nombre d\'étiquettes'); return; }
+  // Une entrée PDF par ligne (chaque ligne = une série de boîtes identiques).
+  const items = lignes.map(l => ({
+    prodId: l.prodId,
+    copies: Math.max(1, +l.copies || 1),
+    nbPieces: (l.pieces != null ? +l.pieces : null)
+  }));
   closeModal();
   await buildLabelsPDF(items);
 }
@@ -47716,6 +47758,263 @@ async function prodPreparerBoites(prodId, boites, opts){
     }
   });
   return {ok:true, simple:false, execute:true, boxes:created};
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// [v1376] FUSION DE DEUX BOÎTES DU MÊME LOT — regrouper physiquement sans perdre la traçabilité.
+//
+// LE BESOIN (Ben) : un même lot est souvent réparti en plusieurs boîtes ; quand les stocks
+// baissent, il veut les RAPPROCHER facilement. Fusionner deux boîtes = les recombiner en une.
+//
+// LA RÈGLE MÉTIER, IMPÉRATIVE ET NON NÉGOCIABLE : on ne fusionne QUE deux boîtes du MÊME PARFUM
+// et du MÊME LOT. Mélanger deux lots ou deux parfums ferait perdre la TRAÇABILITÉ PHYSIQUE (quel
+// lot, quelle DLC, quelle fabrication) — « ni viable ni sérieux » (Ben). Toute autre combinaison
+// est REFUSÉE, avec un motif clair. Le garde-fou vaut pour le MOTIF, pas le cas (prouvé par
+// réintroduction dans la suite v1376).
+//
+// COMMENT ON RECONNAÎT « MÊME LOT » : une boîte est une ligne `productions` issue de la scission
+// d'un lot (prodPreparerBoites), qui porte `etiquetteDe` = l'id du LOT PARENT. Deux boîtes du même
+// lot partagent donc le même `etiquetteDe`. C'est l'identité physique la plus fiable (le champ
+// `lotProduction` porte, lui, un suffixe -B1/-B2 différent par boîte). On corrobore par le parfum
+// (`recipeId`) et le stade (`composant`) — qui découlent du même parent, mais qu'on vérifie
+// explicitement par sécurité.
+//
+// CE QU'ON PRÉSERVE À LA FUSION :
+//   • quantité : la somme des restes (et, en miroir, des quantités produites/réelles pour garder
+//     l'invariant « produit − consommé = reste » intact) ;
+//   • DLC : la PLUS COURTE des deux (la plus prudente) — deux boîtes rangées à des températures
+//     différentes peuvent porter des DLC différentes ;
+//   • traçabilité : la boîte gardée conserve son `etiquetteDe`, son `assembleFrom` et son lot ;
+//     la boîte absorbée est enregistrée dans un historique `fusionHisto` (id, lot, quantité, DLC).
+//   • journal : une entrée d'audit dédiée (« fusion-boite ») en plus des écritures auto (la mise à
+//     jour et la suppression sont déjà journalisées par les hooks v1372).
+//
+// DEUX MODES (comme demandé) : flash QR des deux boîtes, ou sélection manuelle dans la liste des
+// lots ayant au moins deux boîtes.
+//
+// LIMITE DÉCLARÉE : fusionner la boîte-fille d'une boîte déjà fusionnée (scission d'une boîte)
+// sort de « même lot » au sens `etiquetteDe` et sera refusée — c'est volontaire : au-delà d'un
+// niveau, la provenance physique n'est plus univoque.
+// ════════════════════════════════════════════════════════════════════════════
+
+// Deux boîtes appartiennent-elles au même lot physique ? (PURE)
+function _fusionMemeLot(a, b){
+  return !!(a && b && a.etiquetteDe != null && b.etiquetteDe != null && a.etiquetteDe === b.etiquetteDe);
+}
+
+// Valide une demande de fusion AVANT toute écriture (PURE). Retourne { ok, raison } — le motif est
+// une PHRASE lisible (elle finit dans le toast). L'ordre des tests va du plus grossier au plus fin.
+function _fusionValide(a, b){
+  if(!a || !b) return { ok:false, raison:'Boîte introuvable.' };
+  if(a.id === b.id) return { ok:false, raison:'Sélectionne DEUX boîtes différentes.' };
+  if(a.etiquetteDe == null || b.etiquetteDe == null)
+    return { ok:false, raison:'Seules des boîtes issues d\'un lot peuvent être fusionnées.' };
+  if(!_fusionMemeLot(a, b))
+    return { ok:false, raison:'Lots différents — fusionner mélangerait la traçabilité physique. Refusé.' };
+  const compA = a.composant || 'complet', compB = b.composant || 'complet';
+  const libA = a.produitLibre || '', libB = b.produitLibre || '';
+  if((a.recipeId != null || b.recipeId != null ? a.recipeId !== b.recipeId : libA !== libB) ||
+     compA !== compB || (!!a.degDeclasse) !== (!!b.degDeclasse))
+    return { ok:false, raison:'Parfums (ou stades) différents — fusion impossible.' };
+  const qA = Math.max(0, +a.qteRestante || 0), qB = Math.max(0, +b.qteRestante || 0);
+  if(qA + qB <= 0)
+    return { ok:false, raison:'Ces boîtes sont vides — rien à fusionner.' };
+  return { ok:true };
+}
+
+// La DLC la plus courte (la plus prudente) entre deux (PURE). Format 'AAAA-MM-JJ' → l'ordre
+// lexicographique EST l'ordre chronologique. null = pas de DLC → l'autre l'emporte.
+function _fusionDlcPlusCourte(a, b){
+  if(!a) return b || null;
+  if(!b) return a || null;
+  return (a <= b) ? a : b;
+}
+
+// Calcule l'écriture de fusion (PURE) : le patch de la boîte GARDÉE (a) et l'id de la boîte
+// ABSORBÉE (b). `round3` est injecté (global à l'exécution) pour arrondir proprement les quantités.
+function _fusionCalcul(a, b, round3){
+  const r = round3 || (x => x);
+  const qB = r(Math.max(0, +b.qteRestante || 0));
+  return {
+    garde: a.id,
+    supprime: b.id,
+    patch: {
+      qteRestante:  r((+a.qteRestante  || 0) + (+b.qteRestante  || 0)),
+      qteReelle:    r((+a.qteReelle    || 0) + (+b.qteReelle    || 0)),
+      qteProduite:  r((+a.qteProduite  || 0) + (+b.qteProduite  || 0)),
+      qteTheorique: r((+a.qteTheorique || 0) + (+b.qteTheorique || 0)),
+      dlcProduit:   _fusionDlcPlusCourte(a.dlcProduit, b.dlcProduit),
+      fusionHisto:  (Array.isArray(a.fusionHisto) ? a.fusionHisto.slice() : []).concat([{
+        deId: b.id, deLot: b.lotProduction || '', qte: qB,
+        dlcAbsorbee: b.dlcProduit || null, ts: Date.now()
+      }])
+    }
+  };
+}
+
+// Exécute la fusion. Valide → sauvegarde de sécurité → transaction (mise à jour de la gardée +
+// suppression de l'absorbée) → entrée d'audit dédiée. Les hooks v1372 journalisent déjà chaque
+// écriture ; l'entrée « fusion-boite » ajoute la LECTURE HUMAINE de l'événement.
+async function fusionnerBoites(idA, idB){
+  const A = await db.productions.get(idA).catch(() => null);
+  const B = await db.productions.get(idB).catch(() => null);
+  const v = _fusionValide(A, B);
+  if(!v.ok){ toast(v.raison); return { ok:false, raison:v.raison }; }
+  try{ await snapshotBackup('avant-fusion-boites'); }catch(e){ swallow(e, 'fusionnerBoites snapshot'); }
+  const calc = _fusionCalcul(A, B, round3);
+  try{
+    await db.transaction('rw', db.productions, async () => {
+      await db.productions.update(idA, calc.patch);
+      await db.productions.delete(idB);
+    });
+  }catch(e){ console.error('fusionnerBoites', e); toast('Échec de la fusion'); return { ok:false }; }
+  try{
+    await db.auditLog.add({ ts:Date.now(), tbl:'productions', op:'fusion-boite', cle:idA,
+      resume:_auditResume({
+        garde:{ id:idA, lot:A.lotProduction }, absorbee:{ id:idB, lot:B.lotProduction, qte:round3(Math.max(0, +B.qteRestante || 0)) },
+        qteRestanteApres:calc.patch.qteRestante, dlcRetenue:calc.patch.dlcProduit }),
+      ecran:(typeof view !== 'undefined' && view) ? String(view) : '', v:APP_VERSION });
+  }catch(e){ swallow(e, 'audit fusion-boite'); }
+  toast('Boîtes fusionnées ✓ · traçabilité conservée');
+  if(typeof view !== 'undefined' && view === 'stockparfums' && typeof renderStockParfums === 'function') renderStockParfums();
+  return { ok:true, garde:idA };
+}
+
+// Les autres boîtes du même lot qu'une boîte donnée (avec stock), hors elle-même.
+async function _fusionBoitesDuLot(etiquetteDe, exclureId){
+  return (await db.productions.toArray().catch(() => []))
+    .filter(p => p.etiquetteDe === etiquetteDe && p.id !== exclureId && round3(+p.qteRestante || 0) > 0);
+}
+
+// Petit descriptif d'une boîte pour les écrans de fusion.
+function _fusionLigneBoite(p){
+  const emp = (typeof empInfo === 'function' && p.emplacement) ? empInfo(p.emplacement) : null;
+  const empTxt = emp ? `${emp.icon || ''} ${esc(emp.nom || '')}` : '—';
+  return `<b>${qty(round3(+p.qteRestante || 0))} pc</b> · ${empTxt} · DLC ${p.dlcProduit ? fmtDate(p.dlcProduit) : '—'}<br>
+    <span style="font-size:.74rem;color:#9a8a82">lot ${esc(p.lotProduction || '—')}</span>`;
+}
+
+// ── MODE 1 : SÉLECTION MANUELLE ──────────────────────────────────────────────
+// Liste les lots ayant AU MOINS deux boîtes ; dans chaque lot, on coche exactement deux boîtes.
+async function fusionOuvrir(){
+  const prods = (await db.productions.toArray().catch(() => []))
+    .filter(p => p.etiquetteDe != null && round3(+p.qteRestante || 0) > 0);
+  const recipes = await db.recipes.toArray().catch(() => []);
+  const groupes = {};
+  prods.forEach(p => { (groupes[p.etiquetteDe] = groupes[p.etiquetteDe] || []).push(p); });
+  const multi = Object.keys(groupes).filter(k => groupes[k].length >= 2);
+
+  const nomLot = g => (typeof prodNomComplet === 'function') ? prodNomComplet(g[0], recipes) : ((recipes.find(r => +r.id === +g[0].recipeId) || {}).produitNom || g[0].produitLibre || 'Lot');
+  const blocs = multi.map(k => {
+    const g = groupes[k].sort((a, b) => (a.dlcProduit || '9999').localeCompare(b.dlcProduit || '9999'));
+    return `<div class="panel" style="margin-bottom:8px">
+      <b>${esc(nomLot(g))}</b> <span class="lb-sec-n">${g.length} boîtes</span>
+      ${g.map(p => `<label class="sum-box" style="cursor:pointer;align-items:flex-start;gap:8px">
+        <input type="checkbox" class="fus-sel-${k}" value="${p.id}" style="width:18px;height:18px;margin-top:3px"
+          onchange="fusionMajBouton(${k})">
+        <span style="flex:1;font-size:.82rem">${_fusionLigneBoite(p)}</span></label>`).join('')}
+      <button class="btn gold" id="fusBtn_${k}" disabled style="opacity:.45;width:100%;margin-top:6px"
+        onclick="fusionDepuisSelection(${k})">🔀 Fusionner les 2 boîtes cochées</button>
+    </div>`;
+  }).join('');
+
+  openModal(`<h3>🔀 Fusionner deux boîtes</h3>
+    <p class="note" style="margin-bottom:8px">On ne fusionne que deux boîtes du <b>même parfum et du même lot</b> — c'est la seule façon de garder la traçabilité physique. Coche exactement deux boîtes d'un même lot.</p>
+    ${multi.length ? blocs : '<p class="note">Aucun lot n\'a plusieurs boîtes en stock à fusionner pour le moment.</p>'}
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Fermer</button>
+      <button class="btn" onclick="fusionScanA()">📷 Scanner les boîtes</button>
+    </div>`);
+}
+
+// Active le bouton d'un lot dès que DEUX boîtes de CE lot sont cochées (et pas plus).
+function fusionMajBouton(grp){
+  const n = document.querySelectorAll('.fus-sel-' + grp + ':checked').length;
+  const btn = document.getElementById('fusBtn_' + grp);
+  if(!btn) return;
+  const ok = (n === 2);
+  btn.disabled = !ok; btn.style.opacity = ok ? '1' : '.45';
+  btn.textContent = n > 2 ? '⚠️ Coche seulement 2 boîtes' : '🔀 Fusionner les 2 boîtes cochées';
+}
+
+// Lit la sélection (deux cases d'un même lot) et passe à la confirmation. Même lot GARANTI par
+// construction (les cases appartiennent au même groupe).
+function fusionDepuisSelection(grp){
+  const checked = Array.from(document.querySelectorAll('.fus-sel-' + grp + ':checked'));
+  if(checked.length !== 2){ toast('Coche exactement 2 boîtes'); return; }
+  fusionConfirme(+checked[0].value, +checked[1].value);
+}
+
+// ── MODE 2 : FLASH QR ────────────────────────────────────────────────────────
+// Scanne la 1ʳᵉ boîte, puis propose de scanner la 2ᵉ (ou de la choisir parmi le même lot).
+function fusionScanA(){
+  if(typeof openScanner !== 'function'){ toast('Scanner indisponible'); return; }
+  openScanner(async (code) => {
+    const a = await _fusionBoiteDepuisScan(code);
+    if(a) fusionEtape2(a.id);
+  });
+}
+async function _fusionBoiteDepuisScan(code){
+  const lot = _extractLot(code);
+  const p = (await db.productions.toArray().catch(() => []))
+    .find(x => normTxt(x.lotProduction || '') === normTxt(lot));
+  if(!p){ toast('Lot ' + lot + ' introuvable'); return null; }
+  if(p.etiquetteDe == null){ toast('Ce QR n\'est pas une boîte issue d\'un lot.'); return null; }
+  if(round3(+p.qteRestante || 0) <= 0){ toast('Cette boîte est vide.'); return null; }
+  return p;
+}
+// Après la 1ʳᵉ boîte : on montre les autres boîtes du MÊME lot (tap direct) + l'option de scanner.
+async function fusionEtape2(idA){
+  const A = await db.productions.get(idA).catch(() => null);
+  if(!A){ toast('Boîte introuvable'); return; }
+  const recipes = await db.recipes.toArray().catch(() => []);
+  const nom = (typeof prodNomComplet === 'function') ? prodNomComplet(A, recipes) : '';
+  const autres = await _fusionBoitesDuLot(A.etiquetteDe, idA);
+  const liste = autres.length
+    ? autres.map(p => `<label class="sum-box" style="cursor:pointer" onclick="fusionConfirme(${idA},${p.id})">
+        <span style="flex:1;font-size:.82rem">${_fusionLigneBoite(p)}</span><span>→</span></label>`).join('')
+    : '<p class="note">Aucune autre boîte de ce lot n\'a de stock. Scanne une boîte du même lot.</p>';
+  openModal(`<h3>🔀 2ᵉ boîte à fusionner</h3>
+    <p class="note" style="margin-bottom:8px"><b>${esc(nom)}</b> — 1ʳᵉ boîte : ${_fusionLigneBoite(A)}</p>
+    <p class="note" style="margin-bottom:6px">Choisis la 2ᵉ boîte du <b>même lot</b> :</p>
+    ${liste}
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn" onclick="fusionScanB(${idA})">📷 Scanner la 2ᵉ boîte</button>
+    </div>`);
+}
+function fusionScanB(idA){
+  if(typeof openScanner !== 'function'){ toast('Scanner indisponible'); return; }
+  openScanner(async (code) => {
+    const b = await _fusionBoiteDepuisScan(code);
+    if(b) fusionConfirme(idA, b.id);
+  });
+}
+
+// ── CONFIRMATION (commune aux deux modes) ────────────────────────────────────
+async function fusionConfirme(idA, idB){
+  const A = await db.productions.get(idA).catch(() => null);
+  const B = await db.productions.get(idB).catch(() => null);
+  const v = _fusionValide(A, B);
+  if(!v.ok){ toast(v.raison); return; }
+  const calc = _fusionCalcul(A, B, round3);
+  const recipes = await db.recipes.toArray().catch(() => []);
+  const nom = (typeof prodNomComplet === 'function') ? prodNomComplet(A, recipes) : '';
+  const empDiff = (A.emplacement || '') !== (B.emplacement || '');
+  const dlcDiff = (A.dlcProduit || '') !== (B.dlcProduit || '');
+  const empGarde = (typeof empInfo === 'function' && A.emplacement) ? empInfo(A.emplacement) : null;
+  openModal(`<h3>🔀 Confirmer la fusion</h3>
+    <p class="note"><b>${esc(nom)}</b> — même lot, même parfum.</p>
+    <div class="sum-box" style="align-items:flex-start"><span style="flex:1">Boîte A (gardée)<br><span style="font-size:.78rem;color:#9a8a82">${_fusionLigneBoite(A)}</span></span></div>
+    <div class="sum-box" style="align-items:flex-start"><span style="flex:1">Boîte B (absorbée)<br><span style="font-size:.78rem;color:#9a8a82">${_fusionLigneBoite(B)}</span></span></div>
+    <div class="sum-box" style="background:#faf6ee"><span><b>Après fusion</b></span>
+      <b>${qty(calc.patch.qteRestante)} pc · DLC ${calc.patch.dlcProduit ? fmtDate(calc.patch.dlcProduit) : '—'}${empGarde ? ' · ' + esc(empGarde.nom || '') : ''}</b></div>
+    ${dlcDiff ? `<p class="note" style="color:#8a6d3b">On garde la DLC la plus courte (la plus prudente).</p>` : ''}
+    ${empDiff ? `<p class="note" style="color:#8a6d3b">Les deux boîtes sont à des emplacements différents : la boîte fusionnée reste à celui de la boîte A. Rapproche-les physiquement.</p>` : ''}
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="closeModal(); fusionnerBoites(${idA}, ${idB})">✓ Fusionner</button>
+    </div>`);
 }
 
 async function buildLabelData(prodId){
