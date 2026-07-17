@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1378';
+const APP_VERSION = 'v1380';
 const APP_MAJ = 'LE MONTAGE PYRAMIDE, SANS OUVRIR « MODIFIER » — comme tu l’as demandé. Le résumé d’une commande événement affiche maintenant, d’un coup d’œil : le NOMBRE de pyramides, le TYPE (location ou vendue), le NOMBRE D’ÉTAGES, le modèle de présentoir, et le nombre de macarons par pyramide — avec la mention « pyramide entière » quand tous les plateaux sont utilisés. UNE DIFFICULTÉ QUE JE DOIS TE DIRE : le nombre d’étages N’EST PAS STOCKÉ sur la commande. Seuls le nombre de pyramides et le nombre de macarons le sont. Les étages se DÉDUISENT de tes modèles de présentoirs (chaque modèle a ses plateaux, donc ses paliers cumulés : 4, 11, 21, 34, 50, 69 pour ta pyramide transparente). JE NE DEVINE DONC PAS — JE DÉDUIS, ET JE DIS CE QUE JE SAIS. Si un seul modèle correspond, je l’affiche avec ses étages. Si PLUSIEURS correspondent (34 macarons, c’est 4 étages sur un modèle et 3 sur un autre), je te les LISTE TOUS : trancher en silence reviendrait à décider à ta place. Si AUCUN palier ne correspond, je te dis « montage sur mesure » — sans arrondir au palier voisin, alors que ce serait facile. Et si la répartition n’est pas entière (100 macarons sur 3 pyramides), je te signale que tes pyramides ne seront PAS identiques, au lieu de te laisser croire à un montage équilibré qui n’existe pas. LA RÈGLE QUE J’AI FIGÉE : un nombre d’étages INVENTÉ serait PIRE qu’une absence — il t’enverrait monter le MAUVAIS présentoir le jour J, devant ton client. Une donnée manquante te coûte un aller-retour dans « Modifier » ; une donnée FAUSSE te coûte un événement raté. Le silence est le moindre mal ; le mensonge, jamais. Enfin, pour un bloc plat (non sécable), je n’affiche AUCUN étage : parler d’étages n’aurait aucun sens. Suite : 1397 → 1437 assertions vertes.';
 
 // ============================================================
@@ -13333,36 +13333,32 @@ async function prodDuoApercu(){
       const dispOf=id=>{ const m=mats.find(x=>x.id===id)||{}; const u=(m.unite||'').toLowerCase();
         return (u==='kg')?{u:'g',f:1000}:{u:m.unite||'',f:1}; };
       const coqueItems = arr => { const tagged=arr.filter(it=>it.partie==='coque'); return tagged.length?tagged:arr.filter(it=>!it.partie); };
-      const facteur = (r,q) => { const rend=+(r&&r.rendement)||1; return rend>0 ? q/rend : 0; };
-      const f1=facteur(r1,q1), f2=facteur(r2,q2);
-      const aggCommun={};
-      const parBatch={1:{}, 2:{}};
-      const addItem = (it, f, batchKey)=>{
-        const d=dispOf(it.materialId);
-        const q=(+it.qteParBatch||0)*d.f*f;
-        if(_isTantPourTant(matName(it.materialId))){
-          parBatch[batchKey][it.materialId]=(parBatch[batchKey][it.materialId]||0)+q;
-        } else {
-          aggCommun[it.materialId]=(aggCommun[it.materialId]||0)+q;
-        }
-      };
-      coqueItems(it1).forEach(it=>addItem(it, f1, 1));
-      coqueItems(it2).forEach(it=>addItem(it, f2, 2));
-      const idsCommun=Object.keys(aggCommun);
-      const idsB1=Object.keys(parBatch[1]); const idsB2=Object.keys(parBatch[2]);
+      // [v1379] Le calcul passe par LE moteur commun (_meringueCommuneCalc) : la base est
+      // dimensionnée sur le TOTAL std-éq (GF converti), plus jamais sur les seuls parfums
+      // porteurs ; les ajouts propres (noisettes, colorants…) restent PAR PARFUM.
+      const calc = _meringueCommuneCalc([
+        { nom:nom1, qMac:q1, gf:gf1, rend:+(r1&&r1.rendement)||1, items:coqueItems(it1) },
+        { nom:nom2, qMac:q2, gf:gf2, rend:+(r2&&r2.rendement)||1, items:coqueItems(it2) }
+      ], dispOf, matName);
+      const idsCommun=Object.keys(calc.baseCommune);
+      const pf1=calc.parParfum[0], pf2=calc.parParfum[1];
+      const idsB1=Object.keys(pf1.propres); const idsB2=Object.keys(pf2.propres);
       const aQuelqueChose = idsCommun.length || idsB1.length || idsB2.length;
       if(aQuelqueChose){
         const ligne = (id,q)=>{ const d=dispOf(+id); return `<div style="display:flex;justify-content:space-between;font-size:.82rem"><span>${esc(matName(+id))}</span><b>${qty(round3(q))} ${esc(d.u)}</b></div>`; };
         let pb='';
         if(idsB1.length || idsB2.length){
+          const videPf = '<div style="font-size:.8rem;color:#9a8a82">— rien en propre (partage la base commune)</div>';
           pb += `<div style="font-size:.74rem;color:#9a8a82;margin:2px 0 1px"><b>${esc(nom1)}</b></div>`;
-          pb += (idsB1.length ? idsB1.map(id=>ligne(id, parBatch[1][id])).join('') : '<div style="font-size:.8rem;color:#9a8a82">—</div>');
+          pb += (idsB1.length ? idsB1.map(id=>ligne(id, pf1.propres[id])).join('') : videPf);
           pb += `<div style="font-size:.74rem;color:#9a8a82;margin:4px 0 1px"><b>${esc(nom2)}</b></div>`;
-          pb += (idsB2.length ? idsB2.map(id=>ligne(id, parBatch[2][id])).join('') : '<div style="font-size:.8rem;color:#9a8a82">—</div>');
+          pb += (idsB2.length ? idsB2.map(id=>ligne(id, pf2.propres[id])).join('') : videPf);
         }
         let cm='';
         if(idsCommun.length){
-          cm = `<div style="font-size:.74rem;color:#9a8a82;margin:6px 0 1px">Base commune (cumulée)</div>` + idsCommun.map(id=>ligne(id, aggCommun[id])).join('');
+          cm = `<div style="font-size:.74rem;color:#9a8a82;margin:6px 0 1px">Base commune (cumulée) — <b>dimensionnée pour ${qty(Math.round(calc.eqTotal))} coques std éq.</b> (mutualisée sur les 2 parfums)</div>` + idsCommun.map(id=>ligne(id, calc.baseCommune[id])).join('');
+        } else if(calc.eqTotal > 0){
+          cm = `<div style="color:#b3261e;font-size:.8rem;margin:6px 0 1px">⛔ Aucun parfum ne porte de base meringue étiquetée : les grammages ci-dessus ne couvrent PAS les ${qty(Math.round(calc.eqTotal))} coques annoncées. Ne pèse pas cette fiche en l'état.</div>`;
         }
         html += `<div style="border-top:1px solid #e8dccd;margin-top:6px;padding-top:6px"><div style="font-size:.78rem;color:#7a6a62;font-weight:600;margin-bottom:3px">🧾 Meringue à préparer</div>${pb}${cm}<p class="note" style="margin-top:4px;font-size:.72rem">Poudre d'amande & sucre glace pesées <b>par parfum</b> (coloration / ajouts propres). Le reste est mutualisé.</p></div>`;
       } else {
@@ -13772,48 +13768,42 @@ async function ficheMeringueProduction(parts, meringueBatchId){
     return (u==='kg') ? {u:'g', f:1000} : {u:m.unite||'', f:1}; };
   // Ingrédients coque de chaque parfum, au prorata de sa quantité.
   const coqueItems = arr => { const tagged=arr.filter(it=>it.partie==='coque'); return tagged.length?tagged:arr.filter(it=>!it.partie); };
-  const aggCommun={};                       // matière mutualisée -> qté cumulée
-  const parParfum=[];                        // [{nom, lot, lignes:[{id,q,u}]}]
+  // [v1379] Le calcul passe par LE moteur commun (_meringueCommuneCalc) : base dimensionnée sur
+  // le TOTAL std-éq (grands formats convertis), ajouts propres (noisettes…) rendus au parfum.
+  const parfums=[];
   let totalCoques=0;
   for(const part of parts){
     const rec = await db.recipes.get(part.rid).catch(()=>null);
     const its = await db.recipeItems.where('recipeId').equals(part.rid).toArray().catch(()=>[]);
-    const rend = +(rec&&rec.rendement)||1;
-    const f = rend>0 ? part.q/rend : 0;
     totalCoques += part.q*COQUES_PAR_MACARON;
-    const lignesParfum=[];
-    coqueItems(its).forEach(it=>{
-      const d=dispOf(it.materialId);
-      const q=round3((+it.qteParBatch||0)*d.f*f);
-      if(_isTantPourTant(matName(it.materialId))){
-        lignesParfum.push({id:it.materialId, q, u:d.u});
-      } else {
-        aggCommun[it.materialId]=round3((aggCommun[it.materialId]||0)+q);
-      }
-    });
-    parParfum.push({ nom:(rec&&rec.produitNom)||'Parfum', lot:part.lot, q:part.q, lignes:lignesParfum });
+    parfums.push({ nom:(rec&&rec.produitNom)||'Parfum', lot:part.lot, qMac:part.q,
+      gf:!!(rec&&rec.grandFormat), rend:+(rec&&rec.rendement)||1, items:coqueItems(its) });
   }
-  // Tableau « par parfum » (tant pour tant).
-  const blocsParfum = parParfum.map(pf=>{
-    const rows = pf.lignes.length
-      ? pf.lignes.map(l=>`<tr><td>${esc(matName(+l.id))}</td><td style="text-align:right"><b>${qty(l.q)}</b> ${esc(l.u)}</td></tr>`).join('')
-      : '<tr><td colspan="2" class="note">Pas de tant pour tant étiqueté pour ce parfum.</td></tr>';
-    return `<p style="margin:10px 0 4px"><b>${esc(pf.nom)}</b> · ${qty(pf.q)} macaron(s) · lot <b>${esc(pf.lot||'—')}</b></p>
+  const calc = _meringueCommuneCalc(parfums, dispOf, matName);
+  // Tableau « par parfum » (tant pour tant + ajouts propres : noisettes, colorants…).
+  const blocsParfum = calc.parParfum.map(pf=>{
+    const ids = Object.keys(pf.propres);
+    const rows = ids.length
+      ? ids.map(id=>{ const d=dispOf(+id); return `<tr><td>${esc(matName(+id))}</td><td style="text-align:right"><b>${qty(pf.propres[id])}</b> ${esc(d.u)}</td></tr>`; }).join('')
+      : '<tr><td colspan="2" class="note">Rien à peser en propre — ce parfum partage la base commune.</td></tr>';
+    return `<p style="margin:10px 0 4px"><b>${esc(pf.nom)}</b> · ${qty(pf.qMac)} macaron(s) · lot <b>${esc(pf.lot||'—')}</b></p>
       <div class="table-wrap"><table><tbody>${rows}</tbody></table></div>`;
   }).join('');
-  // Tableau cumulé (base commune).
-  const idsCommun=Object.keys(aggCommun);
+  // Tableau cumulé (base commune, mise à l'échelle du total).
+  const idsCommun=Object.keys(calc.baseCommune);
   const rowsCommun = idsCommun.length
-    ? idsCommun.map(id=>{ const d=dispOf(+id); return `<tr><td>${esc(matName(+id))}</td><td style="text-align:right"><b>${qty(aggCommun[id])}</b> ${esc(d.u)}</td></tr>`; }).join('')
-    : '<tr><td colspan="2" class="note">Aucune base commune étiquetée.</td></tr>';
+    ? idsCommun.map(id=>{ const d=dispOf(+id); return `<tr><td>${esc(matName(+id))}</td><td style="text-align:right"><b>${qty(calc.baseCommune[id])}</b> ${esc(d.u)}</td></tr>`; }).join('')
+    : `<tr><td colspan="2" style="color:#b3261e">⛔ Aucun parfum ne porte de base meringue étiquetée — cette fiche ne couvre PAS les coques annoncées. Ne la pèse pas en l'état.</td></tr>`;
+  const eqLbl = (Math.round(calc.eqTotal)!==totalCoques) ? ` <span style="color:#9a8a82">(${qty(Math.round(calc.eqTotal))} std éq.)</span>` : '';
   openModal(`<h3>📋 Fiche de production — meringue commune</h3>
-    <p style="margin-bottom:4px"><b>${esc(parParfum.map(p=>p.nom).join(' + '))}</b> · 🥣 ${qty(totalCoques)} coques</p>
+    <p style="margin-bottom:4px"><b>${esc(calc.parParfum.map(p=>p.nom).join(' + '))}</b> · 🥣 ${qty(totalCoques)} coques${eqLbl}</p>
     <p class="note" style="margin-bottom:10px">Une seule meringue, deux parfums. Pèse d'abord la <b>base meringue commune</b>, puis le <b>tant pour tant de chaque parfum</b> séparément (coloration / ajouts propres).</p>
     <div class="panel" style="background:#f4faf5;border:1px solid #cfe3d4;margin-bottom:10px">
       <div style="font-weight:700;color:#2e6b3f;margin-bottom:4px">🥣 Base meringue (commune, cumulée)</div>
+      ${idsCommun.length?`<div class="note" style="margin-bottom:4px">Dimensionnée pour <b>${qty(Math.round(calc.eqTotal))} coques std éq.</b> — mutualisée sur tous les parfums, grands formats convertis.</div>`:''}
       <div class="table-wrap"><table><tbody>${rowsCommun}</tbody></table></div>
     </div>
-    <div style="font-weight:700;color:#8a6d3b;margin-bottom:2px">🎨 Tant pour tant — par parfum</div>
+    <div style="font-weight:700;color:#8a6d3b;margin-bottom:2px">🎨 Tant pour tant & ajouts propres — par parfum</div>
     ${blocsParfum}
     <p class="note" style="margin-top:10px">La production est <b>démarrée</b> (2 sous-lots de coques reliés). Tu choisiras l'emplacement à la fin (✓ Terminer).</p>
     <div class="modal-actions"><button class="btn gold" onclick="closeModal()">C'est parti 🧑‍🍳</button></div>`);
@@ -13855,48 +13845,41 @@ async function atFichePesee(kind){
     // Ingrédients « coque » d'une recette (repli sur non étiquetés si aucune étiquette).
     const coqueItems = arr => { const tagged=arr.filter(it=>it.partie==='coque'); return tagged.length?tagged:arr.filter(it=>!it.partie); };
 
-    const aggCommun = {};      // base meringue cumulée : materialId -> {q,u}
-    const parParfum = [];      // [{nom, q, lignes:[{id,q,u}]}] pour le tant pour tant
+    // [v1379] MÊME moteur que la fiche de production (_meringueCommuneCalc) : base dimensionnée
+    // sur le total std-éq, ajouts propres rendus au parfum. Deux calculs différents pour la même
+    // meringue seraient deux vérités (v1331) — il n'y en a qu'un.
+    const parfums = [];
     for(const rid of rids){
       const rec = await db.recipes.get(rid).catch(()=>null);
       if(!rec) continue;
       const its = await db.recipeItems.where('recipeId').equals(rid).toArray().catch(()=>[]);
       const rend = +(rec.rendement)||1;
       const q = qtePourRecette(rid, rend);
-      const f = rend>0 ? q/rend : 0;
-      const lignesTpt = [];
-      coqueItems(its).forEach(it=>{
-        const d = dispOf(it.materialId);
-        const val = round3((+it.qteParBatch||0)*d.f*f);
-        if(_isTantPourTant(matName(it.materialId))){
-          lignesTpt.push({id:it.materialId, q:val, u:d.u});
-        } else {
-          if(!aggCommun[it.materialId]) aggCommun[it.materialId]={q:0,u:d.u};
-          aggCommun[it.materialId].q = round3(aggCommun[it.materialId].q + val);
-        }
-      });
-      parParfum.push({ nom:(rec.produitNom||rec.nom||'Parfum'), q, lignes:lignesTpt });
+      parfums.push({ nom:(rec.produitNom||rec.nom||'Parfum'), qMac:q, gf:!!rec.grandFormat, rend, items:coqueItems(its) });
     }
-    const totMac = parParfum.reduce((a,p)=>a+(+p.q||0),0);
-    const multi = parParfum.length>=2;
-    const titreParfums = parParfum.map(p=>esc(p.nom)).join(' + ');
+    const calc = _meringueCommuneCalc(parfums, dispOf, matName);
+    const totMac = parfums.reduce((a,p)=>a+(+p.qMac||0),0);
+    const multi = parfums.length>=2;
+    const titreParfums = calc.parParfum.map(p=>esc(p.nom)).join(' + ');
 
     let corps='';
     if(kind==='meringue'){
-      const ids = Object.keys(aggCommun);
+      const ids = Object.keys(calc.baseCommune);
       const rows = ids.length
-        ? ids.map(id=>`<tr><td>${esc(matName(+id))}</td><td style="text-align:right"><b>${qty(aggCommun[id].q)}</b> ${esc(aggCommun[id].u)}</td></tr>`).join('')
-        : '<tr><td colspan="2" class="note">Aucun ingrédient meringue étiqueté.</td></tr>';
+        ? ids.map(id=>{ const d=dispOf(+id); return `<tr><td>${esc(matName(+id))}</td><td style="text-align:right"><b>${qty(calc.baseCommune[id])}</b> ${esc(d.u)}</td></tr>`; }).join('')
+        : `<tr><td colspan="2" style="color:#b3261e">⛔ Aucun parfum ne porte de base meringue étiquetée — rien à peser ici, la fiche ne couvre pas le total.</td></tr>`;
       corps = `<div class="panel" style="background:#fdf9ef;border:1px solid #ecdfc4;margin-bottom:6px">
           <div style="font-weight:700;color:#8a6d3b;margin-bottom:4px">🥣 Base meringue${multi?' (commune, cumulée)':''}</div>
+          ${ids.length&&multi?`<div class="note" style="margin-bottom:4px">Dimensionnée pour <b>${qty(Math.round(calc.eqTotal))} coques std éq.</b> (grands formats convertis).</div>`:''}
           <div class="table-wrap"><table><tbody>${rows}</tbody></table></div>
         </div>`;
     } else { // 'tpt'
-      corps = parParfum.map(pf=>{
-        const rows = pf.lignes.length
-          ? pf.lignes.map(l=>`<tr><td>${esc(matName(+l.id))}</td><td style="text-align:right"><b>${qty(l.q)}</b> ${esc(l.u)}</td></tr>`).join('')
-          : '<tr><td colspan="2" class="note">Pas de tant pour tant étiqueté pour ce parfum.</td></tr>';
-        return `<p style="margin:8px 0 4px"><b>${esc(pf.nom)}</b> · ${qty(pf.q)} macaron(s)</p>
+      corps = calc.parParfum.map(pf=>{
+        const ids = Object.keys(pf.propres);
+        const rows = ids.length
+          ? ids.map(id=>{ const d=dispOf(+id); return `<tr><td>${esc(matName(+id))}</td><td style="text-align:right"><b>${qty(pf.propres[id])}</b> ${esc(d.u)}</td></tr>`; }).join('')
+          : '<tr><td colspan="2" class="note">Rien à peser en propre — ce parfum partage la base commune.</td></tr>';
+        return `<p style="margin:8px 0 4px"><b>${esc(pf.nom)}</b> · ${qty(pf.qMac)} macaron(s)</p>
           <div class="table-wrap"><table><tbody>${rows}</tbody></table></div>`;
       }).join('');
     }
@@ -24882,6 +24865,68 @@ function _isTantPourTant(nom){
   return /(poudre.*amande|amande.*poudre|sucre glace|tant pour tant)/.test(n);
 }
 
+// [v1379] La base d'une meringue (italienne/française) : blancs d'œufs, eau, sucre semoule/en
+// poudre/cristal. Le sucre GLACE en est EXCLU (il appartient au tant pour tant, propre au parfum).
+// Sert à distinguer ce qui est MUTUALISÉ (la base, dimensionnée sur le total) de ce qui est PROPRE
+// à un parfum (tant pour tant, noisettes, colorants…).
+function _isBaseMeringue(nom){
+  const n = aiNormalize(nom);
+  if(/sucre glace/.test(n)) return false;
+  return /(blanc.*oeuf|oeuf.*blanc|\beau\b|sucre.*(semoule|poudre|cristal))/.test(n);
+}
+// Nature d'un ingrédient « coque » (PURE) : 'tpt' (par parfum), 'base' (meringue mutualisée),
+// 'ajout' (propre au parfum : noisettes, colorants…).
+function _natureCoque(nom){
+  if(_isTantPourTant(nom)) return 'tpt';
+  if(_isBaseMeringue(nom)) return 'base';
+  return 'ajout';
+}
+// ════════════════════════════════════════════════════════════════════════════
+// [v1379] CALCUL DE LA MERINGUE COMMUNE (modèle A — mutualisation par équivalent-coque standard).
+//
+// LE BUG CORRIGÉ (repéré par Ben) : la base meringue était SOMMÉE parfum par parfum, à partir des
+// seuls parfums qui portaient les ingrédients étiquetés. Un parfum grand format sans base propre
+// (il PARTAGE la meringue) pesait ZÉRO → la base ne couvrait pas le total annoncé (« X coques std
+// éq »). Un total qui n'est pas la somme de son détail est un TROISIÈME CHIFFRE (v1339) ; pesé tel
+// quel, on faisait une demi-meringue et on tombait court en pleine production.
+//
+// LE MODÈLE (confirmé par Ben) : les grands formats sont convertis en équivalent-coque standard
+// (1 coque GF = GF_COQUE_RATIO std) et la meringue est mutualisée sur ce TOTAL std-éq. La base
+// commune se dimensionne donc sur eqTotal, PAS sur les seuls parfums porteurs. Le tant pour tant
+// (poudre d'amande + sucre glace) et les ajouts propres (noisettes…) restent PAR PARFUM.
+//
+// PURE (round3/COQUES_PAR_MACARON/GF_COQUE_RATIO/_natureCoque globaux). dispOf(id)->{u,f},
+// matName(id)->nom. parfums: [{ nom, lot, qMac, gf, rend, items:[{materialId, qteParBatch}] }].
+// ════════════════════════════════════════════════════════════════════════════
+function _meringueCommuneCalc(parfums, dispOf, matName){
+  const eqCoques = p => (+p.qMac||0) * COQUES_PAR_MACARON * (p.gf ? GF_COQUE_RATIO : 1);
+  const eqTotal = round3((parfums||[]).reduce((s,p)=> s + eqCoques(p), 0));
+  const baseSum = {};           // Σ base sur les parfums porteurs (AVANT mise à l'échelle)
+  let eqPorteurs = 0;           // Σ std-éq des parfums qui portent une base meringue
+  const parParfum = (parfums||[]).map(p => {
+    const rend = +p.rend || 1;
+    const f = rend > 0 ? (+p.qMac||0)/rend : 0;
+    const propres = {};         // tant pour tant + ajouts, PROPRES au parfum
+    let porteBase = false;
+    (p.items||[]).forEach(it => {
+      const d = dispOf(it.materialId);
+      const q = (+it.qteParBatch||0) * d.f * f;
+      const nat = _natureCoque(matName(it.materialId));
+      if(nat === 'base'){ baseSum[it.materialId] = round3((baseSum[it.materialId]||0) + q); porteBase = true; }
+      else propres[it.materialId] = round3((propres[it.materialId]||0) + q);
+    });
+    if(porteBase) eqPorteurs += eqCoques(p);
+    return { nom:p.nom, lot:p.lot, qMac:+p.qMac||0, propres, porteBase };
+  });
+  // Mise à l'échelle de la base sur le TOTAL std-éq (mutualisation). Sans parfum porteur, le facteur
+  // est 0 et baseCommune reste vide → l'appelant DOIT le signaler (jamais peser une base qui ne
+  // couvre pas le total). C'est ça qui rend le total = somme de son détail (v1339).
+  const facteurBase = eqPorteurs > 0 ? (eqTotal / eqPorteurs) : 0;
+  const baseCommune = {};
+  Object.keys(baseSum).forEach(id => { baseCommune[id] = round3(baseSum[id] * facteurBase); });
+  return { eqTotal, eqPorteurs, facteurBase, baseCommune, parParfum, baseDetectee: eqPorteurs > 0 };
+}
+
 // Coût de revient COMPLET d'une recette/parfum (par batch ET par pièce).
 // Intègre : matières (prix courant), pertes (rendement utile), consommables/pièce,
 // et main-d'œuvre si activée. Renvoie aussi la ventilation coque/garniture.
@@ -35448,6 +35493,7 @@ async function renderEvents(){
 function _aiNormalizeRaw(s){
   return (s||'').toLowerCase()
     .normalize('NFD').replace(/[\u0300-\u036f]/g,'') // enlève accents
+    .replace(/œ/g,'oe').replace(/æ/g,'ae')           // [v1379] ligatures françaises : NFD ne les décompose PAS (« œufs » ≠ « oeufs » sinon — _isBaseMeringue ratait les blancs d'œufs, et « oeuf » tapé au copilote ne trouvait pas « œuf »)
     .replace(/[\u2018\u2019\u02BC\u2032]/g,"'")       // apostrophes typographiques → '
     .replace(/[-\u2010\u2011\u2012\u2013\u2014]/g,' ') // tirets/traits d'union → espace (qu'est-ce → qu'est ce)
     .replace(/\s+/g,' ').trim();
@@ -55902,14 +55948,137 @@ function prodSessParfumsSave(){
   const choisis = recIds.filter(rid=>{ const el=document.getElementById('sp_'+rid); return el && el.checked; }).map(rid=>+rid);
   const s = (typeof prodSessGet==='function') ? prodSessGet(sessId) : null;
   if(!s){ closeModal(); return; }
+  // [v1380] Cette confirmation SESSION écrase le parfum de CHAQUE tâche. Si Ben a fait des
+  // réattributions fines par tâche (🖊), les écraser en silence détruirait son travail — on demande.
+  if(s.parfumsParTache && !confirm('Des parfums ont été corrigés TÂCHE PAR TÂCHE sur cette session.\nAppliquer la même liste à toutes les tâches ÉCRASERA ces corrections.\nContinuer ?')) return;
   // On applique la liste de recettes (recipeId) à chaque tâche (le calcul répartira à parts égales par session).
   (s.tasks||[]).forEach(t=>{ t.parfums = choisis.slice(); });
+  if(s.parfumsParTache) s.parfumsParTache = false;   // les corrections fines n'existent plus
   s.parfumsConfirmes = true;   // marqueur : confirmation faite
   if(typeof prodSessUpsert==='function') prodSessUpsert(s);
   closeModal();
   toast(choisis.length?`${choisis.length} recette(s) enregistrée(s) ✓`:'Aucune recette cochée');
   if(typeof markUnsaved==='function') markUnsaved();
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// [v1380] JOURNAL DE L'ATELIER — réattribuer le parfum d'UNE tâche, et voir les
+// parfums de chaque session en en-tête.
+//
+// LE BESOIN (Ben) : le bouton « 🎯 Parfums » existant travaille au niveau SESSION — il applique la
+// même liste à TOUTES les tâches. Or une tâche peut être mal rattachée individuellement (une ganache
+// pointée sur le mauvais parfum) : il faut pouvoir la corriger UNE PAR UNE depuis le journal, et le
+// temps par parfum doit suivre. Il suit TOUT SEUL : prodSessTempsParRecette et
+// _tempsDecompoParParfum relisent `t.parfums` à chaque calcul — la réattribution persistée suffit
+// (prouvé par la suite v1380, avant/après sur le même moteur).
+// ════════════════════════════════════════════════════════════════════════════
+
+// Parfums distincts d'une session (PURE) : recipeIds valides, dans l'ordre de première apparition
+// des tâches (l'ordre du travail réel, pas l'ordre alphabétique).
+function _sessParfumsDistincts(s){
+  const vus = new Set(); const out = [];
+  ((s && s.tasks) || []).slice().sort((a,b)=>(+a.start||0)-(+b.start||0)).forEach(t=>{
+    (Array.isArray(t.parfums)?t.parfums:[]).map(Number).filter(r=>Number.isFinite(r)&&r>0).forEach(r=>{
+      if(vus.has(r)) return; vus.add(r); out.push(r);
+    });
+  });
+  return out;
+}
+
+// Applique une réattribution de parfums à UNE tâche (PURE sur ses entrées : mute la session passée,
+// c'est le contrat — l'appelant persiste). Retourne { ok, raison }.
+// Règles : la tâche doit exister ; les ids sont assainis (nombres > 0, dédupliqués) ; une liste VIDE
+// est PERMISE (détacher une tâche de tout parfum : vaisselle, rangement…) — le temps redevient alors
+// du « commun » réparti à parts égales, comme décidé en v1310.
+function _prodTacheParfumsApplique(s, taskId, rids){
+  if(!s || !Array.isArray(s.tasks)) return { ok:false, raison:'Session introuvable.' };
+  const t = s.tasks.find(x => String(x.id) === String(taskId));
+  if(!t) return { ok:false, raison:'Tâche introuvable dans cette session.' };
+  const propres = [...new Set((rids || []).map(Number).filter(r => Number.isFinite(r) && r > 0))];
+  t.parfums = propres;
+  // Une correction à la tâche vaut confirmation — et elle est plus fine que le niveau session :
+  // le drapeau `parfumsParTache` protège ce travail d'un écrasement par le flux « 🎯 Parfums ».
+  s.parfumsConfirmes = true;
+  s.parfumsParTache = true;
+  return { ok:true };
+}
+
+// Remplace le contenu du modal EN PLACE s'il est ouvert (règle v1375 : jamais fermer-puis-rouvrir
+// à travers un saut async — le history.back différé refermerait le nouveau).
+function _prodModalSwap(html){
+  if(overlay && overlay.classList.contains('show') && modal){ modal.innerHTML = html; }
+  else openModal(html);
+}
+
+// ── ÉCRAN 1 : la liste des tâches d'une session, parfum(s) visibles, tap pour corriger ──
+async function prodSessTaches(sessId){
+  const s = (typeof prodSessGet === 'function') ? prodSessGet(sessId) : null;
+  if(!s){ toast('Session introuvable'); return; }
+  const recipes = await db.recipes.toArray().catch(() => []);
+  const nomOf = rid => { const r = recipes.find(x => +x.id === +rid); return r ? r.produitNom : ('#' + rid); };
+  const tasks = (s.tasks || []).slice().sort((a,b)=>(+a.start||0)-(+b.start||0));
+  const rows = tasks.length ? tasks.map(t => {
+    const parfs = (Array.isArray(t.parfums)?t.parfums:[]).map(Number).filter(r=>Number.isFinite(r)&&r>0);
+    const noms = parfs.length ? parfs.map(nomOf).map(esc).join(' + ') : '<span style="color:#9a8a82">aucun parfum (temps commun)</span>';
+    const mut = parfs.length >= 2 ? ' <span class="tag" style="background:#8a6d3b;color:#fff;font-size:.6rem">mutualisée</span>' : '';
+    const dur = (typeof prodTaskNet === 'function' && typeof prodDurShort === 'function') ? prodDurShort(prodTaskNet(t)) : '';
+    return `<div class="sum-box" style="cursor:pointer;align-items:flex-start" onclick="prodTacheParfumsEdit('${escJs(s.id)}','${escJs(t.id)}')">
+      <span style="flex:1"><b>${esc(t.label || 'Tâche')}</b> · ${dur}<br>
+        <span style="font-size:.78rem;color:#7a6a62">🎨 ${noms}${mut}</span></span>
+      <span style="color:#9a8a82">🖊</span>
+    </div>`;
+  }).join('') : '<p class="note">Aucune tâche dans cette session.</p>';
+  _prodModalSwap(`<h3>🖊 Parfums par tâche</h3>
+    <p class="note" style="margin-bottom:8px">Session du ${esc(s.date ? fmtDate(s.date) : '')}. Touche une tâche pour corriger le ou les parfums qui lui sont rattachés — le temps par parfum se recalcule à partir de là.</p>
+    ${rows}
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal(); if(typeof prodRenderJournal==='function') prodRenderJournal();">Fermer</button></div>`);
+}
+
+// ── ÉCRAN 2 : l'éditeur d'UNE tâche (cases à cocher, parfums de la session en tête) ──
+async function prodTacheParfumsEdit(sessId, taskId){
+  const s = (typeof prodSessGet === 'function') ? prodSessGet(sessId) : null;
+  const t = s && (s.tasks || []).find(x => String(x.id) === String(taskId));
+  if(!t){ toast('Tâche introuvable'); return; }
+  const recipes = (await db.recipes.toArray().catch(() => [])).filter(r => r.produitNom);
+  const actuels = new Set((Array.isArray(t.parfums)?t.parfums:[]).map(Number).filter(r=>Number.isFinite(r)&&r>0));
+  const sessRids = new Set(_sessParfumsDistincts(s));
+  // Parfums de la session d'abord (le cas normal : corriger vers un parfum de la fournée), puis le
+  // reste par ordre alphabétique (le cas rare : un parfum jamais rattaché à cette session).
+  const tri = recipes.slice().sort((a,b) => {
+    const sa = sessRids.has(+a.id) ? 0 : 1, sb = sessRids.has(+b.id) ? 0 : 1;
+    return sa - sb || (a.produitNom || '').localeCompare(b.produitNom || '');
+  });
+  window._tpeSess = sessId; window._tpeTask = taskId;
+  window._tpeRecList = tri.map(r => r.id);
+  const rows = tri.map(r => {
+    const gfTag = r.grandFormat ? ' <span class="tag" style="background:#8a6d3b;color:#fff;font-size:.62rem">grand format</span>' : '';
+    const sess = sessRids.has(+r.id) ? '<span style="color:#3f7d52;font-size:.72rem">dans cette session</span>' : '';
+    return `<label class="sum-box" style="align-items:center;cursor:pointer">
+      <span style="flex:1">${esc(r.produitNom)}${gfTag}${sess ? '<br>' + sess : ''}</span>
+      <input type="checkbox" id="tpe_${r.id}" ${actuels.has(+r.id) ? 'checked' : ''} style="width:22px;height:22px"></label>`;
+  }).join('');
+  _prodModalSwap(`<h3>🖊 ${esc(t.label || 'Tâche')}</h3>
+    <p class="note" style="margin-bottom:8px">Coche le ou les parfums de cette tâche (plusieurs = mutualisée). Aucune case = temps commun (vaisselle, rangement…), réparti à parts égales.</p>
+    ${rows || '<p class="note">Aucune recette.</p>'}
+    <div class="modal-actions">
+      <button class="btn ghost" style="margin-right:auto" onclick="prodSessTaches('${sessId}')">← Retour</button>
+      <button class="btn gold" onclick="prodTacheParfumsSave()">Enregistrer</button>
+    </div>`);
+}
+
+async function prodTacheParfumsSave(){
+  const sessId = window._tpeSess, taskId = window._tpeTask;
+  const s = (typeof prodSessGet === 'function') ? prodSessGet(sessId) : null;
+  if(!s){ closeModal(); return; }
+  const choisis = (window._tpeRecList || []).filter(rid => { const el = document.getElementById('tpe_' + rid); return el && el.checked; });
+  const r = _prodTacheParfumsApplique(s, taskId, choisis);
+  if(!r.ok){ toast(r.raison); return; }
+  if(typeof prodSessUpsert === 'function') prodSessUpsert(s);
+  if(typeof markUnsaved === 'function') markUnsaved();
+  toast(choisis.length ? 'Parfum(s) de la tâche mis à jour ✓ — temps par parfum recalculé' : 'Tâche passée en temps commun ✓');
+  prodSessTaches(sessId);   // retour à la liste, EN PLACE
+}
+
 
 // Collecte unique des données brutes sur une fenêtre de N jours.
 // Sert de socle commun aux 3 couches (audit, indicateur, simulateur).
@@ -56852,9 +57021,12 @@ function prodLastSession(){
   return all[0]||null;
 }
 // ---- JOURNAL DE BORD (étape 4) : sessions passées, groupées par jour ----
-function prodRenderJournal(){
+async function prodRenderJournal(){
   const host = document.getElementById('prodBoardHost'); if(!host) return;
   const sessions = prodSessLoad().slice().sort((a,b)=> (b.start)-(a.start));
+  // [v1380] Les parfums fabriqués s'affichent en en-tête de chaque session (demande de Ben).
+  const _recs = await db.recipes.toArray().catch(()=>[]);
+  const _nomRec = rid => { const r=_recs.find(x=>+x.id===+rid); return r?r.produitNom:('#'+rid); };
   if(!sessions.length){
     host.innerHTML = `<div class="prodb-empty"><div class="prodb-empty-ico">📅</div>
       <p>Aucune session enregistrée pour l'instant.</p>
@@ -56883,10 +57055,15 @@ function prodRenderJournal(){
         </div>
         <div class="pj-tot" style="text-align:right">${prodDurShort(reelMs)}<br><span style="font-size:.62rem;color:#9a8a82;font-weight:400">temps réel${gainMs>=60000?` <span style="color:#3f7d52" title="Tâches menées en parallèle : le temps réel passé au mur, chevauchements déduits. Le cumul additionne les tâches comme si elles étaient faites à la chaîne.">· cumul ${prodDurShort(totMs)} · ⏱ ${prodDurShort(gainMs)} gagné en parallèle</span>`:''}</span></div>
       </div>
+      ${(()=>{ const rids=_sessParfumsDistincts(s);
+        return rids.length
+          ? `<div style="font-size:.76rem;color:#6b4f45;margin:2px 0 0">🎨 ${rids.map(r=>esc(_nomRec(r))).join(' · ')}</div>`
+          : `<div style="font-size:.72rem;color:#b0a29a;margin:2px 0 0">🎨 parfums non rattachés — utilise 🎯 ou 🖊</div>`; })()}
       <div class="pj-chips">${phaseChips}</div>
       <div class="pj-actions">
         <button class="qa" onclick="prodJournalOpen('${s.id}')">📊 Voir le tableau</button>
         <button class="qa" style="background:#aa7c39;color:#fff" onclick="prodSessParfumsConfirm('${s.id}')" title="Rattacher les parfums/recettes produits pendant cette session (affine le temps par recette, y compris pour tes anciennes sessions)">🎯 Parfums${s.parfumsConfirmes?' ✓':''}</button>
+        <button class="qa" style="background:#6b4f45;color:#fff" onclick="prodSessTaches('${s.id}')" title="Corriger le parfum d'UNE tâche précise — le temps par parfum se recalcule selon tes corrections">🖊 Par tâche</button>
         ${!open?`<button class="qa" style="background:#3f7d52;color:#fff" onclick="prodSessReopen('${s.id}')" title="Rouvrir cette session pour y ajouter des tâches (ex : garnissage après refroidissement)">↻ Rouvrir</button>`:''}
         ${!open?`<button class="qa del" onclick="prodJournalDelete('${s.id}')">🗑</button>`:''}
       </div>

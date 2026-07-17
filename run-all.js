@@ -98,7 +98,9 @@ const SUITES = [
   'v1375-etiquettes-boites.test.js', // v1375 : les deux bugs d'étiquettes de mise en boîte (modèle vs DOM, modal en place)
   'v1376-fusion-boites.test.js',    // v1376 : fusion de deux boîtes du même lot (règle stricte + traçabilité)
   'v1377-rebascule-devis.test.js',   // v1377 : rebascule commande→devis (zone morte) + devis périmé/régénération
-  'v1378-rappel-pesee.test.js'      // v1378 : plus de rappel de pesée sur les deux étapes meringue
+  'v1378-rappel-pesee.test.js',     // v1378 : plus de rappel de pesée sur les deux étapes meringue
+  'v1379-meringue-commune.test.js', // v1379 : base meringue mutualisée sur le total std-éq (GF converti)
+  'v1380-parfum-par-tache.test.js'  // v1380 : réattribution du parfum par tâche + parfums en en-tête du journal
 ];
 
 let allOk = true;

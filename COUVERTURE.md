@@ -3219,3 +3219,106 @@ politique et bannit le retour de `'meringue'` (D3, garde anti-réintroduction).
 ### Non touché (déclaré)
 Le rappel (A) — fiche recette complète au lancement de batch — reste inchangé : Ben visait
 explicitement le rappel B. Les grammages meringue restent consultables via cette fiche complète.
+
+---
+
+## 2026-07-17 — MERINGUE COMMUNE : la base couvre enfin le TOTAL annoncé  (v1378 → **v1379**)
+
+**Le bug, attrapé par Ben en pleine préparation (captures à l'appui)** : Cannelle noisette (60 mac.
+standard) + Madeleine (17 mac. grand format) → l'app annonçait « Meringue à réaliser : **239 coques
+std éq.** » mais les grammages de la « Base commune » ne couvraient que les **120 coques** de la
+Cannelle. Preuve dans ses captures : en passant la Madeleine de 24 à 17 macarons, le total bougeait
+(288 → 239) et **pas un gramme ne changeait**. La Madeleine, sans ingrédient coque étiqueté, pesait
+ZÉRO dans la base. Pesée telle quelle : une **demi-meringue**, et on tombe court en pleine
+production. « Heureusement que j'ai fait attention. »
+> Un total qui n'est pas la somme de son détail est un TROISIÈME CHIFFRE (v1339) — ici en version
+> silencieuse : l'app omettait un parfum entier sans le dire.
+
+### Le modèle, tranché par Ben (« A »)
+Les grands formats sont convertis en **équivalent-coque standard** (1 coque GF = 3,5 std ; 17 mac. GF
+= 34 coques GF = 119 std éq.) et la meringue est **mutualisée sur ce total**. La base commune se
+dimensionne donc sur `eqTotal` (239), pas sur les seuls parfums porteurs (120). Le tant pour tant
+ET les **ajouts propres** (noisettes du Piémont, colorants…) restent PAR PARFUM — l'ancien code
+fondait les noisettes de la Cannelle dans la « base commune », donc les « mutualisait » avec la
+Madeleine : rendues à leur parfum (`_natureCoque` : 'tpt' / 'base' / 'ajout').
+
+### UN moteur, TROIS surfaces
+`_meringueCommuneCalc(parfums, dispOf, matName)` (PURE) calcule : eqTotal, eqPorteurs,
+`facteurBase = eqTotal/eqPorteurs`, la base mise à l'échelle, le détail par parfum, et
+`baseDetectee`. Les trois surfaces qui affichaient chacune leur propre somme — **aperçu du
+formulaire** (`prodDuoApercu`), **fiche de production** (`ficheMeringueProduction`), **fiche de
+pesée** (`atFichePesee`) — passent toutes par lui : deux calculs pour la même meringue seraient deux
+vérités (v1331). Le motif fautif (`aggCommun`) est éradiqué et sa réintroduction testée.
+
+### Dit à l'écran, jamais implicite
+- La base affiche « **dimensionnée pour N coques std éq.** (mutualisée, grands formats convertis) ».
+- AUCUN parfum porteur → **⛔ « ne pèse pas cette fiche »** en rouge (jamais une fiche vide pesable).
+- Un parfum sans rien en propre : « partage la base commune » (fini le trompeur « pas de tant pour
+  tant étiqueté » seul).
+
+### Corrigé à la racine au passage : la ligature œ
+`_isBaseMeringue` ne reconnaissait pas « Blancs d'**œ**ufs » : NFD ne décompose PAS les ligatures
+(œ ≠ oe). Le normaliseur (`_aiNormalizeRaw`) décompose désormais œ→oe et æ→ae — ce qui répare aussi
+le copilote (« oeuf » tapé trouve « œuf »). L'agrégat complet (copilote et vocabulaire compris)
+reste vert après le changement.
+
+### Suite v1379 : 27 assertions (85 suites au total, toutes vertes)
+Le cas EXACT des captures (239 = 120 + 119, facteur ×1,99, eau 195,64 → 389,65 g), l'invariant
+« grammes de base par coque identiques avec ou sans la Madeleine » (B5), le bug rejoué (C1/C2 :
+l'ancienne fiche donnait ~50 % de la base requise), les noisettes rendues au parfum (B6), le cas
+courant 2 standards → facteur exactement 1, **pas un gramme ne bouge** (D3, v1370), et le câblage
+(3 appels, `aggCommun` banni, messages d'écran).
+
+### Angle mort déclaré
+La classification base/tpt/ajout repose sur les NOMS de matières (regex sur blancs/eau/sucre
+semoule…). Une matière de base nommée hors de ces motifs serait classée « ajout propre » — visible à
+l'écran (elle apparaîtrait sous le parfum), pas silencieuse, mais à surveiller si Ben renomme ses
+matières.
+
+---
+
+## 2026-07-17 — JOURNAL DE L'ATELIER : le parfum se corrige TÂCHE PAR TÂCHE  (v1379 → **v1380**)
+
+**Demandes de Ben** : (1) dans le journal de l'atelier chrono, pouvoir changer le parfum associé à
+UNE tâche — et le temps par parfum doit s'adapter ; (2) voir en en-tête de chaque session les
+parfums fabriqués à cette occasion.
+
+### État vérifié avant modification
+Le bouton « 🎯 Parfums » existant travaille au niveau SESSION : il applique la même liste de recettes
+à TOUTES les tâches (`prodSessParfumsSave`). Aucune édition par tâche n'existait. Point décisif : les
+moteurs de temps (`prodSessTempsParRecette`, `_tempsDecompoParParfum`) relisent `t.parfums` À CHAQUE
+calcul — le recalcul demandé vient donc TOUT SEUL dès que la réattribution est persistée. Prouvé,
+pas supposé (suite v1380, partie C : avant/après sur le VRAI moteur).
+
+### Ce qui est livré
+- **En-tête** : chaque carte du journal affiche « 🎨 parfum1 · parfum2 » — les parfums distincts de
+  la session, dans l'ordre de première apparition des tâches (`_sessParfumsDistincts`, PURE). Une
+  session sans parfums le DIT (« parfums non rattachés — utilise 🎯 ou 🖊 »), jamais un vide muet.
+- **🖊 Par tâche** (nouveau bouton par carte) : liste des tâches (libellé, durée, parfums, badge
+  « mutualisée ») → tap → éditeur à cases (parfums de la session en tête, puis toutes les recettes) →
+  Enregistrer. `_prodTacheParfumsApplique` (PURE) assainit (dédoublonnage, ids valides), permet la
+  liste VIDE (détacher une tâche : vaisselle, rangement → temps commun, règle v1310), et marque la
+  session `parfumsConfirmes` + `parfumsParTache`. Persistance via `prodSessUpsert` (cache + Dexie).
+  Transitions liste ↔ éditeur EN PLACE (`_prodModalSwap`, règle v1375).
+- **Garde anti-écrasement** : le flux SESSION (🎯) écrase toutes les tâches — s'il existe des
+  corrections par tâche (`parfumsParTache`), il DEMANDE avant d'écraser, et s'il écrase, le drapeau
+  tombe (l'état dit toujours la vérité).
+
+### La preuve centrale (partie C)
+Fixture à 3 tâches sans chevauchement : AVANT, Cannelle 18 min / Madeleine 2 min. Réattribution de la
+ganache (6 min) → APRÈS, Cannelle 12 / Madeleine 8 — **le total distribué est identique à la
+milliseconde : on déplace du temps, on n'en invente pas** (v1339). Détachée → ses minutes deviennent
+du temps COMMUN partagé à parts égales (règle v1310 de Ben, rien ne s'évapore — C4/C4b). Rattachée
+aux deux → partage 50/50 (C5).
+
+### La garde v1357 a fait son travail sur MOI
+Ma première version échappait une apostrophe à la main (`replace(/'/g,'')`) dans un onclick — la
+garde « escJs() est le SEUL chemin » a mis l'agrégat au rouge. Corrigé via `escJs`. (Et au passage :
+une chaîne `grep && python` avait avalé le correctif en silence — le correctif n'était PAS appliqué
+alors que je le croyais ; seule la suite l'a révélé. C'est exactement pour ça qu'elle existe.)
+
+### Suite v1380 : 22 assertions (86 suites au total, toutes vertes)
+
+### Angle mort déclaré
+L'éditeur par tâche modifie les PARFUMS d'une tâche, pas ses bornes temporelles (start/fin) — hors
+périmètre de la demande. Le libellé d'une tâche n'est pas éditable ici non plus.
