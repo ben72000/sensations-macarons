@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1376';
+const APP_VERSION = 'v1378';
 const APP_MAJ = 'LE MONTAGE PYRAMIDE, SANS OUVRIR « MODIFIER » — comme tu l’as demandé. Le résumé d’une commande événement affiche maintenant, d’un coup d’œil : le NOMBRE de pyramides, le TYPE (location ou vendue), le NOMBRE D’ÉTAGES, le modèle de présentoir, et le nombre de macarons par pyramide — avec la mention « pyramide entière » quand tous les plateaux sont utilisés. UNE DIFFICULTÉ QUE JE DOIS TE DIRE : le nombre d’étages N’EST PAS STOCKÉ sur la commande. Seuls le nombre de pyramides et le nombre de macarons le sont. Les étages se DÉDUISENT de tes modèles de présentoirs (chaque modèle a ses plateaux, donc ses paliers cumulés : 4, 11, 21, 34, 50, 69 pour ta pyramide transparente). JE NE DEVINE DONC PAS — JE DÉDUIS, ET JE DIS CE QUE JE SAIS. Si un seul modèle correspond, je l’affiche avec ses étages. Si PLUSIEURS correspondent (34 macarons, c’est 4 étages sur un modèle et 3 sur un autre), je te les LISTE TOUS : trancher en silence reviendrait à décider à ta place. Si AUCUN palier ne correspond, je te dis « montage sur mesure » — sans arrondir au palier voisin, alors que ce serait facile. Et si la répartition n’est pas entière (100 macarons sur 3 pyramides), je te signale que tes pyramides ne seront PAS identiques, au lieu de te laisser croire à un montage équilibré qui n’existe pas. LA RÈGLE QUE J’AI FIGÉE : un nombre d’étages INVENTÉ serait PIRE qu’une absence — il t’enverrait monter le MAUVAIS présentoir le jour J, devant ton client. Une donnée manquante te coûte un aller-retour dans « Modifier » ; une donnée FAUSSE te coûte un événement raté. Le silence est le moindre mal ; le mensonge, jamais. Enfin, pour un bloc plat (non sécable), je n’affiche AUCUN étage : parler d’étages n’aurait aucun sens. Suite : 1397 → 1437 assertions vertes.';
 
 // ============================================================
@@ -9352,7 +9352,12 @@ async function docOpen(id){
         <button class="btn ghost" onclick="cmdForm(null,{devis:true,devisId:${d.id}});">Modifier</button>
       </div>
     `:''}
-    ${(d.type==='devis'&&d.orderId)?`<p class="note" style="margin-top:8px;color:#3f7d52">✓ Converti en commande.</p>`:''}
+    ${(d.type==='devis'&&d.orderId)?(d.perimeCommande
+      ? `<div class="banner" style="background:#fdf3e7;border-color:#e0a458;margin-top:8px">⚠ <div><b>Ce devis ne correspond plus à la commande</b> — elle a été modifiée depuis l'acceptation. Régénère-le pour qu'il reflète la commande actuelle, puis envoie-le au client.</div></div>
+         <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+           <button class="btn gold" onclick="devisRegenererDepuisCommande(${d.id})">🔄 Régénérer depuis la commande</button>
+         </div>`
+      : `<p class="note" style="margin-top:8px;color:#3f7d52">✓ Converti en commande.</p>`):''}
     ${d.type==='facture'?`
       ${d.statut==='brouillon'?`
         <div class="banner" style="background:#fdf8ec;border-color:#e8d4a0;margin-top:10px">📝 <div><b>Brouillon</b> — cette facture n'a pas encore de numéro légal. Vérifie-la, puis valide-la définitivement.</div></div>
@@ -9396,6 +9401,59 @@ async function docSetAcompte(id, v){
   // On ne désactive plus le bouton (l'ancienne logique le grisait dès que le champ était vide, ce qui
   // rendait impossible la validation d'un devis sans acompte malgré l'intention « facultatif »).
 }
+// ════════════════════════════════════════════════════════════════════════════
+// [v1377] DEVIS ↔ COMMANDE : garder le devis accepté cohérent avec sa commande.
+//
+// Un devis accepté est une COPIE FIGÉE au moment de l'acceptation. Si Ben modifie ensuite la
+// commande, le devis ne reflète plus l'offre → on le marque « périmé » (drapeau `perimeCommande`,
+// posé/levé par saveCmd via `_devisPerime`). Ben peut alors le RÉGÉNÉRER depuis la commande, puis
+// l'envoyer au client. On ne réécrit JAMAIS un devis accepté en douce : régénérer est SA décision.
+// ════════════════════════════════════════════════════════════════════════════
+
+// Le devis lié à une commande est-il périmé ? (PURE) — vrai si son contenu ne correspond plus
+// (lignes OU montant). `money2` (global) compare les euros sans bruit de virgule flottante.
+function _devisPerime(devis, order){
+  if(!devis || !order) return false;
+  const m = (typeof money2 === 'function') ? money2 : (x => Math.round((+x || 0) * 100) / 100);
+  return JSON.stringify(devis.lignes || []) !== JSON.stringify(order.lignes || [])
+      || m(+devis.montant || 0) !== m(+order.montant || 0);
+}
+
+// Régénère un devis périmé à partir du contenu ACTUEL de sa commande, puis propose l'envoi au
+// client. Le numéro et le statut « accepté » ne changent pas — c'est le MÊME devis, remis à jour.
+async function devisRegenererDepuisCommande(dvId){
+  const dv = await db.documents.get(dvId).catch(() => null);
+  if(!dv){ toast('Devis introuvable'); return; }
+  if(dv.orderId == null){ toast('Ce devis n\'est lié à aucune commande.'); return; }
+  const o = await db.orders.get(dv.orderId).catch(() => null);
+  if(!o){ toast('Commande liée introuvable.'); return; }
+  const patch = {
+    clientId: o.clientId || 0,
+    heureLivraison: o.heureLivraison || '', lieuLivraison: o.lieuLivraison || '',
+    dateEvenement: o.dateEvenement || '', dateEvtReel: o.dateEvtReel || '',
+    distanceKm: o.distanceKm || 0, prixCarburant: o.prixCarburant || 0,
+    tempsLivraisonMin: o.tempsLivraisonMin || 0, consoVehicule: (o.consoVehicule != null ? o.consoVehicule : null),
+    fraisLivraison: o.fraisLivraison || 0, sacMatId: o.sacMatId || 0, sacNb: o.sacNb || 0,
+    lignes: Array.isArray(o.lignes) ? o.lignes : [],
+    remiseGlobale: o.remiseGlobale || 0, remiseGlobaleEur: (o.remiseGlobaleEur != null ? +o.remiseGlobaleEur : null),
+    perso: !!(o.perso || +o.persoMacarons > 0), persoMacarons: +o.persoMacarons || 0,
+    persoCouleurs: Array.isArray(o.persoCouleurs) ? o.persoCouleurs : [], persoRemiseEur: +o.persoRemiseEur || 0,
+    montant: +o.montant || 0,
+    perimeCommande: false, regenereTs: Date.now(),
+    html: ''   // l'aperçu sera reconstruit à la prochaine visualisation (genererDevisDoc)
+  };
+  await db.documents.update(dvId, patch);
+  toast('Devis régénéré depuis la commande ✓');
+  // Proposer l'envoi — Ben décide. On REMPLACE le contenu du modal en place (pas de fermeture puis
+  // ré-ouverture : règle v1375, sinon le history.back referme le nouveau modal).
+  openModal(`<h3>Devis régénéré ✓</h3>
+    <p class="note" style="margin-bottom:10px">Le devis <b>${esc(dv.numero || '')}</b> reflète de nouveau la commande. Tu peux l'envoyer au client maintenant, ou plus tard.</p>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal(); if(typeof view!=='undefined' && view==='documents' && typeof renderDocuments==='function') renderDocuments();">Plus tard</button>
+      <button class="btn gold" onclick="genererDevisDoc(${dvId})">👁️ Visualiser &amp; envoyer</button>
+    </div>`);
+}
+
 // Conversion devis → commande : crée une vraie commande à partir des lignes du devis.
 async function docConvertToOrder(id){
   const d=await db.documents.get(id); if(!d) return;
@@ -9503,10 +9561,12 @@ async function cmdToDevisConfirm(id){
     const totBatch = itemsLies.reduce((s,it)=>s+(+it.qte||0),0);
     if(totBatch>0 || o.pkgDecremented===true){ toast('Batch ou emballage lié — conversion annulée'); closeModal(); return; }
     const numero=await nextDocNumero('devis');
-    const today=today();
+    const auj=today();   // [v1377] BUG CORRIGÉ : c'était `const today=today()` — le const masquait la
+                         // fonction globale et s'appelait avant d'être initialisé (zone morte temporelle),
+                         // d'où un ReferenceError qui plantait TOUT rebasculement de commande propre en devis.
     const doc={
       type:'devis', statut:'en_attente', numero,
-      clientId:o.clientId||0, date:o.date||today,
+      clientId:o.clientId||0, date:o.date||auj,
       heureLivraison:o.heureLivraison||'', lieuLivraison:o.lieuLivraison||'', dateEvenement:o.dateEvenement||'', dateEvtReel:o.dateEvtReel||'',
       distanceKm:o.distanceKm||0, prixCarburant:o.prixCarburant||0,
       tempsLivraisonMin:o.tempsLivraisonMin||0, consoVehicule:(o.consoVehicule!=null?o.consoVehicule:null),
@@ -10348,7 +10408,9 @@ function atLaunch(label){
   if(typeof prodRenderBoard==='function' && document.getElementById('prodBoardHost')) prodRenderBoard();
   // [v1212] Étape de pesée → affiche la fiche de grammages filtrée (meringue / tant pour tant),
   // adaptée à l'onglet actif. Le chrono a déjà démarré ci-dessus ; la fiche s'ouvre par-dessus.
-  const _pk = (typeof _atPeseeKind==='function') ? _atPeseeKind(label) : null;
+  // [v1378] Le rappel n'est conservé QUE pour le tant pour tant (voir _atRappelPesee) : les deux
+  // pesées meringue ne rappellent plus la fiche — inutile une fois les ingrédients pesés.
+  const _pk = (typeof _atRappelPesee==='function') ? _atRappelPesee(label) : null;
   if(_pk && typeof atFichePesee==='function'){ atFichePesee(_pk); }
 }
 function atShowDurPrompt(label){
@@ -13860,6 +13922,17 @@ function _atPeseeKind(label){
   if(/tant pour tant/.test(n)) return 'tpt';
   if(/pesee des ingredients meringue|pesee.*meringue|ingredients meringue/.test(n)) return 'meringue';
   return null;
+}
+
+// [v1378] Faut-il AUTO-OUVRIR la fiche de pesée au lancement de cette étape ? (null = non). PURE.
+// Décision de Ben : ne garder le rappel QUE pour le « tant pour tant ». Les rappels sur « pesée des
+// ingrédients meringue » et « pesée de la meringue pour division » (tous deux de type 'meringue')
+// sont RETIRÉS — à ces étapes les grammages sont déjà pesés, donc le rappel est du bruit, pas de
+// l'information. (Les grammages meringue restent visibles via la fiche recette complète au besoin.)
+// On sépare la POLITIQUE d'auto-ouverture de _atPeseeKind, qui garde son rôle : nommer le type de
+// pesée. Ainsi retirer un rappel ne fait pas mentir l'identificateur.
+function _atRappelPesee(label){
+  return (_atPeseeKind(label) === 'tpt') ? 'tpt' : null;
 }
 
 // [POINT F] Fiche de production pour un COMPOSANT catalogue (chantache…), même présentation
@@ -20302,6 +20375,18 @@ async function saveCmd(id){
     const ok = await ensureOrderDecremented(oid);
     if(ok){ await db.orders.update(oid, {statut:'Livrée'}); }
     // si !ok : la commande reste « Terminée » et ensureOrderDecremented a ouvert « Lier des batchs ».
+  }
+  // [v1377] Devis accepté lié à cette commande : le marquer « périmé » si le contenu ne correspond
+  // plus (lignes ou montant), ou lever le drapeau s'il correspond de nouveau (ex : après régénération).
+  // On ne touche JAMAIS au contenu du devis — juste le signal. Ben régénère et renvoie quand il veut.
+  if(id){
+    try{
+      const dvs = (await db.documents.toArray()).filter(x => x.type === 'devis' && x.orderId === id);
+      for(const dv of dvs){
+        const per = _devisPerime(dv, o);
+        if(!!dv.perimeCommande !== per) await db.documents.update(dv.id, { perimeCommande: per });
+      }
+    }catch(e){ swallow(e, 'perime devis'); }
   }
   markUnsaved();
   // calendrier : recréer l'événement lié
