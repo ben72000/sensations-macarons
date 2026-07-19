@@ -100,7 +100,8 @@ const SUITES = [
   'v1377-rebascule-devis.test.js',   // v1377 : rebascule commande→devis (zone morte) + devis périmé/régénération
   'v1378-rappel-pesee.test.js',     // v1378 : plus de rappel de pesée sur les deux étapes meringue
   'v1379-meringue-commune.test.js', // v1379 : base meringue mutualisée sur le total std-éq (GF converti)
-  'v1380-parfum-par-tache.test.js'  // v1380 : réattribution du parfum par tâche + parfums en en-tête du journal
+  'v1380-parfum-par-tache.test.js', // v1380 : réattribution du parfum par tâche + parfums en en-tête du journal
+  'v1381-moteur-dexie.test.js'      // v1381 : le VRAI dexie.min.js tient le contrat (hooks, kv, atomicité — E2E réel)
 ];
 
 let allOk = true;

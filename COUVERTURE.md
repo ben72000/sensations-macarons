@@ -3322,3 +3322,72 @@ alors que je le croyais ; seule la suite l'a révélé. C'est exactement pour ç
 ### Angle mort déclaré
 L'éditeur par tâche modifie les PARFUMS d'une tâche, pas ses bornes temporelles (start/fin) — hors
 périmètre de la demande. Le libellé d'une tâche n'est pas éditable ici non plus.
+
+---
+
+## 2026-07-18 — LE MOTEUR : dexie.min.js ne tenait pas le contrat — un mois de protections mortes  (v1380 → **v1381**)
+
+**La découverte, grâce à Ben** : il a partagé le `dexie.min.js` qui tourne en prod depuis un mois —
+une **micro-implémentation autonome**, pas la vraie librairie Dexie. Ce fichier n'a jamais voyagé
+dans les zips (ni dans le V1370.zip reçu, ni dans mes livraisons) : je concevais contre l'API Dexie
+standard **sans jamais avoir vu le runtime réel**. C'est MA faute de méthode : j'aurais dû exiger de
+voir le moteur avant de bâtir dessus.
+
+### L'étendue réelle des dégâts (vérifiée ligne par ligne, pas supposée)
+- 🔴 **`bulkPut`/`bulkDelete` absents** → CHAQUE flush du stockage unifié kv échouait depuis un
+  mois. La table `kv` est restée **vide en permanence** : compteur légal de factures, modèles de
+  pyramides, journal du copilote — jamais recopiés en base, chaque sauvegarde embarquait un kv vide.
+  (La bannière « la copie durable a échoué N fois » prévue en v1372 était le seul témoin.)
+- 🔴 **`table.hook()` et `db.tables` absents** → `auditInstalle()` et `valideInstalle()` plantaient
+  à leur première ligne au boot, erreur avalée (console). **Le journal d'audit et la validation à
+  l'entrée n'ont JAMAIS tourné.** Le « 0 refus, 0 suspects » de l'écran voulait dire « le contrôle
+  n'a jamais démarré », pas « tes données sont propres ».
+- 🟡 `primaryKeys` absent (latent : la rétention du journal aurait planté au premier surplus) ;
+  `between`/`anyOf` absents (les fenêtres de dates tournaient sur leurs replis try/catch) ;
+  `db.close/open` absents (chemin de réparation « base bloquée » inopérant) ; `Dexie.ignoreTransaction`
+  absent (repli setTimeout OK).
+- 🟢 **Aucune perte ni corruption de données** : fusion de boîtes, devis périmé, parfum par tâche
+  écrivent en direct — fonctionnels. Seule leur trace d'audit manquait.
+
+### Pourquoi mes tests étaient verts pendant que la prod était morte
+Mes harnais fournissaient eux-mêmes des `db` factices AVEC `hook()` : ils prouvaient la **logique**,
+jamais son **exécution réelle**.
+> **RÈGLE GRAVÉE (v1381) : UN TEST QUI FOURNIT LUI-MÊME L'API QU'IL PRÉTEND VÉRIFIER NE VÉRIFIE
+> RIEN.** Le contrat entre deux couches se prouve en faisant tourner LES DEUX vraies couches.
+
+### Le correctif — le contrat est tenu PAR LE MOTEUR, zéro changement à app.js
+`dexie.min.js` (381 lignes) implémente désormais, à la sémantique Dexie : `table.hook('creating'/
+'updating'/'deleting')` (multi-abonnés dans l'ordre d'abonnement ; `this.onsuccess(id)` pour les clés
+auto ; **lever une exception AVORTE l'opération et sa transaction** — le refus de validation est
+réel) ; enveloppe de transaction avec `.on('complete'|'abort')` (une par transaction IDB : le tampon
+d'audit d'une transaction explicite se partage et flushe UNE fois au commit) ; `put` = upsert qui
+déclenche creating OU updating ; `bulkPut`/`bulkDelete` ; `Collection.primaryKeys` ; `where().between/
+anyOf` ; `db.tables` ; `db.on('blocked')` (émis sur `onblocked`) ; `db.close()/open()` ;
+`Dexie.ignoreTransaction` (report en macrotâche — divergence assumée et suffisante : l'appelant
+n'attend pas le résultat). **Divergences déclarées en tête de fichier** (clear() sans hooks ligne à
+ligne — les seuls clear massifs sont les restaurations, hooks suspendus de toute façon).
+
+### La nouvelle classe de preuve : le VRAI fichier, sous node
+`tests/_faux-idb.js` : un IndexedDB minimal en mémoire (Map + microtâches, commit en macrotâche,
+**rollback d'abort par instantané**) + chargement du **fichier `dexie.min.js` livré** via `vm` —
+jamais une copie. L'IDB factice ne fournit AUCUNE des API manquantes : si le moteur ne les implémente
+pas, la suite est rouge.
+
+### Suite v1381 : 28 assertions (87 suites, toutes vertes)
+La surface (A) ; le flux kv mort rejoué et vivant (B) ; la sémantique des hooks, refus avortant
+compris (C4-C6 : la promesse v1373 enfin réelle) ; le tampon au commit (D) ; **l'atomicité tout-ou-
+rien d'une transaction explicite avec refus au milieu — rollback prouvé** (E1, la promesse v1376) ;
+ignoreTransaction depuis un hook (F) ; le VRAI `_auditPrune` sur le vrai moteur (G) ; et le
+**bout-en-bout intégral** (H) : `valideInstalle` + `auditInstalle` extraits d'app.js, installés sur
+le vrai moteur — montant en chaîne refusé par `ValidationRefusee`, rien en base, « rejet » au
+journal, toast ; charge saine écrite, « création » journalisée avec sa clé, modification tracée
+avant→après. Le chemin de prod mort un mois, prouvé vivant.
+
+### Livraison
+**`dexie.min.js` fait désormais partie de chaque zip** — le moteur voyage avec l'app qu'il porte.
+Le service worker le précachait déjà (`./dexie.min.js`) : le bump de cache (v414) forcera son
+rechargement.
+
+### À vérifier par Ben après déploiement
+Écran Sauvegarde & sécurité : le compteur kv doit passer de 0 aux ~18 clés métier dès le premier
+démarrage (réconciliation « semer »), et le journal des écritures doit commencer à se remplir.
