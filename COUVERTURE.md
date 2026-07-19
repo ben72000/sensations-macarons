@@ -3391,3 +3391,68 @@ rechargement.
 ### À vérifier par Ben après déploiement
 Écran Sauvegarde & sécurité : le compteur kv doit passer de 0 aux ~18 clés métier dès le premier
 démarrage (réconciliation « semer »), et le journal des écritures doit commencer à se remplir.
+
+---
+
+## 2026-07-19 — CARNET DES TRAJETS : distance et temps repris de tes livraisons  (v1381 → **v1382**)
+
+**Demande de Ben** : « configurer l'adresse du client par rapport à mon lieu de départ (labo) pour
+calculer en automatique le temps de route et la distance ».
+
+### La décision, prise par Ben
+Trois options lui ont été présentées avec leurs contreparties : (A) estimation hors-ligne calibrée,
+(B) service de routage en ligne, (C) mémoire par adresse — 1re fois à la main, ensuite auto.
+**Ben a choisi C.** C'est le seul des trois qui ne FABRIQUE aucun chiffre : ce que l'app ressort est
+une mesure de Ben. Décisif, parce que ces nombres entrent dans `computeDeliveryCost` (carburant +
+coût du temps) donc dans la rentabilité et les marges — une distance estimée qui s'y glisserait
+serait un troisième chiffre (v1339). Écarté avec A : une clé d'API sur GitHub Pages est publique, et
+l'app est 100 % hors-ligne.
+
+### L'état trouvé avant de toucher (vérifié, pas supposé)
+Un carnet d'adresses existait déjà (`settings.addressBook` : libellé, km, min) et son
+pré-remplissage **fonctionnait** (`acPickBook`). Mais c'était une **île** :
+- un seul écrivain, le formulaire manuel — les livraisons déjà chiffrées dans les commandes
+  (`lieuLivraison` + `distanceKm` + `tempsLivraisonMin`) ne l'alimentaient **jamais** : Ben aurait dû
+  tout ressaisir, alors que sa « 1re fois à la main » était déjà faite, des dizaines de fois ;
+- choisir un **client** connu ne proposait rien (`cmdSuggestClientAddress` remplit l'adresse, pas le
+  trajet) ;
+- le pré-remplissage n'avait lieu **que** si Ben cliquait la ligne du carnet dans l'autocomplétion —
+  une adresse tapée, ou pré-remplie depuis la fiche client, ne déclenchait rien ;
+- surtout : le carnet ne disait **jamais depuis quel point de départ** les distances étaient
+  mesurées. Un déménagement de labo les rendait toutes fausses en silence.
+
+### Ce qui est livré
+1. **Le point de départ** est enfin un réglage (`adresseLabo`), **horodaté** (`adresseLaboDepuis`).
+   Les trajets mesurés avant un changement sont **signalés**, jamais purgés — Ben décide.
+2. **Le carnet apprend de ses propres commandes** (`_carnetTrajets`, PURE) : regroupement par
+   adresse et **médiane**, choisie contre la moyenne parce qu'un unique trajet pris dans les
+   bouchons ne doit pas devenir la norme (B1/B2 : 15/22/14 → 15 min, pas 17).
+3. **Proposition par client** (`_trajetParClient`) quand l'adresse est nouvelle mais le client déjà
+   livré — le trou le plus courant de l'ancien code. Et sur une adresse **tapée**, plus seulement
+   cliquée.
+4. **Rien n'est jamais écrasé** : deux champs vides → pré-remplissage **annoncé** ; un champ déjà
+   rempli → simple proposition avec bouton *Appliquer*. L'origine du chiffre est **toujours** dite
+   (« d'après 3 livraisons chez ce client »), et la fourchette observée affichée quand elle varie.
+5. **Divergence carnet ↔ réalité** (> 15 %) : remontée à l'écran avec les deux chiffres, jamais
+   arbitrée en douce.
+6. **L'ancien écran devient un alias** : il rendait sa propre liste sans le point de départ ni les
+   trajets appris, et les retours après ajout/suppression y ramenaient Ben — deux écrans pour la
+   même chose, c'est deux vérités (v1331). Il n'en reste qu'un (F10).
+
+### L'appariement des adresses, volontairement conservateur
+`_trajetCle` neutralise casse, accents, ponctuation et espaces multiples — **rien d'autre**. Aucun
+rapprochement « intelligent » : le 12 et le 14 de la même rue restent deux trajets (A3).
+> Rater une correspondance ne coûte qu'une saisie ; en inventer une injecte la distance d'un autre
+> client dans un calcul d'argent.
+
+### Suite v1382 : 38 assertions (88 suites, toutes vertes)
+L'appariement (A) ; la médiane contre la moyenne (B) ; **C3, la preuve centrale — chaque chiffre
+proposé existe tel quel dans une commande réelle** ; le signalement après changement de labo (D) ;
+la priorité carnet > adresse > client, la divergence remontée, le silence quand rien n'est connu
+(E4 : l'app se tait plutôt que d'inventer) ; le câblage complet (F) ; et **G, le non-but** : aucun
+calcul géographique, aucune vitesse moyenne, aucun facteur d'allongement, aucun appel de routage —
+le choix de Ben est tenu par le code, pas seulement par l'intention.
+
+### Angle mort déclaré
+Les marchés gardent leurs propres `distanceKm`/`tempsRouteMin` (écran marché) : ils ne sont ni
+alimentés ni alimentés par ce carnet. Hors périmètre de la demande, à traiter si Ben le souhaite.

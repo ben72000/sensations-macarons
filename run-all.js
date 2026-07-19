@@ -101,7 +101,8 @@ const SUITES = [
   'v1378-rappel-pesee.test.js',     // v1378 : plus de rappel de pesée sur les deux étapes meringue
   'v1379-meringue-commune.test.js', // v1379 : base meringue mutualisée sur le total std-éq (GF converti)
   'v1380-parfum-par-tache.test.js', // v1380 : réattribution du parfum par tâche + parfums en en-tête du journal
-  'v1381-moteur-dexie.test.js'      // v1381 : le VRAI dexie.min.js tient le contrat (hooks, kv, atomicité — E2E réel)
+  'v1381-moteur-dexie.test.js',     // v1381 : le VRAI dexie.min.js tient le contrat (hooks, kv, atomicité — E2E réel)
+  'v1382-carnet-trajets.test.js'    // v1382 : carnet des trajets — distance/temps repris des livraisons réelles
 ];
 
 let allOk = true;

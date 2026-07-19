@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1381';
+const APP_VERSION = 'v1382';
 const APP_MAJ = 'LE MONTAGE PYRAMIDE, SANS OUVRIR « MODIFIER » — comme tu l’as demandé. Le résumé d’une commande événement affiche maintenant, d’un coup d’œil : le NOMBRE de pyramides, le TYPE (location ou vendue), le NOMBRE D’ÉTAGES, le modèle de présentoir, et le nombre de macarons par pyramide — avec la mention « pyramide entière » quand tous les plateaux sont utilisés. UNE DIFFICULTÉ QUE JE DOIS TE DIRE : le nombre d’étages N’EST PAS STOCKÉ sur la commande. Seuls le nombre de pyramides et le nombre de macarons le sont. Les étages se DÉDUISENT de tes modèles de présentoirs (chaque modèle a ses plateaux, donc ses paliers cumulés : 4, 11, 21, 34, 50, 69 pour ta pyramide transparente). JE NE DEVINE DONC PAS — JE DÉDUIS, ET JE DIS CE QUE JE SAIS. Si un seul modèle correspond, je l’affiche avec ses étages. Si PLUSIEURS correspondent (34 macarons, c’est 4 étages sur un modèle et 3 sur un autre), je te les LISTE TOUS : trancher en silence reviendrait à décider à ta place. Si AUCUN palier ne correspond, je te dis « montage sur mesure » — sans arrondir au palier voisin, alors que ce serait facile. Et si la répartition n’est pas entière (100 macarons sur 3 pyramides), je te signale que tes pyramides ne seront PAS identiques, au lieu de te laisser croire à un montage équilibré qui n’existe pas. LA RÈGLE QUE J’AI FIGÉE : un nombre d’étages INVENTÉ serait PIRE qu’une absence — il t’enverrait monter le MAUVAIS présentoir le jour J, devant ton client. Une donnée manquante te coûte un aller-retour dans « Modifier » ; une donnée FAUSSE te coûte un événement raté. Le silence est le moindre mal ; le mensonge, jamais. Enfin, pour un bloc plat (non sécable), je n’affiche AUCUN étage : parler d’étages n’aurait aucun sens. Suite : 1397 → 1437 assertions vertes.';
 
 // ============================================================
@@ -3701,6 +3701,312 @@ function acPickBook(bookIndex){
   if(typeof cmdRentabiliteRecalc==='function') cmdRentabiliteRecalc();
   toast(`Distance et temps pré-remplis pour « ${a.libelle} »`);
 }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   [v1382] LE CARNET DES TRAJETS — distance et temps repris de TES livraisons
+   ----------------------------------------------------------------------------
+   LA DEMANDE (Ben) : configurer l'adresse du client par rapport à son lieu de
+   départ (le labo) pour obtenir automatiquement la distance et le temps de route.
+
+   LE CHOIX DE BEN, parmi trois : « mémoire par adresse — 1re fois à la main,
+   ensuite auto ». C'est le seul des trois qui ne FABRIQUE aucun chiffre : ce que
+   l'app ressort est une MESURE de Ben, jamais une estimation. Un chiffre estimé
+   qui alimenterait computeDeliveryCost (carburant + coût du temps → rentabilité,
+   marges) serait un troisième chiffre au sens v1339.
+
+   L'ÉTAT TROUVÉ AVANT DE TOUCHER : un carnet d'adresses existait déjà
+   (settings.addressBook : libellé, km, min) et son pré-remplissage FONCTIONNE
+   (acPickBook) — mais c'était une ÎLE :
+     · un seul écrivain, le formulaire manuel ; les dizaines de livraisons déjà
+       chiffrées dans les commandes (lieuLivraison + distanceKm + tempsLivraisonMin)
+       ne l'alimentaient jamais → Ben devait tout ressaisir ;
+     · choisir un CLIENT connu ne proposait rien (cmdSuggestClientAddress remplit
+       l'adresse, pas le trajet) ;
+     · le pré-remplissage n'avait lieu QUE si Ben cliquait la ligne du carnet dans
+       l'autocomplétion — une adresse tapée ou pré-remplie ne déclenchait rien ;
+     · surtout : le carnet ne disait JAMAIS depuis QUEL point de départ les
+       distances avaient été mesurées. Un déménagement de labo les rendait toutes
+       fausses en silence.
+
+   CE QUI EST AJOUTÉ ICI :
+     1. Le POINT DE DÉPART (adresse du labo) est enfin un réglage, horodaté. Les
+        trajets mesurés AVANT un changement d'adresse sont signalés, jamais purgés
+        en douce (v1339 : on ne remplace pas un chiffre en silence, on l'explique).
+     2. Le carnet APPREND de ses propres commandes : _carnetTrajets lit les
+        livraisons réelles et en tire, par adresse, la MÉDIANE (robuste à un jour
+        de bouchons — une moyenne se laisse tordre par une valeur aberrante).
+     3. La proposition arrive aussi par CLIENT (« tes 3 dernières livraisons chez
+        lui ») et sur une adresse TAPÉE, plus seulement cliquée.
+     4. Rien n'est jamais écrasé : un champ déjà rempli par Ben est proposé, pas
+        remplacé. Et l'origine du chiffre est TOUJOURS dite à l'écran.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+// Clé d'appariement d'une adresse. Volontairement CONSERVATRICE : accents, casse,
+// ponctuation et espaces multiples sont neutralisés, rien d'autre. On ne tente
+// aucun rapprochement « intelligent » entre deux libellés différents : une fausse
+// correspondance injecterait la distance d'un AUTRE client dans un calcul d'argent.
+// Rater une correspondance ne coûte qu'une saisie ; en inventer une coûte un chiffre faux.
+function _trajetCle(lieu){
+  return normTxt(lieu || '')
+    .replace(/[.,;:!?'"()\[\]\/\\-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Médiane (PURE). Choisie plutôt que la moyenne : un unique trajet pris dans les
+// bouchons ne doit pas devenir la norme du carnet.
+function _mediane(nums){
+  const a = (nums || []).map(Number).filter(n => Number.isFinite(n) && n > 0).sort((x, y) => x - y);
+  if(!a.length) return null;
+  const m = Math.floor(a.length / 2);
+  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+}
+
+// Construit le carnet APPRIS depuis les commandes (PURE).
+// Retourne une Map : clé d'adresse → { libelle, km, min, n, obs[], kmMin, kmMax,
+// minMin, minMax, dernier, avantLabo }.
+// `laboDepuis` (AAAA-MM-JJ) : les livraisons antérieures ont été mesurées depuis
+// une AUTRE adresse de départ — on les garde mais on les marque.
+function _carnetTrajets(orders, laboDepuis){
+  const par = new Map();
+  (orders || []).forEach(o => {
+    const lieu = (o && o.lieuLivraison || '').trim();
+    if(!lieu) return;
+    const km = +o.distanceKm || 0, min = +o.tempsLivraisonMin || 0;
+    if(km <= 0 && min <= 0) return;              // rien de mesuré : rien à apprendre
+    const cle = _trajetCle(lieu);
+    if(!cle) return;
+    if(!par.has(cle)) par.set(cle, { cle, libelle: lieu, obs: [] });
+    const e = par.get(cle);
+    e.obs.push({ km, min, date: o.date || '', orderId: o.id, clientId: +o.clientId || 0 });
+    // Le libellé affiché est celui de la livraison la PLUS RÉCENTE (l'orthographe
+    // la plus à jour), pas la première rencontrée.
+    if(!e.dernier || (o.date || '') >= e.dernier) { e.dernier = o.date || ''; e.libelle = lieu; }
+  });
+  par.forEach(e => {
+    const kms = e.obs.map(x => x.km).filter(v => v > 0);
+    const mins = e.obs.map(x => x.min).filter(v => v > 0);
+    e.km = _mediane(kms);
+    e.min = _mediane(mins);
+    e.n = e.obs.length;
+    e.kmMin = kms.length ? Math.min(...kms) : null;
+    e.kmMax = kms.length ? Math.max(...kms) : null;
+    e.minMin = mins.length ? Math.min(...mins) : null;
+    e.minMax = mins.length ? Math.max(...mins) : null;
+    // Toutes les mesures datent d'avant le point de départ actuel → suspectes.
+    e.avantLabo = !!(laboDepuis && e.obs.every(x => x.date && x.date < laboDepuis));
+  });
+  return par;
+}
+
+// Trajet médian des livraisons d'UN client (PURE) — le repli quand l'adresse
+// exacte n'est pas connue mais que le client, lui, a déjà été livré.
+function _trajetParClient(orders, clientId, laboDepuis){
+  const cid = +clientId || 0;
+  if(!cid) return null;
+  const obs = (orders || []).filter(o => +o.clientId === cid && ((+o.distanceKm || 0) > 0 || (+o.tempsLivraisonMin || 0) > 0))
+    .map(o => ({ km: +o.distanceKm || 0, min: +o.tempsLivraisonMin || 0, date: o.date || '' }));
+  if(!obs.length) return null;
+  const kms = obs.map(x => x.km).filter(v => v > 0), mins = obs.map(x => x.min).filter(v => v > 0);
+  return {
+    km: _mediane(kms), min: _mediane(mins), n: obs.length,
+    dernier: obs.map(x => x.date).sort().slice(-1)[0] || '',
+    avantLabo: !!(laboDepuis && obs.every(x => x.date && x.date < laboDepuis))
+  };
+}
+
+// Décide CE QU'ON PROPOSE, et le dit (PURE).
+// Priorité : 1) carnet manuel (la déclaration explicite de Ben) — 2) historique de
+// l'adresse — 3) historique du client. Si le carnet manuel et l'historique de la
+// MÊME adresse divergent de plus de 15 %, on ne tranche pas en silence : on renvoie
+// les deux (`divergence`) pour que l'écran montre l'écart et laisse Ben choisir.
+function _trajetPropose(opts){
+  const o = opts || {};
+  const cle = _trajetCle(o.lieu);
+  const carnet = o.carnet instanceof Map ? o.carnet : new Map();
+  const manuel = (o.addressBook || []).find(a => _trajetCle(a && a.libelle) === cle && cle);
+  const appris = cle ? carnet.get(cle) : null;
+  const ecartFort = (a, b) => (a > 0 && b > 0) ? (Math.abs(a - b) / Math.max(a, b) > 0.15) : false;
+
+  if(manuel){
+    const km = (manuel.km != null && +manuel.km > 0) ? +manuel.km : null;
+    const min = (manuel.min != null && +manuel.min > 0) ? +manuel.min : null;
+    const p = { km, min, source: 'carnet', libelle: manuel.libelle || o.lieu || '', n: 1, avantLabo: false };
+    if(appris && (ecartFort(km, appris.km) || ecartFort(min, appris.min))){
+      p.divergence = { km: appris.km, min: appris.min, n: appris.n };
+    }
+    return (p.km || p.min) ? p : null;
+  }
+  if(appris && (appris.km || appris.min)){
+    return { km: appris.km, min: appris.min, source: 'adresse', libelle: appris.libelle,
+             n: appris.n, dernier: appris.dernier, avantLabo: appris.avantLabo,
+             kmMin: appris.kmMin, kmMax: appris.kmMax, minMin: appris.minMin, minMax: appris.minMax };
+  }
+  const pc = o.parClient;
+  if(pc && (pc.km || pc.min)){
+    return { km: pc.km, min: pc.min, source: 'client', libelle: o.clientNom || '',
+             n: pc.n, dernier: pc.dernier, avantLabo: pc.avantLabo };
+  }
+  return null;
+}
+
+// Phrase d'origine du chiffre — l'app ne pose JAMAIS un nombre sans dire d'où il vient.
+function _trajetOrigine(p){
+  if(!p) return '';
+  if(p.source === 'carnet') return 'ton carnet d\u2019adresses';
+  if(p.source === 'adresse') return `${p.n} livraison${p.n > 1 ? 's' : ''} à cette adresse`;
+  if(p.source === 'client') return `${p.n} livraison${p.n > 1 ? 's' : ''} chez ce client`;
+  return '';
+}
+
+// ── [v1382] Contexte de proposition (chargé une fois par formulaire) ────────────
+let _trajetOrdersCache = null;
+async function _trajetContexte(){
+  if(!_trajetOrdersCache){
+    _trajetOrdersCache = await db.orders.toArray().catch(() => []);
+  }
+  const s = getSettings();
+  return { orders: _trajetOrdersCache, laboDepuis: s.adresseLaboDepuis || '', addressBook: s.addressBook || [] };
+}
+function _trajetInvalideCache(){ _trajetOrdersCache = null; }
+
+// Calcule et AFFICHE la proposition pour la commande en cours.
+// Règle cardinale : on ne remplace JAMAIS un chiffre saisi par Ben. Champs vides →
+// pré-remplissage annoncé ; champs déjà remplis → simple proposition, à lui de cliquer.
+async function cmdTrajetPropose(){
+  const box = document.getElementById('trajetPropo'); if(!box) return;
+  const lieu = (document.getElementById('f_lieu') || {}).value || '';
+  const sel = document.getElementById('f_cl');
+  const clientId = sel ? (+sel.value || 0) : 0;
+  const ctx = await _trajetContexte();
+  const carnet = _carnetTrajets(ctx.orders, ctx.laboDepuis);
+  const parClient = _trajetParClient(ctx.orders, clientId, ctx.laboDepuis);
+  const cl = (cmdClientsCache || []).find(c => +c.id === clientId);
+  const p = _trajetPropose({ lieu, carnet, addressBook: ctx.addressBook, parClient,
+                             clientNom: cl ? (cl.nom || '') : '' });
+  if(!p){ box.style.display = 'none'; box.innerHTML = ''; return; }
+
+  const kmEl = document.getElementById('f_distKm'), minEl = document.getElementById('f_tempsLiv');
+  const kmVide = !kmEl || String(kmEl.value || '').trim() === '';
+  const minVide = !minEl || String(minEl.value || '').trim() === '';
+  const chiffres = [p.km != null ? `<b>${qty(p.km)} km</b>` : '', p.min != null ? `<b>${qty(p.min)} min</b>` : '']
+    .filter(Boolean).join(' · ');
+  const origine = _trajetOrigine(p);
+
+  // Fourchette : si ses trajets varient, Ben doit le VOIR (la médiane cache l'écart).
+  let etendue = '';
+  if(p.kmMin != null && p.kmMax != null && p.kmMax > p.kmMin) etendue += ` · km observés ${qty(p.kmMin)}–${qty(p.kmMax)}`;
+  if(p.minMin != null && p.minMax != null && p.minMax > p.minMin) etendue += ` · min observées ${qty(p.minMin)}–${qty(p.minMax)}`;
+
+  const alerteLabo = p.avantLabo
+    ? `<div style="color:#b3261e;font-size:.76rem;margin-top:3px">⚠ Mesuré avant ton changement d'adresse de labo — à revérifier.</div>` : '';
+  const alerteDiv = p.divergence
+    ? `<div style="color:#8a6d3b;font-size:.76rem;margin-top:3px">⚠ Ton carnet dit ${p.km != null ? qty(p.km) + ' km' : '—'}, mais tes ${p.divergence.n} livraison(s) réelles donnent ${p.divergence.km != null ? qty(p.divergence.km) + ' km' : '—'}${p.divergence.min != null ? ' · ' + qty(p.divergence.min) + ' min' : ''}. Le carnet est proposé ; corrige-le si la réalité a changé.</div>` : '';
+
+  if(kmVide && minVide){
+    // Les deux champs sont vides : on remplit ET on le dit (jamais un chiffre muet).
+    if(kmEl && p.km != null) kmEl.value = p.km;
+    if(minEl && p.min != null) minEl.value = p.min;
+    if(typeof cmdDeliveryRecalc === 'function') cmdDeliveryRecalc();
+    if(typeof cmdRentabiliteRecalc === 'function') cmdRentabiliteRecalc();
+    box.innerHTML = `<div style="background:#eef6ef;border:1px solid #bcd9c6;border-radius:8px;padding:7px 9px;font-size:.82rem">
+      📍 Pré-rempli depuis ${esc(origine)} : ${chiffres}<span style="color:#6a5a52">${esc(etendue)}</span>
+      <div style="color:#6a5a52;font-size:.76rem;margin-top:2px">Ce sont tes propres mesures — corrige-les librement, la correction sera apprise.</div>
+      ${alerteLabo}${alerteDiv}</div>`;
+  } else {
+    box.innerHTML = `<div style="background:#f7f4ee;border:1px solid var(--hair);border-radius:8px;padding:7px 9px;font-size:.82rem">
+      📍 D'après ${esc(origine)} : ${chiffres}<span style="color:#6a5a52">${esc(etendue)}</span>
+      <button type="button" class="btn ghost" style="padding:3px 10px;font-size:.76rem;margin-left:6px" onclick="cmdTrajetApplique()">Appliquer</button>
+      ${alerteLabo}${alerteDiv}</div>`;
+  }
+  box.style.display = 'block';
+  window._trajetPropoCourante = { km: p.km, min: p.min };
+}
+
+// Applique la proposition — écrase volontairement, parce que Ben vient de le demander.
+function cmdTrajetApplique(){
+  const p = window._trajetPropoCourante; if(!p) return;
+  const kmEl = document.getElementById('f_distKm'), minEl = document.getElementById('f_tempsLiv');
+  if(kmEl && p.km != null) kmEl.value = p.km;
+  if(minEl && p.min != null) minEl.value = p.min;
+  if(typeof cmdDeliveryRecalc === 'function') cmdDeliveryRecalc();
+  if(typeof cmdRentabiliteRecalc === 'function') cmdRentabiliteRecalc();
+  toast('Trajet appliqué ✓');
+}
+
+// ── [v1382] Le carnet, enrichi : point de départ + trajets appris ───────────────
+async function openCarnetTrajets(){
+  const s = getSettings();
+  const ctx = await _trajetContexte();
+  const carnet = _carnetTrajets(ctx.orders, ctx.laboDepuis);
+  const book = s.addressBook || [];
+  const clesManuelles = new Set(book.map(a => _trajetCle(a && a.libelle)));
+
+  const depart = (s.adresseLabo || '').trim();
+  const entete = depart
+    ? `<div style="background:#eef6ef;border:1px solid #bcd9c6;border-radius:8px;padding:8px 10px;margin-bottom:10px;font-size:.85rem">
+         🏠 <b>Point de départ</b> : ${esc(depart)}${s.adresseLaboDepuis ? `<br><span style="color:#6a5a52;font-size:.78rem">Depuis le ${esc(fmtDate(s.adresseLaboDepuis))} — les trajets mesurés avant sont signalés.</span>` : ''}
+       </div>`
+    : `<div style="background:#fdf3e7;border:1px solid #e0a458;border-radius:8px;padding:8px 10px;margin-bottom:10px;font-size:.85rem">
+         ⚠ <b>Aucun point de départ configuré.</b> Les distances ci-dessous sont mesurées « depuis quelque part » — renseigne l'adresse de ton labo dans les réglages pour qu'elles aient un sens durable.
+       </div>`;
+
+  const appris = [...carnet.values()]
+    .filter(e => !clesManuelles.has(e.cle))
+    .sort((a, b) => (b.n - a.n) || (b.dernier || '').localeCompare(a.dernier || ''));
+
+  const rowsManuel = book.length ? book.map((a, i) => `
+    <div class="ab-card">
+      <div class="ab-main">
+        <div class="ab-nom"><b>${esc(a.libelle || '(sans nom)')}</b></div>
+        <div class="ab-meta">📏 ${a.km != null ? esc(a.km) + ' km' : '— km'} · ⏱ ${a.min != null ? esc(a.min) + ' min' : '— min'}</div>
+        ${a.note ? `<div class="ab-note">📝 ${esc(a.note)}</div>` : ''}
+      </div>
+      <div class="ab-actions">
+        <button class="qa edit" onclick="addressBookForm(${i})">✎</button>
+        <button class="qa del" onclick="addressBookDelete(${i})">🗑</button>
+      </div>
+    </div>`).join('') : '<p class="note">Aucune adresse enregistrée à la main.</p>';
+
+  const rowsAppris = appris.length ? appris.map(e => `
+    <div class="ab-card">
+      <div class="ab-main">
+        <div class="ab-nom"><b>${esc(e.libelle)}</b></div>
+        <div class="ab-meta">📏 ${e.km != null ? qty(e.km) + ' km' : '— km'} · ⏱ ${e.min != null ? qty(e.min) + ' min' : '— min'} <span style="color:#9a8a82">(médiane de ${e.n} livraison${e.n > 1 ? 's' : ''})</span></div>
+        ${(e.kmMax > e.kmMin || e.minMax > e.minMin) ? `<div class="ab-note" style="color:#8a6d3b">Observé : ${e.kmMin != null ? qty(e.kmMin) + '–' + qty(e.kmMax) + ' km' : ''}${(e.kmMin != null && e.minMin != null) ? ' · ' : ''}${e.minMin != null ? qty(e.minMin) + '–' + qty(e.minMax) + ' min' : ''}</div>` : ''}
+        ${e.avantLabo ? `<div class="ab-note" style="color:#b3261e">⚠ Mesuré avant ton changement d'adresse</div>` : ''}
+      </div>
+      <div class="ab-actions">
+        <button class="qa" style="background:#3f7d52;color:#fff" onclick="carnetPromouvoir('${escJs(e.cle)}')">＋ Au carnet</button>
+      </div>
+    </div>`).join('') : '<p class="note">Aucun trajet appris pour l\'instant — chiffre la distance et le temps sur une commande livrée, et il apparaîtra ici.</p>';
+
+  openModal(`<h3>📍 Carnet des trajets</h3>
+    ${entete}
+    <p class="note" style="margin-bottom:8px">Ces chiffres sont <b>tes propres mesures</b>, jamais des estimations : l'app ne calcule aucune distance toute seule. La première fois, tu saisis ; ensuite, elle propose.</p>
+    <h4 style="margin:12px 0 6px;font-size:.9rem">✍️ Enregistrées à la main</h4>
+    <button class="btn" style="width:100%;margin-bottom:8px" onclick="addressBookForm(-1)">＋ Ajouter une adresse</button>
+    <div class="ab-list">${rowsManuel}</div>
+    <h4 style="margin:14px 0 6px;font-size:.9rem">🧭 Apprises de tes livraisons <span style="color:#9a8a82;font-weight:400">(${appris.length})</span></h4>
+    <div class="ab-list">${rowsAppris}</div>
+    <div class="modal-actions"><button class="btn ghost" onclick="settingsForm()">‹ Retour aux paramètres</button></div>`);
+}
+
+// Fait passer un trajet APPRIS dans le carnet manuel (Ben le fige comme référence).
+async function carnetPromouvoir(cle){
+  const ctx = await _trajetContexte();
+  const carnet = _carnetTrajets(ctx.orders, ctx.laboDepuis);
+  const e = carnet.get(cle);
+  if(!e){ toast('Trajet introuvable'); return; }
+  const s = getSettings();
+  const book = s.addressBook || [];
+  if(book.some(a => _trajetCle(a && a.libelle) === cle)){ toast('Déjà dans le carnet'); return; }
+  book.push({ libelle: e.libelle, km: e.km, min: e.min, note: `Médiane de ${e.n} livraison(s)` });
+  s.addressBook = book; saveSettings(s);
+  toast('Ajouté au carnet ✓');
+  openCarnetTrajets();
+}
+
 // Ferme la liste si on clique ailleurs.
 document.addEventListener('click', e=>{
   const w=e.target.closest && e.target.closest('.ac-wrap');
@@ -3811,6 +4117,11 @@ const SETTINGS_DEFAULTS = {
   // Livraison : consommation moyenne du véhicule (L/100 km), pour chiffrer le carburant.
   // Le coût du temps de livraison réutilise laborRate (€/h).
   vehicleConso: 6.5,     // litres aux 100 km
+  // [v1382] LE POINT DE DÉPART. Toutes les distances du carnet sont mesurées DEPUIS ici.
+  // Sans lui, un « 8 km » ne veut rien dire de durable ; s'il change, les mesures d'avant
+  // sont fausses — d'où la date, qui permet de les signaler au lieu de les purger.
+  adresseLabo: '',
+  adresseLaboDepuis: '',
   // PRIX DE VENTE PAR FORMAT (dégressif) — € par macaron selon la taille du coffret.
   // Sert à estimer un prix moyen pondéré et à détecter les incohérences de CA.
   // Le CA réel reste toujours le CA ENCAISSÉ ; cette grille n'établit pas le CA.
@@ -3842,6 +4153,8 @@ function getSettings(){
       laborEnabled: s.laborEnabled===true,
       laborRate: s.laborRate!=null?+s.laborRate:SETTINGS_DEFAULTS.laborRate,
       vehicleConso: s.vehicleConso!=null?+s.vehicleConso:SETTINGS_DEFAULTS.vehicleConso,
+      adresseLabo: s.adresseLabo!=null?String(s.adresseLabo):'',
+      adresseLaboDepuis: s.adresseLaboDepuis!=null?String(s.adresseLaboDepuis):'',
       prixParFormat: Object.assign({}, SETTINGS_DEFAULTS.prixParFormat, s.prixParFormat||{}),
       prixVenteUnitaire: s.prixVenteUnitaire!=null?+s.prixVenteUnitaire:SETTINGS_DEFAULTS.prixVenteUnitaire,
       prixMacaronProStd: s.prixMacaronProStd!=null?+s.prixMacaronProStd:SETTINGS_DEFAULTS.prixMacaronProStd,
@@ -18232,10 +18545,11 @@ async function cmdForm(id, opts){
        <div class="field"><label>Adresse / lieu de livraison <span style="color:#9a8a82;font-weight:400">— tapez pour rechercher (clients, lieux habituels)</span></label>
          <div class="ac-wrap">
            <input class="search" id="f_lieu" autocomplete="off" autocapitalize="words" placeholder="Tapez une adresse, un nom de client ou un lieu…" value="${esc(o.lieuLivraison||'')}"
-             oninput="acFilter(this.value)" onfocus="acFilter(this.value)">
+             oninput="acFilter(this.value);cmdTrajetProposeDiff()" onfocus="acFilter(this.value)">
            <div id="acList" class="ac-list" style="display:none"></div>
          </div>
        </div>
+       <div id="trajetPropo" style="display:none;margin-bottom:8px"></div>
        <div class="row2">
          <div class="field"><label>Distance aller (km) <span style="color:#9a8a82;font-weight:400">— l'aller-retour est calculé</span></label>
            <input type="number" min="0" step="0.1" id="f_distKm" value="${o.distanceKm!=null?esc(o.distanceKm):''}" placeholder="ex : 8" oninput="cmdDeliveryRecalc()"></div>
@@ -18336,6 +18650,10 @@ async function cmdForm(id, opts){
   drawLines();
   cmdRecalc();
   _cmdOpening = false;
+  // [v1382] Proposer le trajet dès l'ouverture : à ce stade le lieu et le client sont posés.
+  // Sur une commande déjà chiffrée, rien n'est écrasé — le bandeau dit seulement d'où viendrait
+  // le chiffre, ce qui permet de repérer une saisie aberrante.
+  if(typeof cmdTrajetPropose==='function') cmdTrajetPropose();
   // [v1206] Le bloc livraison reste REPLIÉ par défaut, même si la commande a déjà des infos de
   // livraison. L'utilisateur l'ouvre au clic s'il veut les voir/modifier ; les valeurs restent
   // actives (l'encart de résultat livraison s'affiche quand même). Demande : moins de bruit visuel.
@@ -18465,6 +18783,16 @@ function cmdSuggestClientAddress(){
     const body=document.getElementById('livBody');
     if(body && body.style.display==='none') toggleLivBlock();
   }
+  // [v1382] Le client est connu : ses livraisons passées peuvent donner le trajet, même si
+  // l'adresse ne correspond à rien du carnet. C'est le cas courant que l'ancien code ratait.
+  if(typeof cmdTrajetPropose==='function') cmdTrajetPropose();
+}
+
+// Anti-rebond de la frappe : la proposition relit les commandes, inutile à chaque touche.
+let _trajetPropoTimer=null;
+function cmdTrajetProposeDiff(){
+  clearTimeout(_trajetPropoTimer);
+  _trajetPropoTimer=setTimeout(()=>{ if(typeof cmdTrajetPropose==='function') cmdTrajetPropose(); }, 350);
 }
 
 // Ajout rapide d'un client SANS quitter la commande (popup → retour avec client sélectionné)
@@ -20379,6 +20707,9 @@ async function saveCmd(id){
     const cl = o.clientId ? await db.clients.get(o.clientId) : null;
     await db.events.add({date:(o.dateEvenement||o.date),titre:'Cmd '+(cl?cl.nom:'')+` (${lignes.length} produit${lignes.length>1?'s':''})`,type:'cmd',refId:oid});
   }
+  // [v1382] La commande vient d'être écrite : si Ben a chiffré ou corrigé le trajet, le carnet
+  // doit l'apprendre TOUT DE SUITE. Sans ça, il proposerait encore l'ancienne médiane.
+  if(typeof _trajetInvalideCache==='function') _trajetInvalideCache();
   closeModal(); renderCmd(); toast('Commande enregistrée ✓');
   // Vérification prévisionnelle immédiate : la commande crée-t-elle un risque sous 8 jours ?
   // [v1087] protégé : une erreur de prévisionnel ne doit JAMAIS faire croire que l'enregistrement a échoué.
@@ -33933,27 +34264,11 @@ async function renderProfit(){
 //  CARNET D'ADRESSES DE LIVRAISON (distance + temps + note)
 //  Stocké dans les réglages. Pré-remplit la livraison des commandes.
 // ============================================================
-function openAddressBook(){
-  const s=getSettings();
-  const book=s.addressBook||[];
-  const rows = book.length ? book.map((a,i)=>`
-    <div class="ab-card">
-      <div class="ab-main">
-        <div class="ab-nom"><b>${esc(a.libelle||'(sans nom)')}</b></div>
-        <div class="ab-meta">📏 ${a.km!=null?esc(a.km)+' km':'— km'} · ⏱ ${a.min!=null?esc(a.min)+' min':'— min'}</div>
-        ${a.note?`<div class="ab-note">📝 ${esc(a.note)}</div>`:''}
-      </div>
-      <div class="ab-actions">
-        <button class="qa edit" onclick="addressBookForm(${i})">✎ Modifier</button>
-        <button class="qa del" onclick="addressBookDelete(${i})">🗑</button>
-      </div>
-    </div>`).join('') : '<p class="empty">Aucune adresse enregistrée. Ajoutez vos lieux de livraison habituels pour pré-remplir distance et temps automatiquement.</p>';
-  openModal(`<h3>📍 Carnet d'adresses</h3>
-    <p class="note">Enregistrez vos lieux de livraison habituels avec leur distance et leur temps de trajet. Ils pré-rempliront automatiquement le calcul de livraison dans vos commandes.</p>
-    <button class="btn" style="width:100%;margin:10px 0" onclick="addressBookForm(-1)">＋ Ajouter une adresse</button>
-    <div class="ab-list">${rows}</div>
-    <div class="modal-actions"><button class="btn ghost" onclick="settingsForm()">‹ Retour aux paramètres</button></div>`);
-}
+// [v1382] L'ancien écran est devenu un ALIAS. Il rendait sa propre liste, sans le point de
+// départ ni les trajets appris : après un ajout ou une suppression, Ben y retombait et perdait
+// la moitié de l'information. Deux écrans pour la même chose, c'est deux vérités (v1331) —
+// il n'en reste qu'un. Le nom est conservé : tous les retours existants continuent de marcher.
+function openAddressBook(){ return openCarnetTrajets(); }
 function addressBookForm(idx){
   const s=getSettings(); const book=s.addressBook||[];
   const a = idx>=0 ? book[idx] : {libelle:'', km:'', min:'', note:''};
@@ -34192,8 +34507,11 @@ async function settingsForm(){
       <div class="field"><label>Consommation véhicule (L/100 km)</label><input type="number" step="0.1" min="0" id="set_conso" value="${s.vehicleConso}"></div>
       <div class="field"><label>Coût horaire main-d'œuvre (€/h)</label><input type="number" step="0.5" min="0" id="set_rate" value="${s.laborRate}"></div>
     </div>
+    <div class="field" style="margin-top:8px"><label>🏠 Adresse du labo <span style="color:#9a8a82;font-weight:400">— ton point de départ : toutes les distances du carnet sont mesurées depuis ici</span></label>
+      <input id="set_adrLabo" value="${esc(s.adresseLabo||'')}" placeholder="ex : 12 rue des Acacias, Le Mans"></div>
+    ${s.adresseLabo&&s.adresseLaboDepuis?`<p class="note" style="margin:-4px 0 8px">Point de départ inchangé depuis le ${esc(fmtDate(s.adresseLaboDepuis))}. Si tu le modifies, les trajets mesurés avant seront signalés (jamais effacés).</p>`:''}
     <div class="field" style="margin-top:8px">
-      <button type="button" class="btn ghost" style="width:100%" onclick="openAddressBook()">📍 Carnet d'adresses de livraison <span style="color:#9a8a82;font-weight:400">(${(s.addressBook||[]).length})</span></button>
+      <button type="button" class="btn ghost" style="width:100%" onclick="openCarnetTrajets()">📍 Carnet des trajets <span style="color:#9a8a82;font-weight:400">(${(s.addressBook||[]).length} à la main + appris)</span></button>
     </div>
     <input type="hidden" id="set_pt_n" value="${(s.packTypes||[]).length+1}">
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveSettingsForm()">Enregistrer</button></div>`);
@@ -34218,6 +34536,12 @@ function saveSettingsForm(){
   s.socialService=Math.max(0,+val('set_ss')||0);
   s.vehicleConso=Math.max(0,+val('set_conso')||0);
   s.laborRate=Math.max(0,+val('set_rate')||0);
+  // [v1382] Changer le point de départ invalide les distances mesurées avant : on HORODATE
+  // le changement pour pouvoir les signaler (v1339 : jamais remplacer un chiffre en silence).
+  { const _adrAvant=(s.adresseLabo||'').trim(); const _adrApres=(val('set_adrLabo')||'').trim();
+    if(_adrApres!==_adrAvant){ s.adresseLabo=_adrApres; s.adresseLaboDepuis=_adrApres?today():'';
+      if(_adrAvant && _adrApres) toast('Point de départ modifié — tes trajets d\'avant seront signalés dans le carnet'); }
+    if(typeof _trajetInvalideCache==='function') _trajetInvalideCache(); }
   // Si un tarif d'emballage change, on horodate la nouvelle grille à aujourd'hui (date de réception).
   const oldPack=JSON.stringify(s.packaging||{});
   s.packaging={}; BOX_SIZES.forEach(t=>{ s.packaging[t]=money2(+val('set_pk_'+t)||0); });
