@@ -102,7 +102,11 @@ const SUITES = [
   'v1379-meringue-commune.test.js', // v1379 : base meringue mutualisée sur le total std-éq (GF converti)
   'v1380-parfum-par-tache.test.js', // v1380 : réattribution du parfum par tâche + parfums en en-tête du journal
   'v1381-moteur-dexie.test.js',     // v1381 : le VRAI dexie.min.js tient le contrat (hooks, kv, atomicité — E2E réel)
-  'v1382-carnet-trajets.test.js'    // v1382 : carnet des trajets — distance/temps repris des livraisons réelles
+  'v1382-carnet-trajets.test.js',   // v1382 : carnet des trajets — distance/temps repris des livraisons réelles
+  'v1383-sante-incidents.test.js',  // v1383 · chantier A : les échecs silencieux deviennent visibles (filet global, journal persistant, écran Santé)
+  'v1384-import-validation.test.js',  // v1384 · chantier B : le contenu d'une sauvegarde est validé AVANT écriture (réparation du non-ambigu, signalement du reste)
+  'v1385-sortie-sauvegardes.test.js',  // v1385 · chantier C : une sortie n'est acquise que CONSTATÉE (tentée ≠ confirmée, instantanés nommés comme non protecteurs)
+  'v1386-frontiere-qr.test.js'        // v1386 · chantier D : tout code scanné passe une porte qui peut dire NON, et le refus se VOIT
 ];
 
 let allOk = true;

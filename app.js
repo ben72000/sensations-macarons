@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1382';
-const APP_MAJ = 'LE MONTAGE PYRAMIDE, SANS OUVRIR « MODIFIER » — comme tu l’as demandé. Le résumé d’une commande événement affiche maintenant, d’un coup d’œil : le NOMBRE de pyramides, le TYPE (location ou vendue), le NOMBRE D’ÉTAGES, le modèle de présentoir, et le nombre de macarons par pyramide — avec la mention « pyramide entière » quand tous les plateaux sont utilisés. UNE DIFFICULTÉ QUE JE DOIS TE DIRE : le nombre d’étages N’EST PAS STOCKÉ sur la commande. Seuls le nombre de pyramides et le nombre de macarons le sont. Les étages se DÉDUISENT de tes modèles de présentoirs (chaque modèle a ses plateaux, donc ses paliers cumulés : 4, 11, 21, 34, 50, 69 pour ta pyramide transparente). JE NE DEVINE DONC PAS — JE DÉDUIS, ET JE DIS CE QUE JE SAIS. Si un seul modèle correspond, je l’affiche avec ses étages. Si PLUSIEURS correspondent (34 macarons, c’est 4 étages sur un modèle et 3 sur un autre), je te les LISTE TOUS : trancher en silence reviendrait à décider à ta place. Si AUCUN palier ne correspond, je te dis « montage sur mesure » — sans arrondir au palier voisin, alors que ce serait facile. Et si la répartition n’est pas entière (100 macarons sur 3 pyramides), je te signale que tes pyramides ne seront PAS identiques, au lieu de te laisser croire à un montage équilibré qui n’existe pas. LA RÈGLE QUE J’AI FIGÉE : un nombre d’étages INVENTÉ serait PIRE qu’une absence — il t’enverrait monter le MAUVAIS présentoir le jour J, devant ton client. Une donnée manquante te coûte un aller-retour dans « Modifier » ; une donnée FAUSSE te coûte un événement raté. Le silence est le moindre mal ; le mensonge, jamais. Enfin, pour un bloc plat (non sécable), je n’affiche AUCUN étage : parler d’étages n’aurait aucun sens. Suite : 1397 → 1437 assertions vertes.';
+const APP_VERSION = 'v1386';
+const APP_MAJ = 'CHANTIER A — L’APP NE PEUT PLUS ÉCHOUER EN SILENCE. Le constat de l’audit était dur : 347 endroits du code attrapaient une erreur et l’enregistraient fidèlement… dans un carnet que TU NE POUVAIS PAS OUVRIR. Il fallait brancher l’iPhone sur un Mac. Autant dire jamais. ET LE CARNET ÉTAIT EFFACÉ À CHAQUE RECHARGEMENT. C’est le mécanisme EXACT qui a caché la panne Dexie pendant un mois : chaque écriture kv échouait, la validation ne démarrait jamais, et l’écran affichait « 0 refus, 0 suspects » — ce qui RESSEMBLAIT à une bonne nouvelle alors que ça voulait dire « le contrôle n’a jamais démarré ». CE QUI CHANGE. 1) UN ÉCRAN « Santé de l’app » (Sauvegarde & sécurité) : tu lis enfin ce qui a cassé, depuis ton téléphone, sans Mac. 2) LES INCIDENTS VIVENT EN BASE (nouvelle table errLog) : ils survivent à un rechargement, donc tu peux constater qu’une panne DURE — c’est précisément ce que l’ancien carnet en mémoire rendait impossible. 3) UN FILET GLOBAL : une erreur hors try/catch te donnait un écran figé sans trace ; elle est maintenant enregistrée et annoncée par une bannière discrète. 4) UNE PASTILLE SUR L’ACCUEIL quand des incidents IMPORTANTS s’accumulent. LE TRI QUE J’AI FIGÉ, et qui est le cœur du travail : un échec d’AFFICHAGE et un échec d’ÉCRITURE EN BASE ne se valent pas. Base, sauvegarde, import, validation, compta → IMPORTANT, ça parle. Rendu, affichage → mineur, ça s’enregistre sans crier. Confondre les deux, c’est noyer le signal sous le bruit, et une alerte qui crie tout le temps est une alerte qu’on ne regarde plus. CE QUE JE N’AI PAS FAIT : deviner la cause d’une erreur, ni prétendre la réparer. L’écran montre ce qui s’est réellement passé. Une explication inventée serait pire qu’un silence. ET UNE MISE EN GARDE QUE JE TE DOIS : un écran Santé VIDE n’est PAS une preuve que tout va bien — c’est une absence d’incident enregistré, ce qui n’est pas la même chose. LA RÈGLE FIGÉE : une protection qu’on ne peut pas VOIR marcher doit être considérée comme ABSENTE jusqu’à preuve du contraire. Reste à faire : chantier B (valider le contenu à l’import), C (sortir les sauvegardes de la boîte qu’elles protègent), D (durcir import et QR). Suite : 88 → 89 suites, 1437 → 1475 assertions vertes.';
 
 // ============================================================
 //  DIAGNOSTIC — journalisation centralisée des erreurs « avalées »
@@ -27,12 +27,95 @@ function smDebugOn(){
   try{ return !!(window._smDebug) || (typeof localStorage!=='undefined' && localStorage.getItem('sm_debug')==='1'); }
   catch(_){ return false; }
 }
+// [v1383] GRAVITÉ D'UN INCIDENT — tous les swallow() ne se valent pas.
+//
+// Un swallow() sur un rendu cosmétique n'a PAS le même poids qu'un swallow() sur une écriture en
+// base. Confondre les deux, c'est noyer le signal qui compte sous le bruit qui ne compte pas —
+// et c'est exactement comme ça qu'une panne survit un mois. Le contexte porte l'information :
+// on le classe par MOTIF, pas au cas par cas (67 991 lignes : une liste manuelle serait fausse
+// dès la prochaine version).
+//
+//   'grave'  → l'app a peut-être PERDU ou FAUSSÉ quelque chose : écriture base, sauvegarde,
+//              import, validation, audit, kv, comptabilité. Ceux-là doivent PARLER.
+//   'normal' → tout le reste : rendu, affichage, calcul d'écran. Enregistré, jamais alarmant.
+const _SM_CTX_GRAVE = /(kv|audit|valide|validation|backup|sauvegarde|import|export|restaur|snapshot|db\.|write|ecrit|écrit|save|persist|compta|journal|facture|encaiss|stock|boot|migration|dexie|moteur)/i;
+function _smGravite(ctx){
+  try{ return _SM_CTX_GRAVE.test(String(ctx||'')) ? 'grave' : 'normal'; }
+  catch(_){ return 'normal'; }
+}
+
+// File d'attente d'écriture des incidents. On n'écrit PAS en base de façon synchrone depuis
+// swallow() : swallow() est appelé DANS des catch, parfois pendant que la base est justement en
+// train de casser. Une écriture ratée déclencherait un nouveau swallow() → boucle. On empile, et
+// un vidage différé et protégé fait le travail (avec un verrou anti-réentrance).
+const _SM_ERR_QUEUE = [];
+let _smErrFlushEnCours = false;
+let _smErrFlushArme = false;
+function _smErrEnfile(entry){
+  try{
+    _SM_ERR_QUEUE.push(entry);
+    if(_SM_ERR_QUEUE.length > 200) _SM_ERR_QUEUE.shift();
+    if(_smErrFlushArme) return;
+    _smErrFlushArme = true;
+    setTimeout(()=>{ _smErrFlushArme=false; _smErrFlush(); }, 1500);
+  }catch(_){ }
+}
+// Vidage en base, GROUPÉ par signature : une même erreur répétée incrémente un compteur au lieu
+// de créer 200 lignes. Rétention bornée. Ne jette jamais, et n'appelle JAMAIS swallow() (sinon
+// une base en panne se journaliserait elle-même à l'infini).
+async function _smErrFlush(){
+  if(_smErrFlushEnCours) return;
+  _smErrFlushEnCours = true;
+  try{
+    if(typeof db==='undefined' || !db || !db.errLog){ return; }
+    while(_SM_ERR_QUEUE.length){
+      const e = _SM_ERR_QUEUE.shift();
+      try{
+        const dejaLa = await db.errLog.where('sig').equals(e.sig).first();
+        if(dejaLa){
+          await db.errLog.update(dejaLa.id, { n:(dejaLa.n||1)+1, ts:e.ts, ecran:e.ecran });
+        }else{
+          await db.errLog.add(e);
+        }
+      }catch(_){ /* incident pendant la journalisation d'un incident : on abandonne CETTE ligne */ }
+    }
+    // Rétention : on garde les ERR_MAX signatures les plus récentes.
+    try{
+      const n = await db.errLog.count();
+      if(n > SM_ERR_MAX_BASE){
+        const vieux = await db.errLog.orderBy('ts').limit(n - SM_ERR_MAX_BASE).primaryKeys();
+        if(vieux && vieux.length) await db.errLog.bulkDelete(vieux);
+      }
+    }catch(_){ }
+  }catch(_){ }
+  finally{ _smErrFlushEnCours = false; }
+}
+const SM_ERR_MAX_BASE = 300;
+
 function swallow(e, ctx){
   try{
-    const entry = { t: Date.now(), ctx: ctx||'', msg: (e && (e.message||e.name)) ? (e.message||e.name) : String(e) };
+    const msg = (e && (e.message||e.name)) ? (e.message||e.name) : String(e);
+    const entry = { t: Date.now(), ctx: ctx||'', msg: msg };
     _SM_ERR_RING.push(entry);
     if(_SM_ERR_RING.length > _SM_ERR_RING_MAX) _SM_ERR_RING.shift();
     if(smDebugOn()) console.warn('[swallow]' + (ctx?(' '+ctx):'') + ':', e);
+    // [v1383] Persistance : l'anneau mémoire ne survit pas à un rechargement, donc il ne prouve
+    // rien le lendemain. On double d'une trace en base, groupée par signature.
+    try{
+      let pile='';
+      try{ pile = (e && e.stack) ? String(e.stack).slice(0,400) : ''; }catch(_){}
+      _smErrEnfile({
+        ts: entry.t,
+        sig: String(ctx||'') + '|' + String(msg).slice(0,120),
+        ctx: entry.ctx,
+        msg: String(msg).slice(0,300),
+        grav: _smGravite(ctx),
+        pile: pile,
+        ecran: (typeof view!=='undefined' && view) ? String(view) : '',
+        v: (typeof APP_VERSION!=='undefined') ? APP_VERSION : '',
+        n: 1
+      });
+    }catch(_){ }
   }catch(_){ /* un helper de log ne doit jamais casser l'appelant */ }
 }
 // Consulte les dernières erreurs avalées (console) : smErrors() ou smErrors('plan') pour filtrer.
@@ -71,6 +154,70 @@ function smGlobals(){
   }catch(e){ swallow(e,'smGlobals'); return '0'; }
 }
 try{ if(typeof window!=='undefined'){ window.swallow=swallow; window.smErrors=smErrors; window.smDebug=smDebug; window.smGlobals=smGlobals; } }catch(_){}
+
+// ============================================================
+//  [v1383 · CHANTIER A] LE FILET GLOBAL
+// ============================================================
+// AVANT : une erreur survenant HORS d'un try/catch ne laissait aucune trace. L'écran se figeait,
+// sans message, sans rien à lire ensuite. Tu ne pouvais même pas savoir QUE quelque chose avait
+// cassé, encore moins quoi.
+//
+// window.onerror et unhandledrejection sont les deux SEULS endroits où ces erreurs sont
+// rattrapables. Sans eux, tout ce qui n'est pas explicitement encadré disparaît en silence.
+//
+// Ce filet n'essaie PAS de réparer quoi que ce soit — il enregistre, et il le DIT. Une bannière
+// discrète vaut infiniment mieux qu'un écran mort : elle transforme « l'app a planté, je ne sais
+// pas pourquoi » en « un incident a été enregistré, il est lisible ici ».
+let _smBanniereActive = false;
+function _smBanniereIncident(texte){
+  try{
+    if(typeof document==='undefined' || !document.body) return;
+    if(_smBanniereActive) return;
+    _smBanniereActive = true;
+    const d = document.createElement('div');
+    d.id = 'smIncidentBanner';
+    d.setAttribute('style','position:fixed;left:8px;right:8px;bottom:8px;z-index:99999;background:#fdf3f2;border:1px solid #f0c9c4;border-radius:10px;padding:10px 12px;font-size:.82rem;color:#5a2a2a;box-shadow:0 4px 14px rgba(0,0,0,.14);display:flex;gap:10px;align-items:center;justify-content:space-between');
+    const p = document.createElement('div');
+    p.textContent = texte || "Un incident a été enregistré.";
+    const nav = document.createElement('div');
+    nav.setAttribute('style','display:flex;gap:8px;flex-shrink:0');
+    const voir = document.createElement('button');
+    voir.textContent = 'Voir';
+    voir.setAttribute('style','background:#52252F;color:#fff;border:0;border-radius:8px;padding:6px 10px;font-size:.8rem');
+    voir.onclick = function(){
+      try{ d.remove(); }catch(_){}
+      _smBanniereActive=false;
+      try{ if(typeof renderSanteModal==='function') renderSanteModal(); }catch(_){}
+    };
+    const fermer = document.createElement('button');
+    fermer.textContent = '✕';
+    fermer.setAttribute('style','background:transparent;border:0;color:#8a5a5a;font-size:.95rem');
+    fermer.onclick = function(){ try{ d.remove(); }catch(_){} _smBanniereActive=false; };
+    nav.appendChild(voir); nav.appendChild(fermer);
+    d.appendChild(p); d.appendChild(nav);
+    document.body.appendChild(d);
+  }catch(_){ }
+}
+try{
+  if(typeof window!=='undefined'){
+    window.addEventListener('error', function(ev){
+      try{
+        const e = (ev && ev.error) ? ev.error : new Error((ev && ev.message) ? ev.message : 'erreur inconnue');
+        const ou = (ev && ev.filename) ? (' @' + String(ev.filename).split('/').pop() + ':' + (ev.lineno||'?')) : '';
+        swallow(e, 'GLOBAL onerror' + ou);
+        _smBanniereIncident("Un incident a été enregistré — l'app continue de fonctionner.");
+      }catch(_){ }
+    });
+    window.addEventListener('unhandledrejection', function(ev){
+      try{
+        const r = ev ? ev.reason : null;
+        const e = (r instanceof Error) ? r : new Error(String(r));
+        swallow(e, 'GLOBAL promesse');
+        _smBanniereIncident("Un incident a été enregistré — l'app continue de fonctionner.");
+      }catch(_){ }
+    });
+  }
+}catch(_){}
 
 
 /* ===== utils.js INTÉGRÉ (ex-fichier séparé, désormais inline mono-fichier) ===== */
@@ -585,6 +732,23 @@ db.version(32).stores({
   auditLog: '++id, ts, tbl'  // colonnes libres : op, cle, resume (string JSON borné), ecran, v
 });
 
+// v33 — [v1383 · CHANTIER A] JOURNAL DES INCIDENTS PERSISTANT.
+//
+// POURQUOI : swallow() enregistrait déjà chaque erreur avalée, mais dans un anneau EN MÉMOIRE,
+// vidé à chaque rechargement, et affiché NULLE PART dans l'app (il fallait brancher l'iPhone sur
+// un Mac). C'est le mécanisme exact qui a caché la panne Dexie pendant un mois : les erreurs
+// étaient enregistrées, personne ne pouvait les lire.
+//
+// LA RÈGLE FIGÉE : une protection qu'on ne peut pas voir marcher doit être considérée comme
+// absente. Un journal qu'on ne peut pas lire n'est pas un journal.
+//
+// Les incidents vivent donc en base, comme le journal d'audit, avec rétention. `sig` est la
+// signature (contexte + message) qui permet de GROUPER : 40 fois la même erreur doivent
+// apparaître comme une ligne « 40× », pas comme 40 lignes noyant tout le reste.
+db.version(33).stores({
+  errLog: '++id, ts, sig, grav'  // colonnes libres : ctx, msg, pile (bornée), ecran, v, n
+});
+
 // ────────────────────────────────────────────────────────────────────────────
 // [v1372] CLASSIFICATION DES CLÉS localStorage — exhaustive, et PROUVÉE exhaustive.
 // Chaque clé `sm_*` du code appartient à UNE des deux familles ci-dessous (le test
@@ -621,6 +785,7 @@ const KV_METIER = {
 const KV_APPAREIL = new Set([
   'sm_privacyMode','sm_nav_adv','sm_navFavoris','sm_navUsage',
   'sm_lastExport','sm_lastICloud','sm_autoBackupDate','sm_exportSnooze',
+  'sm_lastExportTente',                                      // [v1385] tentative de sortie NON confirmée : état de CET appareil (une tentative ne se transporte pas)
   'sm_persistStorage','sm_dbBlocked','sm_prodSessDexieKo',
   'sm_prodSessions','sm_prodSessDeleted',                    // cache d'exécution ; la vérité est en base (table prodSessions)
   'sm_debug','sm_unsaved','sm_mascot_pos','sm_mascot_home',
@@ -876,6 +1041,121 @@ async function _auditPrune(){
 function _auditOpLabel(op){
   return ({creation:'création', modification:'modification', suppression:'suppression', reconciliation:'réconciliation'})[op] || op;
 }
+// ============================================================
+//  [v1383 · CHANTIER A] SANTÉ DE L'APP — l'écran qui manquait
+// ============================================================
+// LE PROBLÈME QU'IL RÉSOUT : 347 appels à swallow() enregistraient fidèlement chaque erreur, et
+// AUCUN de ces enregistrements n'était lisible depuis le téléphone. Il fallait un Mac et les
+// outils Safari — autant dire jamais. Un mécanisme de traçage que personne ne consulte a
+// exactement la même valeur qu'aucun mécanisme du tout.
+//
+// CE QUE CET ÉCRAN MONTRE, ET POURQUOI DANS CET ORDRE :
+//   1. les incidents GRAVES d'abord (base, sauvegarde, validation, compta) — ceux qui peuvent
+//      avoir perdu ou faussé quelque chose ;
+//   2. groupés par signature, avec un compteur — 40 fois la même erreur est UNE information,
+//      pas 40 ; noyer le reste sous des doublons ferait perdre le signal ;
+//   3. avec la date de PREMIÈRE et de DERNIÈRE occurrence — « ça dure depuis un mois » est
+//      précisément le fait que la panne Dexie a réussi à cacher.
+//
+// CE QU'IL NE FAIT PAS : deviner la cause, ni prétendre réparer. Il montre ce qui s'est
+// réellement passé. Une explication inventée serait pire qu'un silence.
+function _smSanteQuand(ts){
+  try{ return new Date(ts).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); }
+  catch(_){ return '—'; }
+}
+// Lit les incidents en base ET la file pas encore vidée : sinon un incident survenu il y a
+// deux secondes serait invisible au moment précis où on vient le chercher.
+async function smSanteIncidents(){
+  let base=[];
+  try{ if(typeof db!=='undefined' && db && db.errLog) base = await db.errLog.orderBy('ts').reverse().limit(400).toArray(); }
+  catch(_){ base=[]; }
+  const parSig = new Map();
+  for(const r of base) parSig.set(r.sig, { sig:r.sig, ctx:r.ctx, msg:r.msg, grav:r.grav, n:(r.n||1), dernier:r.ts, pile:r.pile, ecran:r.ecran, v:r.v });
+  // Fusion de la file en attente (non encore écrite).
+  try{
+    for(const e of _SM_ERR_QUEUE){
+      const d = parSig.get(e.sig);
+      if(d){ d.n += 1; d.dernier = Math.max(d.dernier, e.ts); }
+      else parSig.set(e.sig, { sig:e.sig, ctx:e.ctx, msg:e.msg, grav:e.grav, n:1, dernier:e.ts, pile:e.pile, ecran:e.ecran, v:e.v });
+    }
+  }catch(_){ }
+  const list = Array.from(parSig.values());
+  // Graves d'abord, puis les plus récents.
+  list.sort((a,b)=>{
+    if(a.grav!==b.grav) return a.grav==='grave' ? -1 : 1;
+    return (b.dernier||0)-(a.dernier||0);
+  });
+  return list;
+}
+// Nombre d'incidents GRAVES — sert la pastille d'accueil. Volontairement tolérant : si la lecture
+// elle-même échoue, on renvoie 0 plutôt que de faire crier une alerte sur une non-information.
+async function smSanteNbGraves(){
+  try{
+    const l = await smSanteIncidents();
+    return l.filter(x=>x.grav==='grave').reduce((a,x)=>a+(x.n||1),0);
+  }catch(_){ return 0; }
+}
+async function renderSanteModal(){
+  let list=[];
+  try{ list = await smSanteIncidents(); }catch(e){ list=[]; }
+  const graves = list.filter(x=>x.grav==='grave');
+  const autres = list.filter(x=>x.grav!=='grave');
+  const nG = graves.reduce((a,x)=>a+(x.n||1),0);
+  const nA = autres.reduce((a,x)=>a+(x.n||1),0);
+
+  const ligne = (r)=>{
+    const badge = r.grav==='grave'
+      ? '<span class="tag low">important</span>'
+      : '<span class="tag">mineur</span>';
+    const rep = (r.n||1)>1 ? ` <b style="color:#a33">${r.n}×</b>` : '';
+    return `<tr>
+      <td style="white-space:nowrap;font-size:.78rem">${_smSanteQuand(r.dernier)}${rep}</td>
+      <td>${badge}</td>
+      <td style="font-size:.78rem">
+        <b style="color:#7a4b2a">${esc(String(r.ctx||'(sans contexte)'))}</b><br>
+        <span style="color:#4a3a32">${esc(String(r.msg||''))}</span>
+        ${r.ecran?`<br><span style="opacity:.5;font-size:.72rem">écran : ${esc(String(r.ecran))}${r.v?' · '+esc(String(r.v)):''}</span>`:''}
+      </td></tr>`;
+  };
+
+  const bloc = (titre, rows, vide)=> `<div style="margin-bottom:10px">
+      <h3 style="margin:6px 0;font-size:.92rem">${titre}</h3>
+      <table class="tbl"><tbody>${rows.length? rows.map(ligne).join('') : `<tr><td><i style="opacity:.6">${vide}</i></td></tr>`}</tbody></table>
+    </div>`;
+
+  const entete = nG>0
+    ? `<div class="banner" style="background:#fdf3f2;border-color:#f0c9c4"><div><b>${nG} incident(s) important(s)</b> — ils touchent la base, une sauvegarde, la validation ou la comptabilité. Ce sont ceux à regarder.</div></div>`
+    : `<div class="banner" style="background:#eef6ef;border-color:#3f7d52"><div><b>Aucun incident important.</b> Rien n'a échoué sur une écriture en base, une sauvegarde ou la validation depuis la dernière purge du journal.</div></div>`;
+
+  openModal(`
+    <h2 style="margin-top:0">🩺 Santé de l'app</h2>
+    <p class="note">Chaque erreur rattrapée par l'app est enregistrée ici, <b>en base</b> — elle survit donc à un rechargement.
+    Les mêmes erreurs répétées sont regroupées avec un compteur. Rétention : les ${SM_ERR_MAX_BASE} signatures les plus récentes.
+    <b>Un écran vide n'est pas une preuve que tout va bien</b> — c'est une absence d'incident enregistré, ce qui n'est pas la même chose.</p>
+    ${entete}
+    <div style="max-height:48vh;overflow:auto">
+      ${bloc('🔴 Importants — base, sauvegarde, validation, compta', graves, 'Aucun incident important enregistré.')}
+      ${bloc(`⚪ Mineurs — affichage, rendu (${nA})`, autres, 'Aucun incident mineur enregistré.')}
+    </div>
+    <div class="flex" style="flex-wrap:wrap;gap:8px;margin-top:10px">
+      <button class="btn ghost" onclick="smSantePurge()">🧹 Vider le journal des incidents</button>
+      <button class="btn ghost" onclick="closeModal()">Fermer</button>
+    </div>`);
+}
+// Purge manuelle. On la journalise elle-même : un journal vidé sans trace de qui l'a vidé
+// est un journal auquel on ne peut pas se fier.
+async function smSantePurge(){
+  if(!confirm("Vider le journal des incidents ?\n\nLes traces enregistrées seront perdues. À ne faire qu'après avoir traité ce qu'il contient.")) return;
+  try{
+    _SM_ERR_QUEUE.length = 0;
+    _SM_ERR_RING.length = 0;
+    if(typeof db!=='undefined' && db && db.errLog) await db.errLog.clear();
+    if(typeof toast==='function') toast('Journal des incidents vidé');
+  }catch(e){ swallow(e,'smSantePurge'); }
+  try{ renderSanteModal(); }catch(_){}
+}
+try{ if(typeof window!=='undefined'){ window.renderSanteModal=renderSanteModal; window.smSantePurge=smSantePurge; window.smSanteNbGraves=smSanteNbGraves; } }catch(_){}
+
 async function renderAuditModal(filtreTbl){
   let rows = [];
   try{
@@ -1193,6 +1473,196 @@ function valideInstalle(){
       _valideApplique(nom, _valideObjet(nom, mods, 'modification'), 'modification');
     });
   });
+}
+
+
+// ────────────────────────────────────────────────────────────────────────────
+// [v1384] CHANTIER B — VALIDER LE CONTENU À L'IMPORT (faille 1 de l'audit).
+//
+// LE CONSTAT, précis et démontrable. La v1373 a posé des schémas de validation
+// sur CHAQUE table, branchés en hooks Dexie : impossible d'écrire un montant en
+// chaîne, une date malformée, un champ requis absent. Mais applyDump() et
+// mergeDump() posent `_importEnCours = true`, et les deux hooks commencent par
+//     if(_importEnCours) return;
+// Autrement dit : le seul contrôle de contenu de l'app est ÉTEINT sur la seule
+// porte par laquelle entrent des données que Ben n'a pas tapées lui-même.
+// La saisie manuelle — la source la plus fiable — est gardée ; le fichier venu
+// d'iCloud, d'un vieux téléphone ou d'une sauvegarde tronquée entre sans contrôle.
+//
+// POURQUOI ON NE SE CONTENTE PAS DE RALLUMER LES HOOKS. La suspension est
+// JUSTE : un hook lève une exception, et une exception dans applyDump avorte la
+// transaction ENTIÈRE. Une seule fiche de 2024 au champ bancal rendrait la
+// sauvegarde entièrement irrécupérable — un contrôle qui transforme « restaurer
+// avec 3 anomalies » en « ne rien restaurer du tout » est pire que pas de
+// contrôle le jour où Ben a perdu son téléphone.
+// Donc : on valide AVANT la transaction, sur le dump en mémoire, et on RÉPARE
+// ce qui est réparable au lieu de refuser. La restauration reste possible.
+//
+// CE QUE VALIDE_REPARE FAIT — et rien de plus. Uniquement des conversions dont
+// l'intention est NON AMBIGUË, c'est-à-dire où une seule lecture est possible :
+//   "32,50" → 32.5      la virgule décimale française (le cas de Ben, tous les jours)
+//   "32.50" → 32.5      un nombre resté en chaîne (export d'un tableur)
+//   "true"  → true      un booléen sérialisé en texte
+//   "05/03/2026" → "2026-03-05"   une date JJ/MM/AAAA vers le format de l'app
+// Chaque réparation est LISTÉE au rapport, table par table, avec l'ancienne et
+// la nouvelle valeur. Une réparation muette serait une falsification.
+//
+// CE QUE VALIDE_REPARE NE FAIT PAS, délibérément :
+//   • "1 234,56" (espace de milliers) — deux lectures possibles selon la locale,
+//     donc AMBIGU : signalé, jamais réparé.
+//   • "03/05/2026" ne devient PAS une date si le jour dépasse 12 sans certitude…
+//     en réalité on refuse toute date dont les composants sont hors bornes, et
+//     on assume JJ/MM (format français, celui de l'app) sans jamais deviner MM/JJ.
+//   • inventer un champ requis absent. Un `nom` manquant reste manquant : la
+//     fiche est signalée, jamais complétée par une valeur inventée.
+//     Inventer une donnée dans une SAUVEGARDE serait exactement le mensonge que
+//     tout ce projet combat.
+//
+// LA RÈGLE DE DÉCISION, volontairement asymétrique :
+//   • anomalies réparées         → l'import continue, le rapport les liste.
+//   • anomalies NON réparables   → l'import est PROPOSÉ quand même, avec le
+//     décompte exact et un avertissement — jamais imposé, jamais refusé d'office.
+//     Refuser d'office reviendrait à condamner la sauvegarde d'un homme qui vient
+//     peut-être de casser son téléphone. C'est LUI qui tranche, informé.
+// ────────────────────────────────────────────────────────────────────────────
+
+// Répare UNE valeur pour UN type attendu (PURE). Retourne {repare:bool, valeur}.
+// N'agit QUE sur les cas non ambigus décrits en tête de chantier.
+function _impRepareValeur(type, v){
+  const non = { repare:false, valeur:v };
+  if(v === null || v === undefined) return non;   // l'absence n'est pas une faute de type (v1326)
+  if(type === 'nombreFini' || type === 'entier' || type === 'horoMs'){
+    if(typeof v === 'number') return non;
+    if(typeof v !== 'string') return non;
+    const s = v.trim();
+    if(!s) return non;
+    // AMBIGU — un séparateur de milliers ne se lit pas pareil selon la locale : on ne touche pas.
+    if(/[\s\u00A0]/.test(s)) return non;
+    // On n'accepte QU'UN seul séparateur décimal, virgule ou point. "1.234.56" est refusé.
+    if(!/^-?\d+(?:[.,]\d+)?$/.test(s)) return non;
+    const n = Number(s.replace(',', '.'));
+    if(!Number.isFinite(n)) return non;
+    if(type === 'entier' && !Number.isInteger(n)) return non;
+    if(type === 'horoMs' && !(Number.isInteger(n) && n > 0)) return non;
+    return { repare:true, valeur:n };
+  }
+  if(type === 'booleen'){
+    if(typeof v === 'boolean') return non;
+    if(typeof v !== 'string') return non;
+    const s = v.trim().toLowerCase();
+    if(s === 'true')  return { repare:true, valeur:true };
+    if(s === 'false') return { repare:true, valeur:false };
+    return non;
+  }
+  if(type === 'dateJ'){
+    if(typeof v !== 'string') return non;
+    const s = v.trim();
+    if(/^\d{4}-\d{2}-\d{2}$/.test(s)) return non;      // déjà au format de l'app
+    // JJ/MM/AAAA (ou avec des tirets) — le format français, celui que l'app affiche.
+    // On ne devine JAMAIS MM/JJ : le mois hors bornes fait échouer la réparation.
+    const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+    if(m){
+      const j = +m[1], mo = +m[2], a = +m[3];
+      if(j >= 1 && j <= 31 && mo >= 1 && mo <= 12){
+        return { repare:true, valeur: a + '-' + String(mo).padStart(2,'0') + '-' + String(j).padStart(2,'0') };
+      }
+      return non;
+    }
+    // Un horodatage ISO complet ('2026-03-05T10:00:00Z') → on garde le jour.
+    const iso = s.match(/^(\d{4}-\d{2}-\d{2})T/);
+    if(iso) return { repare:true, valeur: iso[1] };
+    return non;
+  }
+  return non;
+}
+
+// Valide (et répare) TOUT un dump avant écriture. PURE : ne touche NI la base, NI le DOM.
+// Modifie en place les enregistrements réparés du dump fourni — l'appelant importe l'objet
+// réparé, sinon la réparation ne servirait à rien.
+// Retour : { reparations:[], anomalies:[], nbReparations, nbAnomalies, parTable:{} }
+function valideDumpAvantImport(dump){
+  const rap = { reparations:[], anomalies:[], nbReparations:0, nbAnomalies:0, parTable:{} };
+  if(!dump || typeof dump !== 'object') return rap;
+  const TB = (typeof TABLES !== 'undefined' && Array.isArray(TABLES)) ? TABLES : Object.keys(VALIDE_SCHEMAS);
+  const noteTable = (t, cle) => {
+    if(!rap.parTable[t]) rap.parTable[t] = { reparations:0, anomalies:0 };
+    rap.parTable[t][cle]++;
+  };
+  TB.forEach(t => {
+    const schema = VALIDE_SCHEMAS[t];
+    if(!schema) return;                      // pas de schéma = pas de règle inventée (v1370)
+    const rows = dump[t];
+    if(!Array.isArray(rows) || !rows.length) return;
+    rows.forEach((row, i) => {
+      if(!row || typeof row !== 'object') return;
+      // 1) réparation des champs typés présents
+      Object.keys(row).forEach(ch => {
+        const type = schema.champs && schema.champs[ch];
+        if(!type) return;
+        if(_valideChamp(type, row[ch])) return;       // déjà conforme
+        const r = _impRepareValeur(type, row[ch]);
+        if(r.repare && _valideChamp(type, r.valeur)){
+          rap.reparations.push({ table:t, ligne:i, champ:ch, avant:row[ch], apres:r.valeur });
+          rap.nbReparations++; noteTable(t, 'reparations');
+          row[ch] = r.valeur;
+        }else{
+          rap.anomalies.push({ table:t, ligne:i, champ:ch,
+            motif:`« ${ch} » devrait être ${type} (reçu : ${_valideDecrit(row[ch])})`, valeur:row[ch] });
+          rap.nbAnomalies++; noteTable(t, 'anomalies');
+        }
+      });
+      // 2) champs requis absents — SIGNALÉS, jamais inventés.
+      (schema.requisCreation || []).forEach(ch => {
+        const v = row[ch];
+        if(v === null || v === undefined || (typeof v === 'string' && v.trim() === '')){
+          rap.anomalies.push({ table:t, ligne:i, champ:ch,
+            motif:`champ requis absent : « ${ch} »`, valeur:v });
+          rap.nbAnomalies++; noteTable(t, 'anomalies');
+        }
+      });
+    });
+  });
+  return rap;
+}
+
+// Le rapport, en français, pour la boîte de confirmation. PURE.
+// Il dit CE QUI a été réparé et CE QUI ne l'a pas été — jamais « tout va bien ».
+function _impRapportTexte(rap){
+  if(!rap || (!rap.nbReparations && !rap.nbAnomalies)){
+    return '✓ Contenu vérifié : aucune anomalie détectée.';
+  }
+  const L = [];
+  if(rap.nbReparations){
+    L.push(`🔧 ${rap.nbReparations} valeur(s) réparée(s) automatiquement :`);
+    rap.reparations.slice(0, 6).forEach(r => {
+      L.push(`   • ${r.table} · « ${r.champ} » : ${JSON.stringify(r.avant)} → ${JSON.stringify(r.apres)}`);
+    });
+    if(rap.reparations.length > 6) L.push(`   • … et ${rap.reparations.length - 6} autre(s).`);
+  }
+  if(rap.nbAnomalies){
+    L.push(`⚠ ${rap.nbAnomalies} anomalie(s) NON réparable(s) — importées telles quelles :`);
+    rap.anomalies.slice(0, 6).forEach(a => {
+      L.push(`   • ${a.table} (ligne ${a.ligne + 1}) : ${a.motif}`);
+    });
+    if(rap.anomalies.length > 6) L.push(`   • … et ${rap.anomalies.length - 6} autre(s).`);
+    L.push(`   Ces fiches seront importées SANS être corrigées : mieux vaut une`);
+    L.push(`   sauvegarde imparfaite qu'une sauvegarde perdue. Elles sont listées`);
+    L.push(`   au journal d'audit pour que tu puisses les retrouver.`);
+  }
+  return L.join('\n');
+}
+
+// Journalise le rapport — une trace qui SURVIT à la boîte de dialogue.
+// Un rapport lu une fois puis évaporé ne prouve rien le lendemain (règle de v1383).
+async function _impJournaliseRapport(rap, mode, fichier){
+  if(!rap || (!rap.nbReparations && !rap.nbAnomalies)) return;
+  try{
+    await db.auditLog.add({ ts:Date.now(), tbl:'*', op:'import-controle', cle:null,
+      resume:_auditResume({ mode, fichier:fichier||'', reparations:rap.nbReparations,
+        anomalies:rap.nbAnomalies, parTable:rap.parTable,
+        details:rap.reparations.slice(0,40), refus:rap.anomalies.slice(0,40) }),
+      ecran:(typeof view !== 'undefined' && view) ? String(view) : '', v:APP_VERSION });
+  }catch(e){ swallow(e, 'import-controle audit'); }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -6917,6 +7387,12 @@ async function renderDash(){
   try{ _dashProdPlan = await _withTimeout(buildProductionPlan(14), 4000) || []; }catch(e){ console.error('dashProduction (pré-calcul)', e); }
   const _dashProdHTML = buildDashProductionHTML(_dashProdPlan);
 
+  // [v1383 · CHANTIER A] Pastille d'incidents. Le principe déjà appliqué au compteur kv, généralisé :
+  // un échec important qui s'accumule doit se voir SUR L'ACCUEIL, pas attendre qu'on aille le chercher
+  // dans un écran technique. C'est toute la différence entre une panne d'un jour et une panne d'un mois.
+  let _nbIncGraves = 0;
+  try{ _nbIncGraves = await smSanteNbGraves(); }catch(e){ _nbIncGraves = 0; }
+
   document.getElementById('main').innerHTML=`
    <div class="topbar home-topbar"><div></div>
      <div class="flex" style="gap:6px"><button class="btn ghost sm" onclick="quickLossForm()">⚠ Casse</button><button class="btn ghost sm" onclick="togglePrivacyMode()">${privacyModeEnabled()?'👁️ Afficher les chiffres':'🙈 Mode discret'}</button></div></div>
@@ -6930,6 +7406,7 @@ async function renderDash(){
      </div>
    </div>
    ${privacyModeEnabled()?`<div class="banner">🙈 <div>Mode discret actif : montants et volumes sensibles masqués dans toute l'application. Touchez « Afficher les chiffres » pour les réafficher.</div></div>`:''}
+   ${_nbIncGraves>0?`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">🩺 <div><b>${_nbIncGraves} incident(s) important(s) enregistré(s)</b> — une écriture en base, une sauvegarde ou une validation a échoué. L'app a continué de fonctionner, mais quelque chose n'a peut-être pas été enregistré. <span class="act" onclick="renderSanteModal()">Voir le détail →</span></div></div>`:''}
    ${prodEnRetard.length?`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div><b>${prodEnRetard.length} production(s) ouverte(s) &gt; ${PROD_OPEN_MAX_DAYS} jours</b> : ${prodEnRetard.slice(0,5).map(p=>`${esc(prodNomComplet(p, recipes))} (lot ${esc(p.lotProduction||('#'+p.id))})`).join(' · ')}. À terminer ou supprimer. <span class="act" onclick="goView('productions')">Ouvrir Productions →</span></div></div>`:''}
    ${unsavedCount()>0?`<div class="banner" style="background:#fdeaea;border:1.5px solid #d9534f"><div style="flex:1"><b>⚠ ${unsavedCount()} modification(s) non sauvegardée(s) sur iCloud.</b><br><span style="font-size:.84rem">Tes données récentes ne sont PAS encore à l'abri. Sur iPhone, un effacement de Safari peut les perdre définitivement. <b>Sauvegarde maintenant.</b></span><br><button class="btn gold" style="margin-top:8px" onclick="shareBackupToICloud()">☁️ Sauvegarder sur iCloud maintenant</button></div></div>`:''}
    ${!releveFait?`<div class="banner">🌡 <div><b>Relevé de température non fait aujourd'hui.</b> Pense à le saisir et à <b>valider</b>. <span class="act" onclick="goView('pms')">Faire le relevé →</span></div></div>`:''}
@@ -15674,7 +16151,135 @@ function _getH5Class(){
   return null;
 }
 function _h5Available(){ try{ return !!_getH5Class(); }catch(e){ return false; } }
-function _extractLot(val){ let lot=(val||'').trim(); const m=lot.match(/#trace=(.+)$/); if(m) lot=decodeURIComponent(m[1]); return lot; }
+
+// ────────────────────────────────────────────────────────────────────────────
+// [v1386] CHANTIER D — DURCIR LA FRONTIÈRE QR (faille 4 de l'audit de juillet 2026).
+//
+// UNE FRONTIÈRE, c'est l'endroit où entre quelque chose que je n'ai pas écrit.
+// L'app en a quatre : la saisie clavier (gardée depuis v1373), le fichier de
+// sauvegarde (gardé depuis v1384, chantier B), le réseau R&D, et LE QR CODE —
+// qui n'avait AUCUN contrôle. Or c'est la seule frontière que Ben franchit les
+// mains pleines, en atelier, sans regarder l'écran.
+//
+// CE QUE J'AI TROUVÉ, en quatre faits vérifiés sur le code livré.
+//
+// 1) _extractLot() JETTE sur un QR mal formé. `decodeURIComponent('%E0%A4%A')`
+//    lève URIError. Une étiquette froissée, mouillée, à moitié décollée, ou un
+//    QR d'un autre produit suffisent.
+//
+// 2) DANS scanLoop(), CE JET EST AVALÉ PAR LE CATCH « frame non décodée, on
+//    continue ». Le scanner repart donc en boucle, indéfiniment, SANS RIEN DIRE.
+//    Ben vise, vise encore, et croit que son téléphone ne voit pas le code —
+//    alors que l'app l'a lu, l'a fait planter, et a jeté l'erreur en silence.
+//    C'est le motif du chantier A (« l'échec ne se voit pas »), sur la frontière
+//    la moins surveillée.
+//
+// 3) DANS onScan() (moteur h5-qrcode), il n'y a AUCUN try : le jet remonte dans
+//    une callback de librairie tierce. Le scanner reste ouvert, figé.
+//
+// 4) LA RECHERCHE EST PAR INCLUSION : `full.includes(target)`. Un QR ne
+//    contenant qu'un tiret correspond à TOUS les lots ; une chaîne vide aussi.
+//    Sur un écran de choix « Quel lot ? », c'est une invitation à décrémenter le
+//    mauvais stock — et en traçabilité alimentaire, se tromper de lot n'est pas
+//    une erreur d'affichage.
+//
+// CE QUE FAIT CE CHANTIER : une seule porte, _qrLire(), par laquelle tout code
+// scanné ou saisi doit passer. Elle ne jette JAMAIS et rend un verdict explicite
+// { ok, lot, motif } — pas une chaîne qu'on croirait valide.
+//
+// LES BORNES, et pourquoi celles-là :
+//   • longueur : un n° de lot de l'app fait ~12 caractères ; 200 est déjà dix
+//     fois trop large. Au-delà, ce n'est pas une étiquette de Ben.
+//   • caractères : lettres, chiffres, tiret, souligné, point, espace. Le jeu
+//     réellement produit par le générateur d'étiquettes de l'app.
+//   • longueur minimale de 2 pour une RECHERCHE par inclusion : en dessous,
+//     l'inclusion ne discrimine plus rien (prouvé : « - » ramène tout).
+//
+// CE QUE JE NE FAIS PAS, délibérément :
+//   • Refuser un lot inconnu. Un QR bien formé qui ne correspond à rien est un
+//     fait légitime (étiquette d'un lot supprimé, autre appareil) : on le DIT,
+//     on ne le rejette pas comme une attaque.
+//   • Deviner un lot proche. « NM-A-1O1 » (O au lieu de zéro) n'est PAS corrigé
+//     en « NM-A-101 » : proposer le mauvais lot avec assurance est pire que dire
+//     « je ne trouve pas ». Même règle qu'au chantier B — on ne devine jamais.
+//
+// LA RÈGLE FIGÉE : un code venu de l'extérieur n'est jamais une donnée tant
+// qu'il n'a pas passé une porte qui peut dire NON — et le refus doit se VOIR.
+// ────────────────────────────────────────────────────────────────────────────
+
+// Le jeu de caractères réellement produit par les étiquettes de l'app.
+const QR_CARACTERES_OK = /^[A-Za-z0-9\-_. ]+$/;
+const QR_LONGUEUR_MAX  = 200;   // dix fois la taille d'un n° de lot réel
+const QR_LONGUEUR_MIN_RECHERCHE = 2;   // en dessous, l'inclusion ne discrimine plus rien
+
+// LA PORTE. Ne jette jamais, quoi qu'on lui donne. PURE.
+// Retour : { ok:bool, lot:string, motif:string }
+//   ok=false  → `motif` est une phrase en français, affichable telle quelle.
+function _qrLire(brut){
+  if(brut === null || brut === undefined){
+    return { ok:false, lot:'', motif:'Aucun code lu.' };
+  }
+  if(typeof brut !== 'string'){
+    return { ok:false, lot:'', motif:'Code illisible (format inattendu).' };
+  }
+  // Borne AVANT tout traitement : on ne décode pas 200 000 caractères pour
+  // découvrir ensuite qu'ils sont de trop.
+  if(brut.length > QR_LONGUEUR_MAX * 4){
+    return { ok:false, lot:'', motif:`Code beaucoup trop long (${brut.length} caractères) — ce n'est pas une étiquette de l'app.` };
+  }
+  let lot = brut.trim();
+  if(!lot){
+    return { ok:false, lot:'', motif:'Code vide.' };
+  }
+  // Forme « URL de traçabilité » : ...#trace=<lot>
+  const m = lot.match(/#trace=(.+)$/);
+  if(m){
+    try{
+      lot = decodeURIComponent(m[1]);
+    }catch(e){
+      // AVANT ce chantier : ce jet remontait dans un catch « on continue »,
+      // et le scanner bouclait en silence. Désormais il devient un motif.
+      return { ok:false, lot:'', motif:'Étiquette abîmée ou illisible (encodage invalide). Saisis le numéro à la main.' };
+    }
+    lot = lot.trim();
+    if(!lot) return { ok:false, lot:'', motif:'Étiquette sans numéro de lot.' };
+  }
+  if(lot.length > QR_LONGUEUR_MAX){
+    return { ok:false, lot:'', motif:`Numéro de lot trop long (${lot.length} caractères).` };
+  }
+  if(!QR_CARACTERES_OK.test(lot)){
+    return { ok:false, lot:'', motif:'Ce code contient des caractères qui n\'existent pas dans un numéro de lot.' };
+  }
+  return { ok:true, lot, motif:'' };
+}
+
+// Verdict pour une RECHERCHE par inclusion. Plus strict que _qrLire :
+// un code d'un seul caractère est bien formé, mais il correspondrait à tout.
+// (Prouvé : « - » ramène l'intégralité des lots.) PURE.
+function _qrLireRecherche(brut){
+  const v = _qrLire(brut);
+  if(!v.ok) return v;
+  if(v.lot.length < QR_LONGUEUR_MIN_RECHERCHE){
+    return { ok:false, lot:'', motif:`« ${v.lot} » est trop court pour chercher un lot : ça correspondrait à presque tous.` };
+  }
+  return v;
+}
+
+// Signale un refus à Ben, une seule fois, sans le laisser viser dans le vide.
+// Le refus DOIT se voir : c'est toute la leçon du chantier A.
+function _qrRefus(motif, contexte){
+  try{ toast('⛔ ' + motif); }catch(e){ swallow(e, '_qrRefus toast'); }
+  try{ swallow(new Error('QR refusé : ' + motif), 'qr ' + (contexte || 'scan')); }
+  catch(e){ /* swallow ne jette jamais, mais on ne prend pas de risque à la frontière */ }
+}
+
+// [v1386 · CHANTIER D] _extractLot NE JETTE PLUS. Elle déléguait à decodeURIComponent, qui
+// lève URIError sur une étiquette abîmée — cinq appelants héritaient de ce jet sans le savoir.
+// Patcher les cinq appelants aurait laissé le SIXIÈME, écrit plus tard, retomber dans le trou :
+// on ferme donc le trou à la source. Un code refusé rend '' (chaîne vide), que chaque appelant
+// traite déjà comme « rien trouvé » — le comportement dégradé est sûr, jamais un jet.
+// La porte qui EXPLIQUE le refus est _qrLire() ; celle-ci reste le raccourci sans verdict.
+function _extractLot(val){ const v=_qrLire(val); return v.ok ? v.lot : ''; }
 async function openScanner(onResult){
   // onResult(texte) appelé quand un code est lu (ou saisi manuellement)
   const hasNative = ('BarcodeDetector' in window);
@@ -15691,7 +16296,7 @@ async function openScanner(onResult){
       <input id="scanManual" placeholder="ex : NM-A-101" autocapitalize="characters" autocomplete="off"></div>
     <div class="modal-actions">
       <button class="btn ghost" onclick="closeScanner()">Annuler</button>
-      <button class="btn" onclick="(function(){var v=document.getElementById('scanManual').value.trim(); if(v){ closeScanner(); (window._scanCb&&window._scanCb(_extractLot(v))); } else toast('Saisissez un numéro de lot'); })()">Valider</button>
+      <button class="btn" onclick="(function(){var raw=document.getElementById('scanManual').value; var v=_qrLire(raw); if(!v.ok){ if(!String(raw||'').trim()){ toast('Saisissez un numéro de lot'); } else { _qrRefus(v.motif,'saisie'); } return; } closeScanner(); (window._scanCb&&window._scanCb(v.lot)); })()">Valider</button>
     </div>`);
   window._scanCb = onResult;
   if(!camera) return;
@@ -15721,8 +16326,11 @@ async function _openScannerH5(){
     _h5qr = new H5('h5qrReader', { verbose:false });
     const config = { fps:10, qrbox:{width:220,height:220}, aspectRatio:1.0 };
     const onScan = (decodedText)=>{
-      const lot=_extractLot(decodedText);
-      const cb=window._scanCb; closeScanner(); if(cb) cb(lot);
+      // [v1386 · CHANTIER D] Aucun try ici auparavant : un QR abîmé faisait remonter une
+      // URIError dans la callback d'une librairie tierce, scanner ouvert et figé.
+      const v=_qrLire(decodedText);
+      if(!v.ok){ _qrRefus(v.motif, 'onScan'); closeScanner(); return; }
+      const cb=window._scanCb; closeScanner(); if(cb) cb(v.lot);
     };
     await _h5qr.start({ facingMode:'environment' }, config, onScan, ()=>{ /* échec de frame : ignoré */ });
   }catch(err){
@@ -15738,8 +16346,13 @@ async function scanLoop(video){
     if(codes && codes.length){
       const val=(codes[0].rawValue||'').trim();
       if(val){
-        const lot=_extractLot(val);
-        const cb=window._scanCb; closeScanner(); if(cb) cb(lot); return;
+        // [v1386 · CHANTIER D] AVANT : _extractLot() jetait ici sur une étiquette abîmée,
+        // le jet était avalé par le catch « frame non décodée », et le scanner repartait
+        // en boucle SANS RIEN DIRE — Ben visait dans le vide en croyant que la caméra ne
+        // voyait pas le code. Désormais la porte rend un verdict, et un refus se VOIT.
+        const v=_qrLire(val);
+        if(!v.ok){ _qrRefus(v.motif, 'scanLoop'); const cbKo=window._scanCb; closeScanner(); return; }
+        const cb=window._scanCb; closeScanner(); if(cb) cb(v.lot); return;
       }
     }
   }catch(e){ /* frame non décodée, on continue */ }
@@ -15762,7 +16375,10 @@ function scanAffectStock(){
   openScanner(async code=>{ try{ await scanAffectResolve(code); }catch(e){ console.error('scanAffect',e); toast('Erreur lors du scan'); } });
 }
 async function scanAffectResolve(code){
-  code=(code||'').trim(); if(!code){ return; }
+  // [v1386 · CHANTIER D] Même garde : cette résolution aussi compare par inclusion.
+  const _v=_qrLireRecherche(code);
+  if(!_v.ok){ _qrRefus(_v.motif, 'scanAffectResolve'); return; }
+  code=_v.lot;
   const target=normTxt(code);
   const prods=await db.productions.toArray();
   const recipes=await db.recipes.toArray();
@@ -15877,7 +16493,13 @@ async function scanAffectConfirm(){
 
 // Résout un numéro scanné : lot matière → traceLot, sinon lot de production → traceProd.
 async function traceLotByNumber(code){
-  code=(code||'').trim(); if(!code){ return; }
+  // [v1386 · CHANTIER D] Cette recherche compare par INCLUSION (full.includes(target)) :
+  // un code d'un seul caractère correspondrait à presque tous les lots (« - » les ramène
+  // TOUS). Sur un écran « Quel lot ? », c'est une invitation à se tromper de lot — et en
+  // traçabilité alimentaire ce n'est pas une erreur d'affichage.
+  const _v=_qrLireRecherche(code);
+  if(!_v.ok){ _qrRefus(_v.motif, 'traceLotByNumber'); return; }
+  code=_v.lot;
   const target=normTxt(code);
   const lots=await db.materialLots.toArray();
   const prods=await db.productions.toArray();
@@ -48968,13 +49590,18 @@ async function exportData(){
   const dump=await buildDump();
   const blob=new Blob([JSON.stringify(dump,null,2)],{type:'application/json'});
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
-  a.download='sensations-macarons-sauvegarde-'+today()+'.json'; a.click();
-  localStorage.setItem('sm_lastExport', today());
-  localStorage.removeItem('sm_exportSnooze');
-  // Message honnête : sur iPhone, Safari ouvre une fenêtre où l'utilisateur choisit
-  // d'enregistrer le fichier (Fichiers / iCloud). L'app ne peut PAS savoir si la
-  // sauvegarde a été confirmée — on décrit donc l'action, sans affirmer « c'est fait ».
-  toast('Fichier prêt — choisis où l\'enregistrer (Fichiers / iCloud) 📂');
+  const nomFichier='sensations-macarons-sauvegarde-'+today()+'.json';
+  a.download=nomFichier; a.click();
+  // [v1385 · CHANTIER C] AVANT : on écrivait ici sm_lastExport = today(), c'est-à-dire qu'on
+  // AFFIRMAIT une sortie que le commentaire d'à côté reconnaissait ne pas pouvoir vérifier.
+  // Un partage annulé éteignait donc le rappel pendant sept jours. Désormais : on enregistre
+  // une TENTATIVE (fait observable), et seule une confirmation de Ben vaut sortie.
+  sortieMarqueTentee('fichier');
+  if(!sortieDemandeConfirmation('fichier', nomFichier)){
+    toast('Sortie non confirmée — le rappel reste actif');
+    return;
+  }
+  toast('Sortie confirmée ✓ — garde ce fichier hors de l\'appareil');
 }
 
 /* ============================================================
@@ -49003,27 +49630,27 @@ async function shareBackupToICloud(opts){
           title:'Sauvegarde Sensations Macarons',
           text:'Sauvegarde du '+fmtDate(today())+' — choisis « Enregistrer dans Fichiers » puis iCloud Drive.'
         });
-        // succès : on note la date et on prend aussi un instantané interne
-        localStorage.setItem('sm_lastICloud', today());
-        localStorage.setItem('sm_lastExport', today());
-        localStorage.removeItem('sm_exportSnooze');
-        clearUnsaved();
+        // [v1385 · CHANTIER C] navigator.share() qui rend la main ne prouve PAS que le fichier
+        // a été enregistré : iOS résout la promesse dès que la feuille de partage est traitée.
+        // On note donc une TENTATIVE, puis on demande à Ben ce qu'il a vu.
+        sortieMarqueTentee('icloud');
         try{ await snapshotBackup('icloud'); }catch(e){swallow(e,'shareBackupToICloud')}
-        toast('Sauvegarde envoyée — enregistre-la dans iCloud Drive ✓');
+        const confirmee = sortieDemandeConfirmation('icloud', nomFichier);
+        toast(confirmee ? 'Sortie iCloud confirmée ✓' : 'Sortie non confirmée — le rappel reste actif');
         if(typeof renderBackups==='function' && view==='backups') renderBackups();
-        return true;
+        return confirmee;
       }
     }
     // 2) Repli : téléchargement classique (ordinateur, ou navigateur sans partage de fichier)
     const blob=new Blob([json],{type:'application/json'});
     const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
     a.download=nomFichier; a.click();
-    localStorage.setItem('sm_lastExport', today());
-    localStorage.removeItem('sm_exportSnooze');
-    clearUnsaved();
+    // [v1385 · CHANTIER C] Même règle sur le repli : produire un fichier n'est pas le mettre à l'abri.
+    sortieMarqueTentee('fichier');
     try{ await snapshotBackup('icloud'); }catch(e){swallow(e,'shareBackupToICloud')}
-    toast('Partage direct indisponible : fichier téléchargé. Range-le dans iCloud Drive.');
-    return true;
+    const confirmeeR = sortieDemandeConfirmation('fichier', nomFichier);
+    toast(confirmeeR ? 'Sortie confirmée ✓' : 'Partage direct indisponible : fichier téléchargé, sortie NON confirmée.');
+    return confirmeeR;
   }catch(e){
     // l'utilisateur a annulé la feuille de partage, ou erreur : pas grave, on reste silencieux
     if(e && e.name==='AbortError'){ return false; }
@@ -49082,9 +49709,16 @@ async function importData(e){
   const nbClients = Array.isArray(obj.clients)?obj.clients.length:0;
   const dateInfo = obj._date ? `\nSauvegarde du ${new Date(obj._date).toLocaleString('fr-FR')}` : '';
   const warn = v.raisons.length ? `\n\n⚠ Avertissement(s) :\n- ${v.raisons.join('\n- ')}` : '\n\n✓ Intégrité vérifiée.';
-  if(!confirm(`Importer cette sauvegarde ?${dateInfo}\n\n• ${nbClients} client(s)\n• ${nbOrders} commande(s)${warn}\n\nToutes les données actuelles seront remplacées (une sauvegarde de sécurité sera prise avant).`)){
+  // [v1384 · CHANTIER B] CONTRÔLE DU CONTENU, avant toute écriture. verifyBackup() ci-dessus ne
+  // juge que la FORME (tableaux, doublons d'id, somme de contrôle) : un montant en chaîne ou une
+  // date malformée passaient intacts, la validation v1373 étant éteinte par _importEnCours.
+  // On répare ici ce qui est non ambigu, on signale le reste, et on le DIT avant de demander.
+  const rap = valideDumpAvantImport(obj);
+  const rapTxt = (rap.nbReparations || rap.nbAnomalies) ? `\n\n${_impRapportTexte(rap)}` : '';
+  if(!confirm(`Importer cette sauvegarde ?${dateInfo}\n\n• ${nbClients} client(s)\n• ${nbOrders} commande(s)${warn}${rapTxt}\n\nToutes les données actuelles seront remplacées (une sauvegarde de sécurité sera prise avant).`)){
     e.target.value=''; return;
   }
+  await _impJournaliseRapport(rap, 'remplacement', f.name);
   try{
     // Filet de sécurité AVANT écrasement — son échec a désormais son PROPRE message
     // (cause fréquente : stockage saturé), il ne se déguise plus en « erreur pendant l'import ».
@@ -49117,9 +49751,14 @@ async function importDataMerge(e){
     const labels={clients:'client(s)',orders:'commande(s)',markets:'marché(s)',marketMoves:'mouvement(s) marché',charges:'charge(s)',productions:'production(s)',recipes:'recette(s)',materials:'matière(s)',materialLots:'lot(s) matière',products:'produit(s) catalogue',events:'événement(s)'};
     parts.push(`• ${n} ${labels[t]||t}`); } });
   const dateInfo = obj._date ? `\nFichier du ${new Date(obj._date).toLocaleString('fr-FR')}` : '';
-  if(!confirm(`Fusionner ce fichier avec vos données ?${dateInfo}\n\nCe contenu sera AJOUTÉ (rien ne sera effacé) :\n${parts.join('\n')||'• (aucune donnée détectée)'}\n\nUne sauvegarde de sécurité sera prise avant.`)){
+  // [v1384 · CHANTIER B] Même contrôle de contenu qu'en remplacement : la fusion suspend
+  // elle aussi la validation (_importEnCours), donc elle a besoin du même filet.
+  const rapM = valideDumpAvantImport(obj);
+  const rapMTxt = (rapM.nbReparations || rapM.nbAnomalies) ? `\n\n${_impRapportTexte(rapM)}` : '';
+  if(!confirm(`Fusionner ce fichier avec vos données ?${dateInfo}\n\nCe contenu sera AJOUTÉ (rien ne sera effacé) :\n${parts.join('\n')||'• (aucune donnée détectée)'}${rapMTxt}\n\nUne sauvegarde de sécurité sera prise avant.`)){
     e.target.value=''; return;
   }
+  await _impJournaliseRapport(rapM, 'fusion', f.name);
   try{
     try{ await snapshotBackup('avant-fusion'); }
     catch(se){
@@ -51083,8 +51722,12 @@ async function downloadBackup(id){
   const b=await db.backups.get(id); if(!b) return;
   const blob=new Blob([b.payload],{type:'application/json'});
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
-  a.download='sensations-sauvegarde-'+b.date.slice(0,10)+'-'+id+'.json'; a.click();
-  toast('Fichier prêt — choisis où l\'enregistrer (Fichiers / iCloud) 📂');
+  const nomB='sensations-sauvegarde-'+b.date.slice(0,10)+'-'+id+'.json';
+  a.download=nomB; a.click();
+  // [v1385 · CHANTIER C] Télécharger un instantané EST la seule façon de le sortir de la boîte.
+  sortieMarqueTentee('fichier');
+  const okB = sortieDemandeConfirmation('fichier', nomB);
+  toast(okB ? 'Sortie confirmée ✓' : 'Sortie non confirmée — le rappel reste actif');
 }
 async function deleteBackup(id){
   if(!confirm('Supprimer cette sauvegarde de l\'historique ?')) return;
@@ -52184,9 +52827,11 @@ async function prelevRemplacerGo(prodId, materialId){
 
 async function renderBackups(){
   const backups = await db.backups.orderBy('date').reverse().toArray();
-  const lastExport = localStorage.getItem('sm_lastExport');
-  const dExp = lastExport ? daysTo(lastExport) : null;
-  const expWarn = (!lastExport || (dExp!==null && dExp<=-7));
+  // [v1385 · CHANTIER C] La bannière ne juge QUE les sorties confirmées.
+  const etatSortie = sortieEtat(exportReminderDays());
+  const lastExport = etatSortie.confirmee;
+  const dExp = etatSortie.jours===null ? null : -etatSortie.jours;
+  const expWarn = etatSortie.enRetard;
   const typeLabel = t => ({'auto-quotidienne':'Auto (quotidienne)','manuel':'Manuelle','avant-import':'Avant import','avant-restauration':'Avant restauration','avant-reparation':'Avant réparation'}[t]||t||'—');
   const rows = backups.map(b=>{
     let integ='—';
@@ -52206,7 +52851,8 @@ async function renderBackups(){
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Sauvegarde & sécurité</h1><p>${backups.length} sauvegarde(s) dans l'historique · max ${MAX_BACKUPS}</p></div></div>
    ${(function(){const s=persistStorageStatus();const bg=s.ok===true?'#eef6ef':(s.ok===false?'#fdf3e7':'#f4f1ec');const bd=s.ok===true?'#3f7d52':(s.ok===false?'#e0a458':'var(--hair)');return `<div class="banner" style="background:${bg};border-color:${bd};margin-bottom:12px"><div><b>${s.label}</b><br><span style="font-size:.85rem;color:#6a5a52">${s.detail}</span></div></div>`;})()}
-   ${expWarn?`<div class="banner" style="background:#fdf3f2;border-color:#f0c9c4">⚠ <div>${lastExport?`Dernier export manuel il y a ${Math.abs(dExp)} jour(s).`:'Aucun export manuel hors appareil pour le moment.'} Pensez à télécharger une sauvegarde et à la conserver ailleurs (e-mail, cloud) : iOS peut purger les données de l'app.</div></div>`:''}
+   ${expWarn?`<div class="banner" style="background:#fdf3f2;border-color:#f0c9c4">⚠ <div>${esc(etatSortie.texte)} Tant qu'une copie n'est pas SORTIE de l'appareil, elle n'est pas à l'abri : iOS peut purger les données de l'app.</div></div>`:''}
+   <div class="banner" style="background:#f4f1ec;border-color:var(--hair);margin-bottom:12px"><div><b>⚠ Les ${backups.length} instantané(s) ci-dessous sont DANS cette app.</b><br><span style="font-size:.85rem;color:#6a5a52">Ils protègent d'une fausse manœuvre (import raté, suppression), <b>pas</b> d'une purge iOS ni d'un téléphone perdu : ils seraient effacés en même temps que le reste. Seul un fichier <b>téléchargé et rangé ailleurs</b> protège de ça.</span></div></div>
    <div class="panel"><h2>Actions</h2>
      <div class="flex" style="flex-wrap:wrap;gap:8px">
        <button class="btn" onclick="snapshotBackup('manuel').then(()=>{renderBackups();toast('Sauvegarde créée ✓');})">＋ Sauvegarder maintenant</button>
@@ -52229,6 +52875,7 @@ async function renderBackups(){
      <p class="note" style="margin-bottom:8px">Depuis la v1372, les <b>${nMetier} réglages métier</b> (modèles de pyramides, compteur légal de factures, journal du copilote, charges récurrentes…) sont recopiés dans la base (<b>${nKv}</b> présents) : ils partent dans les sauvegardes et <b>survivent à une restauration ou à une purge iOS</b> — ce qui n'était pas le cas avant. Chaque écriture en base laisse une trace datée, champ par champ (<b>${nAudit}</b> entrées, rétention ${AUDIT_MAX_ENTREES}). Les encaissements gardent en plus leur journal légal inaltérable.</p>
      <p class="note" style="margin-bottom:8px">Depuis la v1373, chaque écriture est aussi <b>validée à l'entrée</b> (types, champs requis) : une donnée prouvablement mal formée est <b>refusée</b> avec un motif lisible ; une donnée seulement suspecte (vocabulaire inconnu, signe inhabituel) <b>passe et est journalisée</b>. Cette session : <b>${_valideCompteurs.rejets}</b> refus, <b>${_valideCompteurs.suspects}</b> suspects. Si un refus te bloque à tort, désactive temporairement la validation stricte ci-dessous — chaque refus évité restera journalisé.</p>
      <div class="flex" style="flex-wrap:wrap;gap:8px">
+       <button class="btn ghost" onclick="renderSanteModal()">🩺 Santé de l'app</button>
        <button class="btn ghost" onclick="renderAuditModal('')">📜 Voir le journal des écritures</button>
        <button class="btn ghost" onclick="valideStricteBascule()">${strict?'⏸ Désactiver la validation stricte':'▶ Réactiver la validation stricte'}</button>
        <button class="btn ghost" onclick="renderFiguresModal()">🕸 Carte des chiffres</button>
@@ -53727,6 +54374,156 @@ function saveExportReminderDays(v){
   localStorage.removeItem('sm_exportSnooze');
   toast(`Rappel tous les ${Math.min(60,n)} jour(s) ✓`);
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// [v1385] CHANTIER C — SORTIR LES SAUVEGARDES DE LA BOÎTE QU'ELLES PROTÈGENT
+// (faille 3 de l'audit du 19 juillet 2026).
+//
+// LE CONSTAT, en trois faits distincts.
+//
+// 1) LES INSTANTANÉS SONT DANS LA BOÎTE. snapshotBackup() écrit dans
+//    `db.backups` — la MÊME base IndexedDB que les données qu'elle protège.
+//    Le danger nommé partout dans l'app (« effacer l'historique Safari supprime
+//    aussi la base de l'app ») emporte donc les 20 instantanés AVEC les données.
+//    Une sauvegarde qui meurt exactement quand meurt l'original n'est pas une
+//    sauvegarde : c'est une copie. La seule protection réelle est un fichier
+//    SORTI de l'appareil — et c'est justement celle que l'app mesure le plus mal.
+//
+// 2) LA SORTIE EST AFFIRMÉE, PAS CONSTATÉE. exportData() faisait :
+//        a.click();
+//        localStorage.setItem('sm_lastExport', today());
+//    Le commentaire juste en dessous admettait déjà : « L'app ne peut PAS savoir
+//    si la sauvegarde a été confirmée ». Elle l'écrivait quand même. Conséquence
+//    réelle : un partage annulé d'un geste, un « Enregistrer » jamais confirmé,
+//    et l'app note une sortie qui n'a pas eu lieu — puis se TAIT sept jours,
+//    bannière éteinte, compteur `sm_unsaved` remis à zéro.
+//    C'est le motif exact de « 0 refus, 0 suspects » : un écran rassurant dont
+//    le calme signifie « le contrôle n'a jamais eu lieu ».
+//
+// 3) RIEN NE DISTINGUE « SORTIE TENTÉE » DE « SORTIE CONFIRMÉE ». Une seule clé
+//    portait les deux sens.
+//
+// CE QUE FAIT CE CHANTIER — et ce qu'il ne prétend PAS faire.
+//
+// Ce qu'il NE PEUT PAS faire, déclaré franchement : une PWA iOS ne peut pas
+// vérifier qu'un fichier est bien arrivé dans iCloud Drive. Aucune API ne le
+// permet. Toute affirmation contraire serait un mensonge de plus. Donc on ne
+// remplace pas une supposition optimiste par une autre : on rend la DIFFÉRENCE
+// visible et on demande à Ben de trancher, parce que LUI a vu l'écran de partage.
+//
+// Ce qu'il fait :
+//   • DEUX états distincts, jamais confondus :
+//       - « tentée »  (sm_lastExportTente)  : le fichier a été produit et remis
+//         à iOS. C'est un fait observable côté app.
+//       - « confirmée » (sm_lastExport)     : Ben a dit « oui, je l'ai bien
+//         enregistré ». C'est le seul état qui éteint le rappel.
+//     Le rappel et la bannière ne comptent QUE les sorties confirmées.
+//   • Une demande de confirmation après le partage, honnête sur son ignorance.
+//     Répondre « non / annulé » ne pénalise rien : on revient simplement à
+//     l'état d'avant, la vérité n'a pas bougé.
+//   • L'ÂGE RÉEL de la dernière sortie confirmée, affiché en clair, et un
+//     décompte « N jours de travail non sortis de l'appareil » qui ne repose
+//     sur AUCUNE supposition.
+//   • Le rappel ne peut plus être éteint par accident : seule une confirmation
+//     explicite l'éteint.
+//
+// LA RÈGLE FIGÉE : une sauvegarde n'est acquise que lorsqu'elle est SORTIE de
+// l'appareil, et une sortie n'est acquise que lorsqu'elle est CONSTATÉE — jamais
+// parce qu'on l'a demandée.
+// ────────────────────────────────────────────────────────────────────────────
+
+// Les deux clés, et leur sens — délibérément séparées.
+const SORTIE_TENTEE_KEY  = 'sm_lastExportTente';   // fait observable : fichier remis à iOS
+const SORTIE_CONFIRMEE_KEY = 'sm_lastExport';      // fait CONSTATÉ par Ben (clé historique, conservée)
+
+// Enregistre une TENTATIVE de sortie. N'éteint aucun rappel : une tentative
+// n'est pas une sauvegarde. (PURE côté décision ; n'écrit que la trace.)
+function sortieMarqueTentee(canal){
+  try{
+    localStorage.setItem(SORTIE_TENTEE_KEY, JSON.stringify({ date: today(), canal: canal||'fichier', ts: Date.now() }));
+  }catch(e){ swallow(e, 'sortieMarqueTentee'); }
+}
+
+// Enregistre une sortie CONFIRMÉE par Ben. C'est le SEUL chemin qui éteint le rappel
+// et remet le compteur de travail non sauvegardé à zéro.
+function sortieMarqueConfirmee(canal){
+  try{
+    localStorage.setItem(SORTIE_CONFIRMEE_KEY, today());
+    if(canal === 'icloud') localStorage.setItem('sm_lastICloud', today());
+    localStorage.removeItem('sm_exportSnooze');
+    clearUnsaved();
+  }catch(e){ swallow(e, 'sortieMarqueConfirmee'); }
+  try{
+    if(typeof db !== 'undefined' && db.auditLog){
+      db.auditLog.add({ ts:Date.now(), tbl:'*', op:'sortie-confirmee', cle:null,
+        resume:_auditResume({ canal: canal||'fichier', date: today() }),
+        ecran:(typeof view !== 'undefined' && view) ? String(view) : '', v:APP_VERSION })
+        .catch(e => swallow(e, 'audit sortie'));
+    }
+  }catch(e){ swallow(e, 'sortieMarqueConfirmee audit'); }
+}
+
+// Lit la dernière tentative non confirmée, s'il y en a une (PURE).
+// Retourne null si la dernière tentative a été suivie d'une confirmation le même jour ou après.
+function sortieTenteeNonConfirmee(){
+  let t = null;
+  try{ t = JSON.parse(localStorage.getItem(SORTIE_TENTEE_KEY) || 'null'); }catch(e){ return null; }
+  if(!t || !t.date) return null;
+  let conf = null;
+  try{ conf = localStorage.getItem(SORTIE_CONFIRMEE_KEY); }catch(e){ conf = null; }
+  if(conf && String(conf) >= String(t.date)) return null;   // confirmée depuis
+  return t;
+}
+
+// L'ÉTAT DE SORTIE, en une fonction PURE et testable. Ne suppose RIEN.
+// Retour : { confirmee:'AAAA-MM-JJ'|null, jours:int|null, tentee:{...}|null,
+//            enRetard:bool, jamais:bool, texte:string }
+function sortieEtat(freqJours){
+  const freq = (freqJours && freqJours > 0) ? freqJours : 7;
+  let conf = null;
+  try{ conf = localStorage.getItem(SORTIE_CONFIRMEE_KEY); }catch(e){ conf = null; }
+  const tentee = sortieTenteeNonConfirmee();
+  if(!conf){
+    return { confirmee:null, jours:null, tentee, jamais:true, enRetard:true,
+      texte: tentee
+        ? `Aucune sortie CONFIRMÉE. Une tentative est enregistrée le ${fmtDate(tentee.date)}, mais l'app ne peut pas vérifier qu'elle a abouti.`
+        : `Aucune sauvegarde n'est encore sortie de cet appareil.` };
+  }
+  const d = daysTo(conf);                       // négatif = dans le passé
+  // Une date de sortie ILLISIBLE (stockage corrompu) ne prouve aucune sortie : elle est
+  // traitée comme un RISQUE, jamais comme un succès. Sans ça, une clé abîmée éteindrait
+  // le rappel en silence — précisément le « 0 refus, 0 suspects » que l'audit dénonce.
+  // UN SEUL point de décision pour enRetard. Ma première version le calculait ici PUIS le
+  // réaffirmait dans le retour anticipé ci-dessous : casser l'un ne changeait rien, donc la
+  // garde ne voyait plus la régression. Une protection en double qui masque un sabotage est
+  // pire qu'une protection unique et lisible.
+  const jours = (d === null) ? null : Math.abs(d);
+  const enRetard = (d === null) ? true : (d <= -freq);
+  if(d === null){
+    return { confirmee:conf, jours:null, tentee, jamais:false, enRetard,
+      texte: `La date de dernière sortie est illisible (« ${String(conf)} ») : impossible de prouver qu'une sauvegarde est sortie de l'appareil. Refais-en une.` };
+  }
+  const age = (jours === 0) ? "aujourd'hui" : `il y a ${jours} jour(s)`;
+  return { confirmee:conf, jours, tentee, jamais:false, enRetard,
+    texte: `Dernière sortie confirmée : ${fmtDate(conf)} (${age}).`
+         + (tentee ? ` Une tentative plus récente (${fmtDate(tentee.date)}) n'a PAS été confirmée.` : '') };
+}
+
+// Demande la confirmation APRÈS un partage/téléchargement. Honnête sur son ignorance.
+// Ne ment jamais dans les deux sens : ni « c'est sauvegardé », ni « ça a échoué ».
+function sortieDemandeConfirmation(canal, nomFichier){
+  const ou = (canal === 'icloud') ? 'dans iCloud Drive (ou Fichiers)' : 'à l\'endroit de ton choix';
+  const ok = confirm(
+    `Le fichier ${nomFichier ? '« ' + nomFichier +' » ' : ''}a été remis à iOS.\n\n`
+  + `L'app ne peut PAS vérifier qu'il a bien été enregistré ${ou} — c'est une limite d'iOS, `
+  + `pas une précaution de style.\n\n`
+  + `As-tu bien vu l'enregistrement se faire ?\n\n`
+  + `• OK  → la sortie est comptée comme CONFIRMÉE, le rappel s'éteint.\n`
+  + `• Annuler → rien n'est compté, le rappel reste actif (aucune pénalité).`);
+  if(ok){ sortieMarqueConfirmee(canal); return true; }
+  return false;
+}
+
 function exportReminderDays(){
   const s=getSettings();
   const n=parseInt(s.exportReminderDays,10);
@@ -53747,12 +54544,11 @@ async function exportReminder(){
   if(snooze){ const ds=daysTo(snooze); if(ds!==null && ds>=0) return; } // encore en sommeil
   // nombre d'enregistrements à risque (donne du poids au message)
   let nb=0; try{ for(const t of ['orders','productions','clients','materialLots']){ nb+=await db.table(t).count(); } }catch(e){swallow(e,'exportReminder')}
-  let overdue=false, ageTxt='';
-  if(!last){ overdue = nb>0; ageTxt='Aucun export hors de cet appareil pour le moment.'; }
-  else {
-    const diff=daysTo(last); // négatif = dans le passé
-    if(diff!==null && diff<=-freq){ overdue=true; ageTxt=`Dernier export il y a ${Math.abs(diff)} jour(s).`; }
-  }
+  // [v1385 · CHANTIER C] L'état de sortie ne se déduit plus d'une supposition : seules les
+  // sorties CONFIRMÉES comptent. Une tentative non confirmée est signalée comme telle.
+  const etat = sortieEtat(freq);
+  const overdue = etat.enRetard && (etat.jamais ? nb>0 : true);
+  const ageTxt = etat.texte;
   if(!overdue) return;
   openModal(`<h3>💾 Sauvegarde recommandée</h3>
     <div class="banner" style="background:#fdf3f2;border-color:#f0c9c4"><div>${ageTxt} iOS peut purger les données de l'app (effacer l'historique Safari supprime aussi la base). Mets une copie à l'abri sur iCloud Drive.</div></div>
