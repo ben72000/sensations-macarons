@@ -106,7 +106,8 @@ const SUITES = [
   'v1383-sante-incidents.test.js',  // v1383 · chantier A : les échecs silencieux deviennent visibles (filet global, journal persistant, écran Santé)
   'v1384-import-validation.test.js',  // v1384 · chantier B : le contenu d'une sauvegarde est validé AVANT écriture (réparation du non-ambigu, signalement du reste)
   'v1385-sortie-sauvegardes.test.js',  // v1385 · chantier C : une sortie n'est acquise que CONSTATÉE (tentée ≠ confirmée, instantanés nommés comme non protecteurs)
-  'v1386-frontiere-qr.test.js'        // v1386 · chantier D : tout code scanné passe une porte qui peut dire NON, et le refus se VOIT
+  'v1386-frontiere-qr.test.js',       // v1386 · chantier D : tout code scanné passe une porte qui peut dire NON, et le refus se VOIT
+  'v1388-transaction-finished.test.js' // v1388 · _activeTx mort (gel iOS) → le moteur se rétablit seul, plus de « The transaction finished » sur tous les écrans
 ];
 
 let allOk = true;

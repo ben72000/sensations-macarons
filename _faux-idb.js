@@ -78,6 +78,12 @@ function fabriqueIndexedDB(){
       return req;
     }
     objectStore(nom){
+      // Fidélité au vrai IndexedDB : une fois la transaction terminée (commit) ou
+      // avortée, objectStore() jette « The transaction finished ». C'est EXACTEMENT
+      // l'erreur que Ben voit sur iOS quand _activeTx pointe sur une tx morte.
+      if(this._settled || this._aborted){
+        throw new Error("Failed to execute 'objectStore' on 'IDBTransaction': The transaction finished.");
+      }
       const st = this._base.stores[nom];
       const tx = this;
       const cle = o => o[st.keyPath];
