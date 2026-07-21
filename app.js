@@ -11797,6 +11797,74 @@ function ecartTag(p){
   if(!e) return '<span class="tag ok">conforme</span>';
   return `<span class="tag ${e<0?'warn':'event'}">${e>0?'+':''}${qty(e)}</span>`;
 }
+// [v1389 — VOIE 2] REPLI D'AFFICHAGE DES BOÎTES D'UN MÊME LOT.
+//
+// LE POURQUOI : depuis l'unification du moteur (v1389), ranger un lot en plusieurs boîtes le
+// SCINDE en lignes-filles -B1/-B2 (chacune une vraie production, sa destination, sa DLC). C'est
+// la bonne granularité côté données, mais Ben range SOUVENT un lot en plusieurs boîtes → la liste
+// afficherait N cartes pour un seul lot d'origine. Décision Ben (Voie 2) : garder UN moteur, mais
+// REPLIER les boîtes d'un même lot sous UNE carte-parent dépliable. C'est PUREMENT de l'affichage :
+// aucune donnée fusionnée, aucune 2e logique de rangement. Le vrai regroupement physique reste
+// `fusionnerBoites` (v1376), volontaire et tracé — ceci n'est qu'un pliage visuel.
+//
+// COMMENT ON RECONNAÎT LES BOÎTES D'UN LOT : une ligne-fille porte `etiquetteDe` = id du lot
+// parent (posé par prodPreparerBoites). Deux filles du même lot partagent le même `etiquetteDe`.
+// Une ligne SANS etiquetteDe (lot jamais scindé), ou seule de son groupe, s'affiche normalement.
+function _prodbatRowsAvecRepli(rows){
+  // Regroupe les rows par lot d'origine. Clé = etiquetteDe si présent, sinon l'id propre
+  // (une ligne non scindée est son propre « groupe » d'une seule carte → rendu normal).
+  const parLot = new Map();
+  const ordre = [];
+  rows.forEach(r=>{
+    const p = r.p;
+    const cle = (p.etiquetteDe!=null) ? ('E'+p.etiquetteDe) : ('P'+p.id);
+    if(!parLot.has(cle)){ parLot.set(cle, []); ordre.push(cle); }
+    parLot.get(cle).push(r);
+  });
+
+  let html='';
+  for(const cle of ordre){
+    const grp = parLot.get(cle);
+    // Cas normal : un seul élément → carte inchangée (lot non scindé, ou fille unique).
+    if(grp.length<=1){ html += _prodbatRow(grp[0]); continue; }
+
+    // Plusieurs boîtes du même lot → carte-parent repliable + les cartes-filles à l'intérieur.
+    const nb = grp.length;
+    const totReste = round3(grp.reduce((s,r)=>s+(+r.p.qteRestante||0),0));
+    // Nom d'affichage : on réutilise le nom d'une fille (même parfum pour toutes).
+    const recName = window._prodRecName || (id=>'#'+id);
+    const p0 = grp[0].p;
+    const nom = p0.libre ? (p0.produitLibre||'') : recName(p0);
+    // Lot d'origine lisible : base sans suffixe -Bn (les filles portent -B1/-B2…).
+    const lotBase = (typeof lotBaseSansSuffixe==='function')
+      ? lotBaseSansSuffixe(p0.lotProduction||'') : (p0.lotProduction||'');
+    // Répartition des emplacements (ex : « 2 au frigo · 1 en A ») — aide à voir d'un coup où sont
+    // les boîtes sans déplier. On compte par lettre d'emplacement.
+    const parEmp = {};
+    grp.forEach(r=>{ const e=empInfo(r.p.emplacement); const L=(e&&e.lettre)||'?'; parEmp[L]=(parEmp[L]||0)+1; });
+    const empTxt = Object.keys(parEmp).map(L=>`${parEmp[L]}×${L}`).join(' · ');
+    const rid = 'boiterepli_'+cle.replace(/[^a-zA-Z0-9]/g,'');
+
+    html += `<div class="prod-boites-repli" style="border-left:3px dashed #c9a24b;margin:4px 0 4px 0;border-radius:6px;background:#fffdf7">
+      <div class="prod-boites-head" onclick="prodBoitesToggle('${rid}')" style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:8px 10px;user-select:none">
+        <span id="${rid}_chev" style="transition:transform .15s;display:inline-block;color:#a9772a">▸</span>
+        <span style="font-weight:600">📦 ${esc(nom)}</span>
+        <span style="color:#9a8a82;font-size:.78rem">lot ${esc(lotBase)}</span>
+        <span class="sec-count" style="margin-left:auto">${nb} boîtes${totReste>0?` · ${qty(totReste)} en stock`:''}${empTxt?` · ${empTxt}`:''}</span>
+      </div>
+      <div id="${rid}" class="prod-boites-body" style="display:none;padding:0 6px 6px 6px">${grp.map(_prodbatRow).join('')}</div>
+    </div>`;
+  }
+  return html;
+}
+// Replie / déplie les boîtes d'un même lot (affichage seul).
+function prodBoitesToggle(rid){
+  const body=document.getElementById(rid); const chev=document.getElementById(rid+'_chev');
+  if(!body) return;
+  const open = body.style.display!=='none';
+  body.style.display = open ? 'none' : 'block';
+  if(chev) chev.style.transform = open ? 'rotate(0deg)' : 'rotate(90deg)';
+}
 function _prodbatRow(row){
   // Filet : si le rendu d'une carte échoue (donnée de lot inhabituelle), on n'interrompt
   // pas tout l'écran Productions — on affiche une carte d'erreur lisible identifiant le lot.
@@ -12039,7 +12107,7 @@ function _prodbatFilterInner(q){
     html+=`<div class="prod-sec-head" onclick="prodGroupToggle('${gid}')" style="cursor:pointer;display:flex;align-items:center;gap:8px;user-select:none;border-left:6px solid ${_grpCol};padding-left:8px">
       <span id="${gid}_chev" style="transition:transform .15s;display:inline-block">▸</span>
       ${_grpDot}<span style="font-weight:700">${esc(g.name)}</span>${g.gf?' <span class="tag" style="background:#8a6d3b;color:#fff;font-size:.6rem;vertical-align:middle">🍪 grand format</span>':''}${libreTag}<span class="sec-count">${nb} batch${nb>1?'s':''}${reste?` · ${reste} en stock`:''}${_resume}</span></div>
-    <div id="${gid}" class="prod-grp-body" style="display:none">${g.rows.map(_prodbatRow).join('')}</div>`;
+    <div id="${gid}" class="prod-grp-body" style="display:none">${_prodbatRowsAvecRepli(g.rows)}</div>`;
   });
   body.innerHTML = html +
     (rows.length>400?`<div class="note" style="text-align:center">… ${rows.length-400} autre(s). Affinez la recherche.</div>`:'');
@@ -12834,8 +12902,8 @@ async function _setEmplacementLegacyMort(id){
             return `<p class="note" style="margin-top:4px;color:#8a6d3b">📦 Cette boîte contient <b>${cap}</b> ${esc(uniteLabel(_ctx,cap))} : « Ranger ici » en casera ${cap}, les <b>${reste}</b> ${esc(uniteLabel(_ctx,reste))} restants passeront en attente. Utilise « Répartir » pour tout ventiler d'un coup.</p>`; }
           return ''; })()}
         <div style="display:flex;gap:6px;margin-top:6px">
-          <button class="btn gold sm" style="flex:1" onclick="applySuggestedPlacement(${id})">✓ Ranger ici</button>
-          <button class="btn ghost sm" onclick="proposeSplit(${id})" title="Répartir = ranger le MÊME lot dans plusieurs boîtes / emplacements (même n° de lot, même DLC). Pour créer des lots distincts avec des DLC séparées, utilise « Découper ».">📦 Répartir en boîtes</button>
+          <button class="btn gold sm" style="flex:1" onclick="ouvrirRangement(${id})">✓ Ranger ici</button>
+          <button class="btn ghost sm" onclick="ouvrirRangement(${id})" title="Ranger ce lot en boîtes — moteur de rangement unique">📦 Répartir en boîtes</button>
         </div>
         <p class="note" style="margin-top:4px">💡 ${esc(pourquoi)}.</p>`;
     } else if(_ctx.nb>0) {
@@ -13130,7 +13198,7 @@ function partFlowRenderEmps(){
       onclick="partFlowPickEmp('${e.key}')">
       <b style="background:${e.type==='frigo'?'#6aa3a0':'#3b6ea5'};color:#fff;border-radius:6px;padding:0 7px">${e.lettre}</b>
       <span>${e.icon} ${esc(e.nom)}</span>${sel?' ✓':''}</button>`;
-  }).join('') + `<div style="margin-top:8px"><button class="btn gold" style="width:100%" onclick="partFlowApply()">✓ Ranger ${qty(_partFlow.qte)} ${esc(uniteLabel(cx.ctx,_partFlow.qte))} ici</button></div>`;
+  }).join('') + `<div style="margin-top:8px"><button class="btn gold" style="width:100%" onclick="ouvrirRangement(_partFlow&&_partFlow.prodId)">✓ Ranger ${qty(_partFlow.qte)} ${esc(uniteLabel(cx.ctx,_partFlow.qte))} ici</button></div>`;
 }
 function partFlowPickEmp(key){
   if(!_partFlow) return;
