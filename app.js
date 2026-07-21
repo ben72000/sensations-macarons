@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1388';
+const APP_VERSION = 'v1387';
 const APP_MAJ = 'CHANTIER A — L’APP NE PEUT PLUS ÉCHOUER EN SILENCE. Le constat de l’audit était dur : 347 endroits du code attrapaient une erreur et l’enregistraient fidèlement… dans un carnet que TU NE POUVAIS PAS OUVRIR. Il fallait brancher l’iPhone sur un Mac. Autant dire jamais. ET LE CARNET ÉTAIT EFFACÉ À CHAQUE RECHARGEMENT. C’est le mécanisme EXACT qui a caché la panne Dexie pendant un mois : chaque écriture kv échouait, la validation ne démarrait jamais, et l’écran affichait « 0 refus, 0 suspects » — ce qui RESSEMBLAIT à une bonne nouvelle alors que ça voulait dire « le contrôle n’a jamais démarré ». CE QUI CHANGE. 1) UN ÉCRAN « Santé de l’app » (Sauvegarde & sécurité) : tu lis enfin ce qui a cassé, depuis ton téléphone, sans Mac. 2) LES INCIDENTS VIVENT EN BASE (nouvelle table errLog) : ils survivent à un rechargement, donc tu peux constater qu’une panne DURE — c’est précisément ce que l’ancien carnet en mémoire rendait impossible. 3) UN FILET GLOBAL : une erreur hors try/catch te donnait un écran figé sans trace ; elle est maintenant enregistrée et annoncée par une bannière discrète. 4) UNE PASTILLE SUR L’ACCUEIL quand des incidents IMPORTANTS s’accumulent. LE TRI QUE J’AI FIGÉ, et qui est le cœur du travail : un échec d’AFFICHAGE et un échec d’ÉCRITURE EN BASE ne se valent pas. Base, sauvegarde, import, validation, compta → IMPORTANT, ça parle. Rendu, affichage → mineur, ça s’enregistre sans crier. Confondre les deux, c’est noyer le signal sous le bruit, et une alerte qui crie tout le temps est une alerte qu’on ne regarde plus. CE QUE JE N’AI PAS FAIT : deviner la cause d’une erreur, ni prétendre la réparer. L’écran montre ce qui s’est réellement passé. Une explication inventée serait pire qu’un silence. ET UNE MISE EN GARDE QUE JE TE DOIS : un écran Santé VIDE n’est PAS une preuve que tout va bien — c’est une absence d’incident enregistré, ce qui n’est pas la même chose. LA RÈGLE FIGÉE : une protection qu’on ne peut pas VOIR marcher doit être considérée comme ABSENTE jusqu’à preuve du contraire. Reste à faire : chantier B (valider le contenu à l’import), C (sortir les sauvegardes de la boîte qu’elles protègent), D (durcir import et QR). Suite : 88 → 89 suites, 1437 → 1475 assertions vertes.';
 
 // ============================================================
@@ -5411,6 +5411,35 @@ function computeDlcFromHistory(hist, refIso){
   const resteMs = Math.max(0, FRIGO_DAYS*MS_DAY - totalFrigoConsumed);
   const dlc=new Date(ref.getTime()+resteMs);
   return ymdLocal(dlc); // [A12]
+}
+// ---- DLC D'UN ASSEMBLAGE (règle métier gelée) ----------------------------------
+// RÈGLE (v1388) : la DLC d'un macaron assemblé court À NEUF depuis l'assemblage et
+// est gouvernée par la GARNITURE (ganache/crémeux), PAS par les coques — même si les
+// coques sont plus anciennes. Motif : la coque sèche est stable ; c'est la garniture
+// qui périt. Une coque qui a « vieilli » au frigo ne doit pas rogner la fraîcheur d'un
+// macaron qu'on vient d'assembler.
+//
+// FORMULATION GELÉE — l'INVARIANT testé est un MIN, la ganache gagne parce qu'elle est
+// STRUCTURELLEMENT la plus périssable, PAS parce qu'on l'a codée en dur :
+//   DLC = min( base fraîche de l'assemblage , contraintes issues de la GARNITURE )
+// La coque n'entre PAS dans le min (son âge propre est ignoré). Si un jour un composant
+// autre que la garniture est plus périssable (insert, curd), il devra être ajouté au
+// jeu des contraintes de garniture — pas laissé de côté au motif que « c'est une coque ».
+//
+// Au congélateur, la congélation fige la dégradation : aucune contrainte fraîche ne
+// s'applique, la DLC reste la base congélo (+4 mois). Params PURS (testable sans Dexie).
+//   baseDlc         : DLC calculée à neuf pour l'assemblage (frigo = fin+7j / congélo = +4 mois)
+//   destCongelo     : true si l'assemblage part au congélateur
+//   garnitureDlcs   : liste des DLC-contraintes issues de la GARNITURE et des garnitures-sup
+//                     (dlcProduit + dlcContrainteOuverture de la ganache/crémeux et des chantaches).
+//                     Les DLC des COQUES ne doivent JAMAIS figurer ici.
+function computeAssemblyDlc(baseDlc, destCongelo, garnitureDlcs){
+  let dlc = baseDlc;
+  if(destCongelo) return dlc;                 // congélo : la base congélo prime, rien ne la rogne
+  for(const d of (garnitureDlcs||[])){
+    if(d && (!dlc || d < dlc)) dlc = d;        // min : la contrainte de garniture la plus courte gagne
+  }
+  return dlc;
 }
 // Horodatage lisible "le JJ/MM/AAAA à HHhMM" à partir d'un ISO.
 // Heure seule au format 00:00 (ex : 10:02). Renvoie '' si non valide.
@@ -11867,7 +11896,7 @@ function _prodbatRowInner(row){
      </div>
      <div class="prod-card-meta">
        <span class="prod-date">${fmtDate(p.date)}${heureFab?` · 🕒 ${heureFab}`:''}</span>
-       <span class="prod-emp">${empTag} <span class="act" onclick="setEmplacement(${p.id})">${emp?'↔ déplacer':'📍 ranger'}</span></span>
+       <span class="prod-emp">${empTag} <span class="act" onclick="ouvrirRangement(${p.id})">${emp?'↔ déplacer':'📍 ranger'}</span></span>
      </div>
      <div class="prod-card-stats">
        <span>Théo. <b>${qty(th)}</b></span>
@@ -11884,7 +11913,7 @@ function _prodbatRowInner(row){
        <button class="qa edit" onclick="prodAdjustForm(${p.id})" title="Ajuster la quantité réelle">✎ Réel</button>
        <button class="qa del" onclick="declareLossForm(${p.id})" title="Déclarer une perte / casse">⚠ Perte</button>
        <button class="qa" onclick="prodSplitForm(${p.id})" title="Découper = créer des LOTS séparés (n° de lot et DLC distincts), ex. une partie au congélateur pour plus tard et une partie au frigo. À ne pas confondre avec « Ranger » qui ne fait que ventiler le même lot dans des boîtes.">✂ Découper</button>
-       <button class="qa" style="background:#3f7d52;color:#fff" onclick="setEmplacement(${p.id})" title="Choisir l'emplacement de stockage — range le batch et remplit la visualisation">📍 Ranger</button>
+       <button class="qa" style="background:#3f7d52;color:#fff" onclick="ouvrirRangement(${p.id})" title="Ranger ce lot en boîtes — moteur de rangement unique">📍 Ranger</button>
        ${linkBtn}
        <button class="qa" onclick="shareLabelPDF(${p.id})" title="PDF d'étiquette à partager vers Labelife">📄 PDF</button>
        <button class="qa" onclick="traceProd(${p.id})" title="Traçabilité">🔎 Tracer</button>
@@ -12699,7 +12728,16 @@ function aDejaDecongele(p){
   return false;
 }
 // Ouvre le sélecteur d'emplacement (4 cases : F / B / C / A) pour une production.
+// [v1389] REDIRIGÉ vers le moteur unique. `setEmplacement` était la porte du système A
+// (modal de placement parallèle : suggestion de niveau, placements[]). Ben veut UN seul
+// moteur ; toute demande « ranger/déplacer » passe désormais par `ouvrirRangement`. Cette
+// fonction ne fait plus que déléguer — aucune logique propre. L'ancien corps (système A)
+// est conservé mort sous `_setEmplacementLegacyMort` en attendant la suppression du code
+// mort (étape suivante, test-guardée). N'écrit plus jamais placements.
 async function setEmplacement(id){
+  return ouvrirRangement(id);
+}
+async function _setEmplacementLegacyMort(id){
   const p=await db.productions.get(id); if(!p){ toast('Production introuvable'); return; }
   const decongele = aDejaDecongele(p);
   const retourBloque = freezerReturnBlocked(p);
@@ -12821,7 +12859,7 @@ async function setEmplacement(id){
 let _placementSuggestion=null;
 let _placeCtx=null;
 // Applique le rangement suggéré : déplace vers l'équipement ET enregistre niveau + boîte.
-async function applySuggestedPlacement(id){
+async function applySuggestedPlacementLegacyMort(id){
   const s=_placementSuggestion; if(!s || s.id!==id){ toast('Suggestion expirée'); return; }
   const p=await db.productions.get(id); if(!p) return;
   const cx=_placeCtx;
@@ -12899,7 +12937,7 @@ function recalcPlacement(id, boiteNom){
 //   2) on choisit une BOÎTE (seules celles assez grandes pour la quantité sont proposées),
 //   3) on choisit l'EMPLACEMENT (bloqué tant que 1 et 2 ne sont pas validés).
 let _partFlow = null;
-function proposeSplit(id){
+function proposeSplitLegacyMort(id){
   const cx=_placeCtx; if(!cx || cx.id!==id) return;
   const total = round3(cx.ctx.nb);
   if(total<=0){ toast('Rien à ranger sur ce lot'); return; }
@@ -13100,7 +13138,7 @@ function partFlowPickEmp(key){
   partFlowRenderEmps();
 }
 // Application : range la quantité choisie dans la boîte+emplacement, laisse le reste en attente.
-async function partFlowApply(){
+async function partFlowApplyLegacyMort(){
   if(!_partFlow) return;
   const cx=_placeCtx; if(!cx) return;
   if(_partFlow.qte<=0){ toast('Choisis une quantité'); return; }
@@ -13782,20 +13820,19 @@ async function prodAssembleSave(thisId){
       const _finsComp = [coques.prodTermineTs, ganache.prodTermineTs, coques.prodTimestamp, ganache.prodTimestamp].filter(Boolean);
       const finFabIso = _finsComp.length ? _finsComp.sort().slice(-1)[0] : nowIso;
       const motif = deg ? 'assemblage dégustation' : 'assemblage';
-      // DLC : 7 j frigo / 4 mois congélo, plafonné par la DLC la plus courte des composants —
-      // SAUF si l'assemblage part directement au congélateur : la congélation fige la dégradation,
-      // donc on garde la DLC congélo (+4 mois) sans la rabattre sur les composants frais.
+      // DLC : 7 j frigo / 4 mois congélo. La DLC court À NEUF depuis l'assemblage et est
+      // GOUVERNÉE PAR LA GARNITURE, pas par les coques — même si les coques sont plus anciennes
+      // (coque sèche = stable ; c'est la garniture qui périt). SAUF au congélateur : la
+      // congélation fige la dégradation, on garde la base congélo (+4 mois). Voir computeAssemblyDlc.
       // Ancre temporelle : au frigo, la DLC court depuis la FIN de fabrication (finFabIso) ; au congélo,
       // depuis l'entrée au congélo = le rangement (nowIso).
       const _dlcAnchorIso = isFreezer(dest) ? nowIso : finFabIso;
       const baseDlc = computeDlcFromHistory([{lieu:dest, ts:_dlcAnchorIso, motif}], _dlcAnchorIso);
-      let dlc=baseDlc;
       const _destCongelo = isFreezer(dest);
-      if(!_destCongelo){
-        [coques.dlcProduit, ganache.dlcProduit, coques.dlcContrainteOuverture, ganache.dlcContrainteOuverture].forEach(d=>{
-          if(d && (!dlc || d<dlc)) dlc=d;
-        });
-      }
+      // Contraintes issues de la GARNITURE uniquement (ganache/crémeux). Les DLC des COQUES
+      // sont volontairement EXCLUES : leur âge propre ne rogne pas la fraîcheur du macaron.
+      const _garnitureDlcs = [ganache.dlcProduit, ganache.dlcContrainteOuverture];
+      let dlc = computeAssemblyDlc(baseDlc, _destCongelo, _garnitureDlcs);
       const lotBase = coques.lotBase || ganache.lotBase || lotBaseSansSuffixe(coques.lotProduction||'');
       const suff = deg ? '-DG' : '-AS';
       const lotAsm = lotAvecEmplacement((lotBase||genLotCode(3))+suff, dest);
@@ -13828,7 +13865,12 @@ async function prodAssembleSave(thisId){
         qteTheorique:qteAsm, qteReelle:qteAsm, ecart:0,
         qteProduite:qteAsm, qteRestante:qteAsm,
         dlcProduit:dlc, dlcAuto:true, dlcLimiteeParOuverture: (dlc!==baseDlc),
-        prodStatut:'termine', prodDebutTs:nowIso, prodTermineTs:finFabIso, prodTimestamp:finFabIso,
+        // L'assemblage est INSTANTANÉ : son début ET sa fin sont l'instant du clic (nowIso).
+        // Auparavant prodTermineTs=finFabIso (fin des composants, ANTÉRIEURE au clic) → fin AVANT
+        // début → durée NÉGATIVE affichée (« durée 00h00m -161629s »). L'ancre de DLC/étiquette
+        // (finFabIso) est portée séparément par dlcAnchorTs, elle ne fait plus office de fin de prod.
+        prodStatut:'termine', prodDebutTs:nowIso, prodTermineTs:nowIso, prodTimestamp:nowIso,
+        dlcAnchorTs:_dlcAnchorIso,
         emplacement:dest, emplacementMaj:nowIso, venuDuCongelateur:isFreezer(dest),
         histEmplacement:[{lieu:dest, ts:nowIso, motif}],
         assembleFrom:[{id:coques.id, lot:coques.lotProduction, composant:'coques', qte:coquesUtilisees, parfum:(window._prodRecName?window._prodRecName(coques.recipeId):'')},
@@ -16273,6 +16315,17 @@ function _qrRefus(motif, contexte){
   catch(e){ /* swallow ne jette jamais, mais on ne prend pas de risque à la frontière */ }
 }
 
+// [v1387 · SOURCE DU TROU D'INCLUSION] Trois chemins de scan comparent par === strict :
+// un tiret-seul n'y matche jamais un vrai lot, ils sont sûrs sans garde. DEUX chemins
+// (pickScanAffectLot, pickGroupAffect) comparent par full.includes(target) : là, un target
+// trop court matche TOUS les lots → mauvais stock décrémenté. Le trou n'est donc PAS dans
+// _extractLot (le durcir casserait les chemins === et un lot court légitime), il est dans le
+// PRÉDICAT D'INCLUSION. Cette porte unique décide si target a le droit de matcher par inclusion.
+// Les deux appelants l'utilisent ; on ne peut plus l'oublier sans que le filtre le refuse.
+function _lotInclusionAutorisee(target){
+  return typeof target === 'string' && target.length >= QR_LONGUEUR_MIN_RECHERCHE;
+}
+
 // [v1386 · CHANTIER D] _extractLot NE JETTE PLUS. Elle déléguait à decodeURIComponent, qui
 // lève URIError sur une étiquette abîmée — cinq appelants héritaient de ce jet sans le savoir.
 // Patcher les cinq appelants aurait laissé le SIXIÈME, écrit plus tard, retomber dans le trou :
@@ -16881,7 +16934,10 @@ async function traceProd(prodId){
          <span class="tag" style="flex:none">disponible</span></div>`
     : '';
   const _deb=prod.prodDebutTs||prod.prodTimestamp||''; const _fin=prod.prodTermineTs||'';
-  const _dur=(_deb&&_fin)?ttFormat(new Date(_fin)-new Date(_deb)):'';
+  // Durée affichée SEULEMENT si strictement positive : un assemblage est instantané (début=fin,
+  // durée nulle → rien à afficher) et une paire inversée ne doit pas imprimer un nombre absurde.
+  const _durMs=(_deb&&_fin)?(new Date(_fin)-new Date(_deb)):0;
+  const _dur=(_durMs>0)?ttFormat(_durMs):'';
   openModal(`${_traceArianeHTML()}<h3>Traçabilité — batch</h3>
     <p style="margin-bottom:8px"><b>${esc(_prodNom)}</b> · lot <b>${esc(prod.lotProduction||'—')}</b> · ${fmtDate(prod.date)}<br>
     <span style="color:#9a8a82;font-size:.85rem">Emplacement : ${empTagHtml(prod.emplacement)}${prodComposant(prod)!=='complet'?` · <span class="tag" style="background:${prodComposant(prod)==='assemble'?'#3f7d52':prodComposant(prod)==='degustation'?'#caa23b':'#8a6d3b'};color:#fff">${prodComposant(prod)==='coques'?'🟤 Coques':prodComposant(prod)==='ganache'?'🍫 Ganache':prodComposant(prod)==='degustation'?'🥄 Dégustation (offert)':'✓ Assemblé'}</span>`:''}${prod.parentProdId?' · <span class="tag" style="background:#ece2d4;color:#6b5a52">partie d\'une production</span>':''}</span><br>
@@ -47288,13 +47344,16 @@ async function pickScanAffectLot(code){
   const o = await db.orders.get(orderId); if(!o) return;
   const target = normTxt(_extractLot(code)||'');
   if(!target){ return; }
+  // [v1387] Un target trop court matcherait tous les lots par inclusion. On refuse VISIBLEMENT
+  // plutôt que d'afficher « pas de stock » (demi-mensonge) ou de décrémenter le mauvais lot.
+  if(!_lotInclusionAutorisee(target)){ _qrRefus(`Code « ${target} » trop court pour identifier un lot.`, 'affect-lot'); return; }
   const prods = await db.productions.toArray();
   const recipes = await db.recipes.toArray();
   const recName2 = id=>(recipes.find(r=>r.id===id)||{}).produitNom||'—';
   const matches = prods.filter(p=>{
     if(!prodVendable(p) || round3(+p.qteRestante||0)<=0) return false;
     const full=normTxt(p.lotProduction||''); const base=normTxt(lotBaseSansSuffixe(p.lotProduction||''));
-    return full===target || base===target || full.includes(target);
+    return full===target || base===target || (_lotInclusionAutorisee(target) && full.includes(target));
   });
   if(!matches.length){ toast(`Lot « ${code} » : pas de stock vendable.`); await pickScanRender(); return; }
   const p = matches[0];
@@ -47401,13 +47460,15 @@ function pickGroupScan(){
 }
 async function pickGroupAffect(code){
   const target = normTxt(_extractLot(code)||''); if(!target){ return; }
+  // [v1387] Même garde qu'à l'affectation unitaire : un code trop court est refusé, pas dilué.
+  if(!_lotInclusionAutorisee(target)){ _qrRefus(`Code « ${target} » trop court pour identifier un lot.`, 'affect-groupe'); return; }
   const prods = await db.productions.toArray();
   const recipes = await db.recipes.toArray();
   const recName2 = id=>(recipes.find(r=>r.id===id)||{}).produitNom||'—';
   const matches = prods.filter(p=>{
     if(!prodVendable(p) || round3(+p.qteRestante||0)<=0) return false;
     const full=normTxt(p.lotProduction||''); const base=normTxt(lotBaseSansSuffixe(p.lotProduction||''));
-    return full===target || base===target || full.includes(target);
+    return full===target || base===target || (_lotInclusionAutorisee(target) && full.includes(target));
   });
   if(!matches.length){ toast(`Lot « ${code} » : pas de stock vendable.`); await pickGroupShow(window._pickGroupSel); return; }
   const p = matches[0];
@@ -47802,6 +47863,27 @@ function _dataURLtoBytes(dataURL){
   return bytes;
 }
 
+
+// ════════════════════════════════════════════════════════════════════════════
+// [v1389] MOTEUR DE RANGEMENT UNIQUE — une seule source de vérité (demande Ben).
+//
+// RÈGLE ABSOLUE : il n'existe QU'UN moteur de mise en boîte, `prodPreparerBoites`
+// (système B), et QU'UNE porte d'entrée UI, `ouvrirRangement`. Tout bouton, menu,
+// raccourci ou écran qui veut « ranger / mettre en boîtes » appelle `ouvrirRangement`
+// — JAMAIS sa propre logique. Toute 2e voie qui réapparaît est un doublon à refuser
+// (garde-fou : tests/v1389-moteur-rangement-unique.test.js).
+//
+// `ouvrirRangement(prodId)` = LA porte UI. Ouvre l'éditeur d'étiquettes (le point
+// d'entrée que Ben préfère), qui appelle le moteur unique à la validation.
+async function ouvrirRangement(prodId){
+  return prodEtiquetteBoites(prodId);
+}
+// `rangerLot(prodId, boites, opts)` = alias programmatique fin. Tout appelant qui
+// range SANS passer par l'UI (plan auto, batch) tape ICI, donc le MÊME moteur.
+// Jamais d'écriture placements ailleurs : cette fonction ne fait que déléguer.
+async function rangerLot(prodId, boites, opts){
+  return prodPreparerBoites(prodId, boites, opts);
+}
 
 // ---- UI : définir les boîtes (quantités + destination) avant impression ----
 async function prodEtiquetteBoites(prodId){
@@ -48308,85 +48390,49 @@ async function lbRestaurerEcran(prodIdFocus, msg){
 //    placements est déjà affiché « ⊟ dispatché » ailleurs dans l'app — le besoin de Ben était
 //    prévu par le modèle, il n'était simplement pas accessible depuis cet écran.
 // ════════════════════════════════════════════════════════════════════════════
+// [v1389] VIDÉ de sa logique de rangement. Cet écran (« Étiquettes groupées ») ne DOIT
+// plus écrire placements ni créer de boîtes-catalogue lui-même (c'était le système C, une
+// 3e implémentation parallèle du boxing). Décision Ben : il ne fait plus que générer le PDF,
+// et TOUT rangement passe par le moteur unique via `rangerLot` (→ prodPreparerBoites).
+// Chaque ligne active devient une boîte { qte, destination } confiée au moteur : mêmes règles
+// froid/DLC, mêmes lignes-filles, aucune divergence. Zéro `db.productions.update({placements})`.
 async function lbExecuter(){
   const actives = _lbLignes.filter(l => lbTotalLigne(l) > 0 && l.equipKey);
   if(!actives.length){ toast('Rien à ranger'); return; }
 
-  let boxes = [];
-  try{ boxes = await db.storageBoxes.toArray(); }catch(e){ swallow(e,'lbExecuter boxes'); }
-
-  // Regroupe par lot : chaque lot reçoit ses placements en une seule écriture.
+  // Regroupe par lot : chaque lot est confié UNE fois au moteur unique avec la liste de ses boîtes.
   const parLot = {};
   actives.forEach(l => { (parLot[l.prodId] = parLot[l.prodId] || []).push(l); });
 
-  let nbBoitesCreees = 0, nbBoites = 0;
+  let nbBoites = 0, nbLots = 0;
+  const echecs = [];
 
   for(const pid of Object.keys(parLot)){
-    const p = await db.productions.get(+pid);
-    if(!p) continue;
-    const lignes = parLot[pid];
-
-    // Cumule avec les placements DÉJÀ enregistrés (Ben peut ranger en plusieurs sessions).
-    const ancien = (!p.rangee && Array.isArray(p.placements)) ? p.placements : [];
-    const nouveaux = [];
-
-    for(const l of lignes){
+    // Traduit les lignes de CET écran en boîtes { qte, destination } — le SEUL vocabulaire
+    // que le moteur comprend. Une ligne = `_boites` (ou `copies`) boîtes identiques.
+    const boites = [];
+    for(const l of parLot[pid]){
       const cap = +l.pieces || 0;
       if(cap <= 0) continue;
-
-      // La boîte : on RÉUTILISE si une boîte de cette capacité existe, sinon on la crée.
-      let box = boxes.find(b => (+b.capacite || 0) === cap);
-      if(!box){
-        const nom = `Boîte ${cap}`;
-        try{
-          const dejaLa = await db.storageBoxes.where('nom').equals(nom).first();
-          if(dejaLa){ box = dejaLa; }
-          else {
-            const id = await db.storageBoxes.add({ nom, L:0, l:0, h:0, capacite:cap, capaciteGF:0, stockVide:1 });
-            box = { id, nom, capacite:cap };
-            boxes.push(box);
-            nbBoitesCreees++;
-          }
-        }catch(e){ swallow(e,'lbExecuter addBox'); continue; }
-      }
-
-      // Une ligne = `_boites` boîtes identiques (ou `copies` si non confirmée).
       const n = Math.max(1, +l._boites || +l.copies || 1);
-      for(let i = 0; i < n; i++){
-        nouveaux.push({ equipKey: l.equipKey, niveauNom: null, boiteNom: box.nom, nbMacarons: cap });
-        nbBoites++;
-      }
+      for(let i = 0; i < n; i++){ boites.push({ qte: cap, destination: l.equipKey }); nbBoites++; }
     }
+    if(!boites.length) continue;
 
-    if(!nouveaux.length) continue;
-
-    const cumul = ancien.concat(nouveaux);
-    const totalPlace = round3(cumul.reduce((s, pl) => s + (+pl.nbMacarons || 0), 0));
-    const totalLot   = round3(+p.qteRestante || 0);
-    const toutRange  = totalPlace >= totalLot - 0.001;
-
-    // [v1358] LE DÉPLACEMENT PHYSIQUE passe par doMoveEmplacement — JAMAIS par un update direct.
-    // On déplace vers l'emplacement de la PREMIÈRE boîte. Si les boîtes sont dispatchées dans
-    // plusieurs endroits, `placements[]` porte le détail (et l'app affiche « ⊟ dispatché ») —
-    // mais `p.emplacement` ne peut en contenir qu'un : c'est la limite du modèle EXISTANT, pas
-    // une régression que j'introduis. Je la nomme plutôt que de la masquer.
-    const destPrincipale = nouveaux[0].equipKey;
-    if(p.emplacement !== destPrincipale){
-      const ok = await doMoveEmplacement(+pid, destPrincipale, {silent:true});
-      if(!ok){ toast('Déplacement refusé (règle chaîne du froid)'); return; }
-    }
-
-    await db.productions.update(+pid, {
-      boiteNom: nouveaux[0].boiteNom,
-      placements: cumul,
-      rangee: toutRange,
-      rangeeTs: toutRange ? new Date().toISOString() : (p.rangeeTs || null)
-    });
+    // UN SEUL moteur. Aucune écriture placements ici : rangerLot → prodPreparerBoites porte
+    // toute la logique (scission en lignes-filles, doMoveEmplacement, DLC, chaîne du froid).
+    const res = await rangerLot(+pid, boites);
+    if(!res || !res.ok){ echecs.push({ pid, raison: res && res.raison }); continue; }
+    nbLots++;
   }
 
   closeModal();
   if(typeof renderProductions === 'function') renderProductions();
-  toast(`${nbBoites} boîte(s) rangée(s)${nbBoitesCreees ? ` · ${nbBoitesCreees} nouvelle(s) boîte(s) créée(s)` : ''} ✓`);
+  if(echecs.length){
+    toast(`${nbLots} lot(s) rangé(s) · ${echecs.length} refusé(s) (${esc(echecs[0].raison||'règle froid/DLC')})`);
+  } else {
+    toast(`${nbBoites} boîte(s) rangée(s) sur ${nbLots} lot(s) ✓`);
+  }
   _lbLignes = [];
 }
 
@@ -58535,6 +58581,13 @@ function ttMigrateLegacy(){
 }
 
 function ttFormat(ms){
+  // Garde : une durée NÉGATIVE (fin avant début = paire d'horodatages inversée) ne doit jamais
+  // s'afficher en clair (« -161629s »). C'est un incident de données, pas une mesure : on le
+  // signale honnêtement plutôt que d'imprimer un nombre absurde. (cf. « zéro n'est pas une mesure »)
+  if(!(ms>0)){
+    if(ms<0) return 'durée invalide';           // horodatages incohérents (début après fin)
+    return '00h 00m 00s';                        // durée nulle (assemblage instantané, p.ex.)
+  }
   const totalMin = Math.floor(ms/60000);
   const h = Math.floor(totalMin/60), m = totalMin%60;
   if(totalMin<1){ const s=Math.floor(ms/1000); return `00h 00m ${String(s).padStart(2,'0')}s`; }
@@ -67504,6 +67557,7 @@ function _rangSnapLot(p){
     emplacement:p.emplacement, emplacementMaj:p.emplacementMaj,
     histEmplacement:p.histEmplacement ? JSON.parse(JSON.stringify(p.histEmplacement)) : undefined,
     lotProduction:p.lotProduction,
+    qteRestante:p.qteRestante,
     placements:p.placements ? JSON.parse(JSON.stringify(p.placements)) : undefined,
     niveauIndex:p.niveauIndex, niveauNom:p.niveauNom, boiteNom:p.boiteNom,
     rangee:p.rangee, rangeeTs:p.rangeeTs,
@@ -67513,6 +67567,13 @@ function _rangSnapLot(p){
 }
 
 // Applique le plan. Retourne {ok, applied, failed:[{prodId,nom,raison}]}.
+// [v1389] ROUTÉ vers le moteur unique. Ce plan (« Rangement guidé », système D) n'écrit PLUS
+// placements lui-même : chaque lot du plan est confié à `rangerLot` (→ prodPreparerBoites), qui
+// scinde en lignes-filles -B1/-B2, déplace via doMoveEmplacement et recalcule les DLC. Décision
+// Ben (Voie 2) : il range souvent un lot en plusieurs boîtes → chaque placement du plan devient
+// UNE boîte { qte, destination }. Les listes replient ensuite les boîtes d'un même lot (affichage
+// seul, cf renderProductions). L'undo capture les lignes-filles CRÉÉES (à supprimer au rollback)
+// plutôt qu'un patch de champs placements qui n'existe plus.
 async function applyPlanRangement(plan){
   const parLot = _rangPartsParLot(plan);
   const snapshot = [];
@@ -67523,34 +67584,24 @@ async function applyPlanRangement(plan){
     const p = await db.productions.get(prodId);
     if(!p){ failed.push({prodId, raison:'lot introuvable'}); continue; }
 
-    // snapshot AVANT toute écriture sur ce lot
-    snapshot.push({id:prodId, before:_rangSnapLot(p)});
+    // Traduit les placements du plan en boîtes { qte, destination } — le vocabulaire du moteur.
+    // La destination d'une boîte = son équipement cible (equipKey) ; le niveau/nom de boîte du
+    // plan n'est plus un champ stocké mais une suggestion d'affichage, absorbée par la scission.
+    const boites = info.placements.map(pl=>({ qte: pl.nbMacarons, destination: pl.equipKey }));
+    if(!boites.length){ continue; }
 
-    // 1) déplacement vers l'équipement cible (règles froid/DLC/lot via doMoveEmplacement)
-    let moveOk = true;
-    if(p.emplacement !== info.equipKey){
-      moveOk = await doMoveEmplacement(prodId, info.equipKey, {silent:true, confirmedFrigo:true});
-    }
-    if(!moveOk){
-      failed.push({prodId, raison:'déplacement refusé (règle froid/DLC)'});
-      // on retire le snapshot de ce lot puisqu'on n'a rien écrit
-      snapshot.pop();
+    // UN SEUL moteur. On simule d'abord pour capturer l'état AVANT (undo), puis on exécute.
+    const res = await rangerLot(prodId, boites);
+    if(!res || !res.ok){
+      failed.push({prodId, raison: (res && res.raison) || 'rangement refusé (règle froid/DLC)'});
       continue;
     }
-
-    // 2) écriture des placements (format identique au rangement manuel)
-    const placementsCumul = info.placements.map(pl=>({
-      equipKey:pl.equipKey, niveauNom:pl.niveauNom, boiteNom:pl.boiteNom, nbMacarons:pl.nbMacarons
-    }));
-    const totalLot = round3(+p.qteRestante||0);
-    const totalPlace = round3(placementsCumul.reduce((a,pl)=>a+(+pl.nbMacarons||0),0));
-    const toutRange = totalPlace >= totalLot - 0.001;
-    const premier = info.placements[0] || {};
-
-    await db.productions.update(prodId, {
-      niveauIndex:premier.nivIndex, niveauNom:premier.niveauNom, boiteNom:premier.boiteNom,
-      placements:placementsCumul,
-      rangee:toutRange, rangeeTs: toutRange ? new Date().toISOString() : (p.rangeeTs||null)
+    // Undo : mémorise le lot parent (pour restaurer sa qteRestante/rangee) et les lignes-filles
+    // créées (à supprimer). Le cas simple (1 boîte, même emplacement) ne crée aucune fille.
+    snapshot.push({
+      id: prodId,
+      before: _rangSnapLot(p),
+      childrenCreated: (res.boxes||[]).filter(b=>b.id!==prodId).map(b=>b.id)
     });
     applied++;
   }
@@ -67560,22 +67611,30 @@ async function applyPlanRangement(plan){
 }
 
 // Annule le dernier rangement appliqué : restaure l'instantané.
+// [v1389] Adapté au moteur unique : le rangement crée désormais des lignes-filles (scission),
+// donc annuler = SUPPRIMER les filles créées puis RESTAURER le lot parent (qteRestante, rangee,
+// emplacement…). On enveloppe dans une transaction pour que l'annulation soit tout-ou-rien.
 async function undoPlanRangement(){
   if(!_rangSnapshot || !_rangSnapshot.length){ toast('Rien à annuler'); return false; }
-  for(const snap of _rangSnapshot){
-    const before = snap.before;
-    // reconstruit un patch qui REMET exactement les champs d'avant (y compris suppressions)
-    const patch = {
-      emplacement:before.emplacement, emplacementMaj:before.emplacementMaj,
-      histEmplacement:before.histEmplacement, lotProduction:before.lotProduction,
-      placements:before.placements, niveauIndex:before.niveauIndex,
-      niveauNom:before.niveauNom, boiteNom:before.boiteNom,
-      rangee:before.rangee, rangeeTs:before.rangeeTs,
-      dlcProduit:before.dlcProduit, dlcAuto:before.dlcAuto,
-      venuDuCongelateur:before.venuDuCongelateur
-    };
-    await db.productions.update(snap.id, patch);
-  }
+  await db.transaction('rw', db.productions, async()=>{
+    for(const snap of _rangSnapshot){
+      // 1) supprime les lignes-filles créées par la scission
+      for(const childId of (snap.childrenCreated||[])){
+        try{ await db.productions.delete(childId); }catch(e){ swallow(e,'undoPlan child'); }
+      }
+      // 2) restaure le lot parent à son état d'avant rangement
+      const before = snap.before;
+      const patch = {
+        emplacement:before.emplacement, emplacementMaj:before.emplacementMaj,
+        histEmplacement:before.histEmplacement, lotProduction:before.lotProduction,
+        qteRestante:before.qteRestante,
+        rangee:before.rangee, rangeeTs:before.rangeeTs,
+        dlcProduit:before.dlcProduit, dlcAuto:before.dlcAuto,
+        venuDuCongelateur:before.venuDuCongelateur
+      };
+      await db.productions.update(snap.id, patch);
+    }
+  });
   const n=_rangSnapshot.length;
   _rangSnapshot = null;
   toast(`Rangement annulé · ${n} lot${n>1?'s':''} restauré${n>1?'s':''}`);
