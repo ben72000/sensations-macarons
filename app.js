@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1391';
+const APP_VERSION = 'v1392';
 const APP_MAJ = 'CHANTIER A — L’APP NE PEUT PLUS ÉCHOUER EN SILENCE. Le constat de l’audit était dur : 347 endroits du code attrapaient une erreur et l’enregistraient fidèlement… dans un carnet que TU NE POUVAIS PAS OUVRIR. Il fallait brancher l’iPhone sur un Mac. Autant dire jamais. ET LE CARNET ÉTAIT EFFACÉ À CHAQUE RECHARGEMENT. C’est le mécanisme EXACT qui a caché la panne Dexie pendant un mois : chaque écriture kv échouait, la validation ne démarrait jamais, et l’écran affichait « 0 refus, 0 suspects » — ce qui RESSEMBLAIT à une bonne nouvelle alors que ça voulait dire « le contrôle n’a jamais démarré ». CE QUI CHANGE. 1) UN ÉCRAN « Santé de l’app » (Sauvegarde & sécurité) : tu lis enfin ce qui a cassé, depuis ton téléphone, sans Mac. 2) LES INCIDENTS VIVENT EN BASE (nouvelle table errLog) : ils survivent à un rechargement, donc tu peux constater qu’une panne DURE — c’est précisément ce que l’ancien carnet en mémoire rendait impossible. 3) UN FILET GLOBAL : une erreur hors try/catch te donnait un écran figé sans trace ; elle est maintenant enregistrée et annoncée par une bannière discrète. 4) UNE PASTILLE SUR L’ACCUEIL quand des incidents IMPORTANTS s’accumulent. LE TRI QUE J’AI FIGÉ, et qui est le cœur du travail : un échec d’AFFICHAGE et un échec d’ÉCRITURE EN BASE ne se valent pas. Base, sauvegarde, import, validation, compta → IMPORTANT, ça parle. Rendu, affichage → mineur, ça s’enregistre sans crier. Confondre les deux, c’est noyer le signal sous le bruit, et une alerte qui crie tout le temps est une alerte qu’on ne regarde plus. CE QUE JE N’AI PAS FAIT : deviner la cause d’une erreur, ni prétendre la réparer. L’écran montre ce qui s’est réellement passé. Une explication inventée serait pire qu’un silence. ET UNE MISE EN GARDE QUE JE TE DOIS : un écran Santé VIDE n’est PAS une preuve que tout va bien — c’est une absence d’incident enregistré, ce qui n’est pas la même chose. LA RÈGLE FIGÉE : une protection qu’on ne peut pas VOIR marcher doit être considérée comme ABSENTE jusqu’à preuve du contraire. Reste à faire : chantier B (valider le contenu à l’import), C (sortir les sauvegardes de la boîte qu’elles protègent), D (durcir import et QR). Suite : 88 → 89 suites, 1437 → 1475 assertions vertes.';
 
 // ============================================================
@@ -5026,6 +5026,14 @@ const COQUE_COULEURS = {
   violet:             { label:'Violet',                   hex:'#8e6fb0' }
 };
 function coqueCouleurLabel(k){ return (COQUE_COULEURS[k]&&COQUE_COULEURS[k].label) || (k||''); }
+// Accorde au pluriel un libellé de couleur pour « N coques <couleur>s » (mono-couleur).
+// Ne met au pluriel que le PREMIER mot (l'adjectif de couleur) : « Marron foncé » → « marrons foncés »,
+// « Jaune » → « jaunes ». Un 2e mot déjà terminé par s/x reste inchangé.
+function pluralCouleur(txt){
+  const mots = String(txt||'').toLowerCase().trim().split(/\s+/).filter(Boolean);
+  if(!mots.length) return '';
+  return mots.map((m,i)=> (i<2 && !/[sx]$/.test(m)) ? m+'s' : m).join(' ');
+}
 function coqueCouleurHex(k){ return (COQUE_COULEURS[k]&&COQUE_COULEURS[k].hex) || '#ccc'; }
 function coqueCouleurPastille(k){ return `<span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:${coqueCouleurHex(k)};border:1px solid rgba(0,0,0,.18);vertical-align:middle;margin-right:4px"></span>`; }
 
@@ -11664,7 +11672,7 @@ async function renderProductions(){
         <div class="sugg-main">
           <div><b>🍫 ${esc(s.ganRec)}</b> <span class="tag" style="background:#5a3a2a;color:#fff;font-size:.64rem">${qty(s.ganMac)} doses dispo</span> <span style="color:#9a8a82;font-size:.72rem">lot ${esc(s.ganLot)}</span></div>
           <div style="margin-top:2px"><b>🟤 Coques ${esc(s.couleursTxt||'')}</b>${s.mutualise?` <span class="tag warn" style="font-size:.62rem">🎨 coques empruntées</span>`:` <span class="tag ok" style="font-size:.62rem">même parfum</span>`}${(s.mutualise&&s.sourcesNoms&&s.sourcesNoms.length)?` <span style="color:#9a8a82;font-size:.72rem">via ${esc(s.sourcesNoms.join(', '))}</span>`:''}</div>
-          <div style="margin-top:3px;font-size:.8rem;color:#2e7d32">➜ assemblage : <b>${qty(s.assemblable)} ${esc(s.ganRec)}</b> ${s.colorsCount>1?`(${qty(s.assemblable)} coques de chaque couleur)`:`(${qty(s.coquesNeeded)} coques)`} + ${qty(s.assemblable)} ganaches → <b>${qty(s.assemblable)} macaron(s)</b></div>
+          <div style="margin-top:3px;font-size:.8rem;color:#2e7d32">➜ assemblage : <b>${qty(s.assemblable)} ${esc(s.ganRec)}</b> ${s.colorsCount>1?`(${qty(s.assemblable)} coques de chaque couleur)`:`(${qty(s.coquesNeeded)} coques${s.couleursTxt?' '+esc(pluralCouleur(s.couleursTxt)):''})`} + ${qty(s.assemblable)} ganaches → <b>${qty(s.assemblable)} macaron(s)</b></div>
           ${s.ganacheReste>0?`<div style="margin-top:2px;font-size:.74rem;color:#9a8a82">↳ resterait <b>${qty(s.ganacheReste)} ganache(s)</b></div>`:''}
         </div>
         <button class="btn gold sm" onclick="prodAssembleForm(${s.ganId})" title="Assembler ces composants">🔗 Assembler</button>
