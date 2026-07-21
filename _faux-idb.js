@@ -78,11 +78,17 @@ function fabriqueIndexedDB(){
       return req;
     }
     objectStore(nom){
-      // Fidélité au vrai IndexedDB : une fois la transaction terminée (commit) ou
-      // avortée, objectStore() jette « The transaction finished ». C'est EXACTEMENT
-      // l'erreur que Ben voit sur iOS quand _activeTx pointe sur une tx morte.
-      if(this._settled || this._aborted){
-        throw new Error("Failed to execute 'objectStore' on 'IDBTransaction': The transaction finished.");
+      // [v1391] FIDÉLITÉ AU VRAI IndexedDB : une transaction ne voit QUE les tables déclarées
+      // dans sa portée. Accéder à une table hors portée jette NotFoundError (« The specified object
+      // store was not found ») et, dans le vrai runtime, AVORTE la transaction. Sans ce contrôle, le
+      // banc de test laissait passer le bug v1389 (le moteur appelait doMoveEmplacement qui lit
+      // `recipes` depuis une transaction `productions`-only). Un test qui n'impose pas la portière
+      // ne teste pas la portière.
+      if(this._noms.indexOf(nom) === -1){
+        const e = new Error("Failed to execute 'objectStore' on 'IDBTransaction': The specified object store was not found.");
+        e.name = 'NotFoundError';
+        this._aborted = true;
+        throw e;
       }
       const st = this._base.stores[nom];
       const tx = this;
