@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1401';
+const APP_VERSION = 'v1402';
 const APP_MAJ = 'CHANTIER A — L’APP NE PEUT PLUS ÉCHOUER EN SILENCE. Le constat de l’audit était dur : 347 endroits du code attrapaient une erreur et l’enregistraient fidèlement… dans un carnet que TU NE POUVAIS PAS OUVRIR. Il fallait brancher l’iPhone sur un Mac. Autant dire jamais. ET LE CARNET ÉTAIT EFFACÉ À CHAQUE RECHARGEMENT. C’est le mécanisme EXACT qui a caché la panne Dexie pendant un mois : chaque écriture kv échouait, la validation ne démarrait jamais, et l’écran affichait « 0 refus, 0 suspects » — ce qui RESSEMBLAIT à une bonne nouvelle alors que ça voulait dire « le contrôle n’a jamais démarré ». CE QUI CHANGE. 1) UN ÉCRAN « Santé de l’app » (Sauvegarde & sécurité) : tu lis enfin ce qui a cassé, depuis ton téléphone, sans Mac. 2) LES INCIDENTS VIVENT EN BASE (nouvelle table errLog) : ils survivent à un rechargement, donc tu peux constater qu’une panne DURE — c’est précisément ce que l’ancien carnet en mémoire rendait impossible. 3) UN FILET GLOBAL : une erreur hors try/catch te donnait un écran figé sans trace ; elle est maintenant enregistrée et annoncée par une bannière discrète. 4) UNE PASTILLE SUR L’ACCUEIL quand des incidents IMPORTANTS s’accumulent. LE TRI QUE J’AI FIGÉ, et qui est le cœur du travail : un échec d’AFFICHAGE et un échec d’ÉCRITURE EN BASE ne se valent pas. Base, sauvegarde, import, validation, compta → IMPORTANT, ça parle. Rendu, affichage → mineur, ça s’enregistre sans crier. Confondre les deux, c’est noyer le signal sous le bruit, et une alerte qui crie tout le temps est une alerte qu’on ne regarde plus. CE QUE JE N’AI PAS FAIT : deviner la cause d’une erreur, ni prétendre la réparer. L’écran montre ce qui s’est réellement passé. Une explication inventée serait pire qu’un silence. ET UNE MISE EN GARDE QUE JE TE DOIS : un écran Santé VIDE n’est PAS une preuve que tout va bien — c’est une absence d’incident enregistré, ce qui n’est pas la même chose. LA RÈGLE FIGÉE : une protection qu’on ne peut pas VOIR marcher doit être considérée comme ABSENTE jusqu’à preuve du contraire. Reste à faire : chantier B (valider le contenu à l’import), C (sortir les sauvegardes de la boîte qu’elles protègent), D (durcir import et QR). Suite : 88 → 89 suites, 1437 → 1475 assertions vertes.';
 
 // ============================================================
@@ -25283,6 +25283,25 @@ function _froidCloseDessus(){ const h=document.getElementById('froid-sheet'); if
 
 // Helper réutilisable : construit la liste « Stock par parfum » (cartes finis + grand format).
 // Lecture seule. Utilisé par l'écran Stock du menu ET par la vue Stock intégrée à Production.
+// [v1402] Applique la réserve online au dictionnaire de cartes { nom : {dispo, ...} } de la liste
+// « Stock par parfum ». MÊME règle que parfumDispoSource (une seule vérité) : les pièces réservées
+// à la vente en ligne sortent du stock direct affiché (mise de côté, jamais de double vente). Ne
+// réserve que ce qui existe (min avec le dispo) ; renseigne b.reserveOnline (part mise de côté) et
+// b.dispoTotalAvant (avant réservation, pour info). PURE : modifie byNom en place, pas d'I/O.
+function _appliquerReserveOnlineAuxCartes(byNom, reserve){
+  reserve = reserve || {};
+  const key = (typeof stockMoveKey==='function') ? stockMoveKey : (n=>String(n||'').toLowerCase().trim());
+  const r3  = (typeof round3==='function') ? round3 : (n=>Math.round((+n||0)*1000)/1000);
+  const sub = (typeof subQty==='function') ? subQty : ((a,b)=>r3((+a||0)-(+b||0)));
+  Object.values(byNom||{}).forEach(b=>{
+    const r = r3(+reserve[key(b.nom)] || 0);
+    b.reserveOnline   = Math.max(0, Math.min(r, b.dispo));      // ne réserve que le possible
+    b.dispoTotalAvant = b.dispo;                               // avant réservation (info)
+    b.dispo           = Math.max(0, sub(b.dispo, b.reserveOnline)); // vendable en DIRECT
+  });
+  return byNom;
+}
+
 async function buildStockParfumsListeHtml(){
 
   const tous=(await db.productions.toArray()).filter(p=>round3(+p.qteRestante)>0);
@@ -25338,17 +25357,26 @@ async function buildStockParfumsListeHtml(){
     if(isGFnom(n)){ if(!nomsGF.includes(n)) nomsGF.push(n); }
     else { if(!nomsPetits.includes(n)) nomsPetits.push(n); }
   });
+  // [v1402] RÉSERVE VENTE EN LIGNE — applique la mise de côté au stock affiché (fonction pure
+  // partagée, même règle que parfumDispoSource : pas de logique parallèle).
+  try{
+    const reserve = (typeof getSettings==='function' ? (getSettings().reserveOnline||{}) : {});
+    _appliquerReserveOnlineAuxCartes(byNom, reserve);
+  }catch(e){ swallow(e,'buildStockParfumsListeHtml reserveOnline'); }
   const totalDispo = Object.values(byNom).reduce((s,b)=>addQty(s,b.dispo),0);
   const enStock = [...nomsPetits, ...nomsGF].filter(n=>byNom[n] && byNom[n].dispo>0).length;
   // Génère une carte parfum (commune aux deux sections).
   const carteDe = nom => {
     const b = byNom[nom]; const dispo = b?b.dispo:0; const compo = b?b.compo:0; const col = flavorColor(nom);
     const degust = b?(b.degust||0):0;
-    const vide = dispo<=0 && compo<=0 && degust<=0;   // grisé seulement si RIEN (fini, composant, dégust)
+    const resaVide = b?(b.reserveOnline||0):0;   // [v1402] réservé en ligne = pas « vide »
+    const vide = dispo<=0 && compo<=0 && degust<=0 && resaVide<=0;   // grisé seulement si RIEN (fini, composant, dégust, réserve)
     const aContenu = dispo>0 || compo>0 || degust>0;
     const clic = aContenu ? ` clickable" onclick="stockParfumDetail(${JSON.stringify(nom).replace(/"/g,'&quot;')})" title="Voir les batchs, composants et emplacements` : '';
     const coques = b?b.coques:0; const ganache = b?b.ganache:0;
-    const aContenuTous = dispo>0 || coques>0 || ganache>0 || degust>0;
+    const resa = b?(b.reserveOnline||0):0;   // [v1402] part mise de côté pour la vente en ligne
+    const resaTag = resa>0 ? ` <span style="color:#9a8a82;font-size:.72rem">|</span> <span style="color:#7a6a62;font-size:.72rem" title="Mis de côté pour la vente en ligne">🛒 ${qty(resa)} en ligne</span>` : '';
+    const aContenuTous = dispo>0 || coques>0 || ganache>0 || degust>0 || resa>0;
     // Dès que le parfum a quelque chose, on affiche toujours « gan X - coque Y » (même à 0),
     // et « dég X » seulement s'il y a des dégustations.
     const compoTag = aContenuTous
@@ -25357,7 +25385,7 @@ async function buildStockParfumsListeHtml(){
     return `<div class="flavor-stock${vide?' fs-empty':clic}">
       <span class="fs-pastille" style="background:${col}"></span>
       <span class="fs-nom">${esc(nom)}</span>
-      <span class="fs-qte">${dispo>0?`<b>${qty(dispo)}</b>`:(aContenuTous?'<b>0</b>':'<span class="fs-zero">0</span>')}${compoTag}${aContenuTous?' <span style="color:#9a8a82">›</span>':''}</span>
+      <span class="fs-qte">${dispo>0?`<b>${qty(dispo)}</b>`:(aContenuTous?'<b>0</b>':'<span class="fs-zero">0</span>')}${resaTag}${compoTag}${aContenuTous?' <span style="color:#9a8a82">›</span>':''}</span>
     </div>`;
   };
   const cardsPetits = nomsPetits.map(carteDe).join('');

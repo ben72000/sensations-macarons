@@ -120,7 +120,8 @@ const SUITES = [
   'v1398-synchro-sas.test.js',             // v1398 · bouton de synchro sas côté ERP (flux C) : applique le journal, curseur idempotent, panne réseau sans casse
   'v1399-fiche-produit.test.js',           // v1399 · fiches produit conformes : ingrédients par poids + allergènes fiables en gras
   'v1400-prix-unitaire-precision.test.js', // v1400 · prix unitaire de lot en pleine précision + euroPrec
-  'v1401-normalisation-ingredients.test.js' // v1401 · fiches produit : ingrédients dédupliqués + simplifiés (sucre unifié, lait entier→lait…), gélatine de poisson exceptée
+  'v1401-normalisation-ingredients.test.js', // v1401 · fiches produit : ingrédients dédupliqués + simplifiés, gélatine de poisson exceptée
+  'v1402-stock-parfum-reserve.test.js'     // v1402 · la liste Stock par parfum soustrait la réserve online (fin de la logique parallèle qui ignorait la réserve)
 ];
 
 let allOk = true;
