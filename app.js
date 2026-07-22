@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1392';
+const APP_VERSION = 'v1394';
 const APP_MAJ = 'CHANTIER A — L’APP NE PEUT PLUS ÉCHOUER EN SILENCE. Le constat de l’audit était dur : 347 endroits du code attrapaient une erreur et l’enregistraient fidèlement… dans un carnet que TU NE POUVAIS PAS OUVRIR. Il fallait brancher l’iPhone sur un Mac. Autant dire jamais. ET LE CARNET ÉTAIT EFFACÉ À CHAQUE RECHARGEMENT. C’est le mécanisme EXACT qui a caché la panne Dexie pendant un mois : chaque écriture kv échouait, la validation ne démarrait jamais, et l’écran affichait « 0 refus, 0 suspects » — ce qui RESSEMBLAIT à une bonne nouvelle alors que ça voulait dire « le contrôle n’a jamais démarré ». CE QUI CHANGE. 1) UN ÉCRAN « Santé de l’app » (Sauvegarde & sécurité) : tu lis enfin ce qui a cassé, depuis ton téléphone, sans Mac. 2) LES INCIDENTS VIVENT EN BASE (nouvelle table errLog) : ils survivent à un rechargement, donc tu peux constater qu’une panne DURE — c’est précisément ce que l’ancien carnet en mémoire rendait impossible. 3) UN FILET GLOBAL : une erreur hors try/catch te donnait un écran figé sans trace ; elle est maintenant enregistrée et annoncée par une bannière discrète. 4) UNE PASTILLE SUR L’ACCUEIL quand des incidents IMPORTANTS s’accumulent. LE TRI QUE J’AI FIGÉ, et qui est le cœur du travail : un échec d’AFFICHAGE et un échec d’ÉCRITURE EN BASE ne se valent pas. Base, sauvegarde, import, validation, compta → IMPORTANT, ça parle. Rendu, affichage → mineur, ça s’enregistre sans crier. Confondre les deux, c’est noyer le signal sous le bruit, et une alerte qui crie tout le temps est une alerte qu’on ne regarde plus. CE QUE JE N’AI PAS FAIT : deviner la cause d’une erreur, ni prétendre la réparer. L’écran montre ce qui s’est réellement passé. Une explication inventée serait pire qu’un silence. ET UNE MISE EN GARDE QUE JE TE DOIS : un écran Santé VIDE n’est PAS une preuve que tout va bien — c’est une absence d’incident enregistré, ce qui n’est pas la même chose. LA RÈGLE FIGÉE : une protection qu’on ne peut pas VOIR marcher doit être considérée comme ABSENTE jusqu’à preuve du contraire. Reste à faire : chantier B (valider le contenu à l’import), C (sortir les sauvegardes de la boîte qu’elles protègent), D (durcir import et QR). Suite : 88 → 89 suites, 1437 → 1475 assertions vertes.';
 
 // ============================================================
@@ -10328,6 +10328,7 @@ async function docConvertToOrder(id){
   syncPaymentFields(o);
   const oid=await db.orders.add(withSync(o,'app'));
   await db.documents.update(id, {statut:'accepte', orderId:oid});
+  await syncOrderEvent(oid);   // [v1394] commande convertie depuis un devis → toujours au calendrier
   markUnsaved();
   closeModal(); toast('Devis converti en commande ✓');
   if(view==='documents') renderDocuments();
@@ -19368,7 +19369,7 @@ async function cmdForm(id, opts){
 
    <div class="field" style="margin-top:14px"><label>Notes</label><textarea id="f_notes" rows="2" placeholder="Allergies, livraison, demande spéciale…">${esc(o.notes||'')}</textarea></div>
 
-   <label style="font-size:.78rem;color:#7a6a62;display:flex;gap:7px;align-items:center"><input type="checkbox" id="f_cal" style="width:auto" ${(!id || ((o.dateEvenement||o.date||'') > today())) ? 'checked' : ''}> Ajouter au calendrier <span style="color:#9a8a82;font-weight:400">${((o.dateEvenement||o.date||'') > today()) ? '— commande à venir, notée par défaut' : ''}</span></label>
+   <p class="note" style="font-size:.78rem;color:#7a6a62;display:flex;gap:6px;align-items:center;margin-top:4px">📅 <span>Cette commande est ajoutée automatiquement au calendrier${(o.dateEvenement||o.date) ? ` le ${fmtDate(o.dateEvenement||o.date)}` : ''}.</span></p>
    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveCmd(${id||0})">Enregistrer</button></div>`);
   // initialise le registre de paiements en mémoire (copie de travail)
   // Initialise le registre d'édition. Pour une ancienne commande « Payé » sans registre,
@@ -21281,6 +21282,31 @@ function cmdApplyDeliveryFee(montant){
   toast(`Livraison ${euro(mt)} ajoutée en prestation`);
 }
 
+// [v1394] SOURCE UNIQUE de l'événement-calendrier d'une commande. TOUT chemin qui crée ou
+// modifie une commande (saveCmd, docConvertToOrder…) appelle CECI — jamais sa propre logique.
+// Ainsi une commande apparaît TOUJOURS au calendrier, sans case ni condition, et il est impossible
+// qu'un chemin oublie de la noter. Recrée l'événement (supprime l'ancien d'abord) pour rester
+// idempotent : ré-enregistrer une commande ne crée pas de doublon.
+async function syncOrderEvent(oid){
+  const o = await db.orders.get(oid).catch(()=>null);
+  if(!o) return;
+  await db.events.where('refId').equals(oid).delete().catch(()=>{});
+  const cl = o.clientId ? await db.clients.get(o.clientId).catch(()=>null) : null;
+  // Nombre de produits : les lignes vivent dans o.lignes (modèle réel). Repli sur orderItems
+  // au cas où un chemin l'utiliserait, mais o.lignes est la source de vérité.
+  let nbLignes = Array.isArray(o.lignes) ? o.lignes.length : 0;
+  if(!nbLignes){
+    try{ nbLignes = (await db.orderItems.where('orderId').equals(oid).toArray()).length; }catch(e){ swallow(e,'syncOrderEvent'); }
+  }
+  const dateEv = o.dateEvenement || o.date;
+  if(!dateEv) return;   // sans date, rien à poser au calendrier (cas limite)
+  await db.events.add({
+    date: dateEv,
+    titre: 'Cmd ' + (cl?cl.nom:'') + ` (${nbLignes} produit${nbLignes>1?'s':''})`,
+    type: 'cmd', refId: oid
+  }).catch(()=>{});
+}
+
 async function saveCmd(id){
   // validations par ligne
   if(!cmdLines.length){ toast('Ajoute au moins un produit'); return; }
@@ -21455,12 +21481,12 @@ async function saveCmd(id){
   }
   markUnsaved();
   // calendrier : recréer l'événement lié
-  await db.events.where('refId').equals(oid).delete().catch(()=>{});
-  const cb=document.getElementById('f_cal');
-  if(cb&&cb.checked){
-    const cl = o.clientId ? await db.clients.get(o.clientId) : null;
-    await db.events.add({date:(o.dateEvenement||o.date),titre:'Cmd '+(cl?cl.nom:'')+` (${lignes.length} produit${lignes.length>1?'s':''})`,type:'cmd',refId:oid});
-  }
+  // [v1394] CALENDRIER AUTOMATIQUE via la source unique. Chaque commande apparaît TOUJOURS au
+  // calendrier, sans condition ni case. L'ancien code dépendait de getElementById('f_cal').checked
+  // — donc de la présence de la case dans le DOM au moment de la sauvegarde ; par un chemin sans
+  // formulaire affiché, cb était null → aucun événement, même case « cochée ». C'était la cause des
+  // commandes cochées mais absentes. syncOrderEvent recrée l'événement systématiquement.
+  await syncOrderEvent(oid);
   // [v1382] La commande vient d'être écrite : si Ben a chiffré ou corrigé le trajet, le carnet
   // doit l'apprendre TOUT DE SUITE. Sans ça, il proposerait encore l'ancienne médiane.
   if(typeof _trajetInvalideCache==='function') _trajetInvalideCache();
@@ -26575,6 +26601,116 @@ function flavorRecommendations(analysis, data){
       txt:`Écart de CA favorable : encaissé ${euro(totals.ca)} vs attendu ${euro(theo)} (+${euro(ec)}). Ventes au-dessus du tarif moyen (formats plus chers, ventes à l'unité) — ou un prix de grille à réajuster.`});
   }
   return recs;
+}
+
+// ============================================================================
+// CONSEIL MARGE PAR PARFUM — couche d'INTERPRÉTATION (ne recalcule rien).
+// ----------------------------------------------------------------------------
+// Motivation (Ben, prompt « Decision Council ») : recommander une action tarifaire
+// UNIQUEMENT quand les données la justifient, et le dire franchement sinon.
+// Contrainte gelée du projet : cette couche NE CALCULE PAS les chiffres — elle lit
+// ceux d'analyzeFlavorProfitability (tauxMarge, margeUnit, coutRevientUnit, prix
+// moyen, pièces vendues) et se contente de les INTERPRÉTER + graduer la confiance.
+//
+// Pourquoi une jauge de confiance : les recommandations existantes se déclenchent
+// sur des seuils SANS regarder la taille d'échantillon — un parfum vendu 3 fois
+// reçoit le même « montez le prix » qu'un parfum vendu 300 fois. C'est exactement
+// l'objection du « procureur » du prompt (« l'échantillon est trop mince »). Ici
+// on refuse de recommander FERMEMENT sous un seuil de pièces, et on l'affiche.
+//
+// Aucune donnée de PRIX HISTORIQUE n'existe (choix de Ben) → l'élasticité est
+// INCALCULABLE. Ce conseil ne prétend donc JAMAIS connaître l'effet d'une hausse
+// sur le volume : il raisonne sur la marge unitaire (fait mesuré), pas sur la
+// réaction de la demande (inconnue). C'est dit explicitement dans « ce qu'on ignore ».
+// ============================================================================
+const CONSEIL_MARGE_CIBLE = 40;      // % de marge visé (aligné sur le prix-cible déjà utilisé dans flavorRecommendations)
+const CONSEIL_SEUIL_SOUS_MARGE = 25; // % en-dessous duquel un parfum est « sous-margé » (= bande flavorScale « Faible »/pire)
+const CONSEIL_PIECES_FERME = 50;     // pièces vendues au-delà desquelles une reco peut être FERME
+const CONSEIL_PIECES_MINCE = 20;     // en-dessous : échantillon mince, jamais de reco ferme
+
+// Confiance fondée sur la SEULE variable dont on dispose : le nb de pièces vendues.
+function _conseilConfiance(pieces){
+  if(pieces>=CONSEIL_PIECES_FERME) return {niveau:'solide', rang:3, ferme:true,  txt:`échantillon solide (${qty(pieces)} pièces vendues)`};
+  if(pieces>=CONSEIL_PIECES_MINCE) return {niveau:'correcte', rang:2, ferme:false, txt:`échantillon correct (${qty(pieces)} pièces) — à confirmer`};
+  if(pieces>0)                     return {niveau:'mince', rang:1, ferme:false, txt:`échantillon MINCE (${qty(pieces)} pièces) — trop peu pour trancher`};
+  return {niveau:'aucune', rang:0, ferme:false, txt:'aucune vente enregistrée'};
+}
+
+// Le PROCUREUR : pour une conclusion « ce parfum est sous-margé », liste les raisons
+// qui pourraient l'invalider. Chaque objection est fondée sur une propriété RÉELLE
+// de la ligne (pas un doute générique).
+function _conseilProcureur(r, data){
+  const obj=[];
+  if(r.piecesVendues>0 && r.piecesVendues<CONSEIL_PIECES_FERME)
+    obj.push(`échantillon de ${qty(r.piecesVendues)} pièce(s) : la marge observée peut ne pas être représentative.`);
+  if(r.piecesDon>0)
+    obj.push(`${qty(r.piecesDon)} pièce(s) offerte(s) : elles ne portent pas de prix et ne comptent pas dans la marge, mais gonflent le volume perçu.`);
+  if(r.ecartTheo!=null && Math.abs(r.ecartTheo)>0.01 && Math.abs(r.ecartTheo) >= 0.10*Math.max(1,r.ca))
+    obj.push(`écart prix encaissé vs attendu de ${euro(r.ecartTheo)} : remises, formats ou ventes à l'unité déforment le prix moyen — la marge unitaire n'est pas un tarif de grille.`);
+  // Coût basé sur d'anciens lots : si la matière a bougé, le coût de revient peut être périmé.
+  try{
+    const hikes = (typeof flavorCostHikeAlerts==='function') ? flavorCostHikeAlerts(data, {rows:[r]}) : [];
+    if(hikes && hikes.length) obj.push(`le coût de revient s'appuie sur des lots dont le prix matière a bougé — coût unitaire (${euro(r.cost.coutRevientUnit)}) possiblement périmé.`);
+  }catch(e){ /* pas d'alerte de coût → pas d'objection */ }
+  if(r.tauxMarge!=null && r.tauxMarge>=CONSEIL_SEUIL_SOUS_MARGE-3 && r.tauxMarge<CONSEIL_SEUIL_SOUS_MARGE)
+    obj.push(`marge (${r.tauxMarge}%) juste sous le seuil : cas limite, pas une alerte franche.`);
+  return obj;
+}
+
+// Prix-cible pour atteindre CONSEIL_MARGE_CIBLE, à coût constant. C'est une
+// arithmétique de marge (fait), PAS une prédiction de volume (qu'on ne sait pas faire).
+function _conseilPrixCible(coutUnit){
+  return (coutUnit>0) ? money2(coutUnit/(1-CONSEIL_MARGE_CIBLE/100)) : null;
+}
+
+// Moteur principal. Renvoie { assez, sousMarges:[...], synthese, ignore:[...] }.
+function conseilMargeParfum(analysis, settings, data){
+  const rows = (analysis && analysis.rows) || [];
+  const dataForProc = data || {recipes:[],recipeItems:[],lots:[],mats:[]};
+  const sold = rows.filter(r=>r.piecesVendues>0);
+  const ignore = [
+    "L'effet d'une hausse de prix sur le VOLUME vendu (élasticité) : aucun historique de prix daté n'est enregistré, ce chiffre est incalculable ici.",
+    "La marge se lit sur les ventes passées et le coût des lots actuels ; elle ne prédit pas la réaction des clients à un changement de tarif."
+  ];
+  if(!sold.length){
+    return { assez:false, sousMarges:[], ignore,
+      synthese:"Pas encore de ventes par parfum : aucun conseil de marge possible. Enregistrez des commandes et clôturez des marchés pour activer l'analyse." };
+  }
+  // Parfums sous le seuil de marge, du pire au moins pire.
+  const sousMarges = sold
+    .filter(r=>r.tauxMarge!=null && r.tauxMarge<CONSEIL_SEUIL_SOUS_MARGE)
+    .sort((a,b)=>a.tauxMarge-b.tauxMarge)
+    .map(r=>{
+      const conf = _conseilConfiance(r.piecesVendues);
+      const prixCible = _conseilPrixCible(r.cost ? r.cost.coutRevientUnit : 0);
+      const hausse = (prixCible!=null && r.prixVenteMoyen!=null) ? money2(prixCible - r.prixVenteMoyen) : null;
+      const procureur = _conseilProcureur(r, dataForProc);
+      // Reco FERME seulement si l'échantillon le permet ET qu'aucune objection majeure ne demeure.
+      const ferme = conf.ferme && r.tauxMarge>=0;   // à perte = cas à part (déjà signalé ailleurs), pas une « hausse » simple
+      let action;
+      if(r.tauxMarge<0){
+        action = `Vendu À PERTE (prix moyen ${r.prixVenteMoyen!=null?euro(r.prixVenteMoyen):'?'} < coût ${euro(r.cost.coutRevientUnit)}). Corriger en priorité : monter le prix ou retirer de l'offre.`;
+      } else if(ferme){
+        action = `Recommandation FERME : viser ${prixCible!=null?euro(prixCible):'—'} par pièce (${hausse!=null?`+${euro(hausse)}`:'—'}) pour ${CONSEIL_MARGE_CIBLE}% de marge, OU réduire le coût de revient (${euro(r.cost.coutRevientUnit)}). ${conf.txt}.`;
+      } else {
+        action = `Piste (NON ferme) : ${prixCible!=null?`~${euro(prixCible)} par pièce viserait ${CONSEIL_MARGE_CIBLE}%`:'revoir prix ou coût'}, mais ${conf.txt} — à confirmer avant d'agir.`;
+      }
+      return { recipeId:r.recipeId, nom:r.nom, tauxMarge:r.tauxMarge, prixVenteMoyen:r.prixVenteMoyen,
+        coutUnit:r.cost?r.cost.coutRevientUnit:null, prixCible, hausse, pieces:r.piecesVendues,
+        confiance:conf, ferme, action, procureur };
+    });
+
+  const nbFerme = sousMarges.filter(x=>x.ferme || x.tauxMarge<0).length;
+  const nbSousMarge = sousMarges.length;
+  let synthese;
+  if(!nbSousMarge){
+    synthese = `Aucun parfum sous ${CONSEIL_SEUIL_SOUS_MARGE}% de marge : la grille tient. Rien à corriger côté marge — surveillez surtout les hausses de coût matière.`;
+  } else if(nbFerme){
+    synthese = `${nbSousMarge} parfum(s) sous ${CONSEIL_SEUIL_SOUS_MARGE}% de marge, dont ${nbFerme} avec un échantillon suffisant pour agir. Les autres sont signalés mais demandent plus de ventes avant de trancher.`;
+  } else {
+    synthese = `${nbSousMarge} parfum(s) sous ${CONSEIL_SEUIL_SOUS_MARGE}% de marge, mais AUCUN n'a un échantillon assez solide pour une décision ferme (<${CONSEIL_PIECES_FERME} pièces vendues). Je ne recommande pas de hausse aujourd'hui — je signale les cas à surveiller.`;
+  }
+  return { assez:nbFerme>0, sousMarges, ignore, synthese };
 }
 
 // ALERTES HAUSSE DE COÛT : pour chaque matière dont le prix a augmenté,
@@ -33637,6 +33773,25 @@ async function renderParfums(){
   const recBlock=`<div class="panel"><h2>Recommandations intelligentes</h2>
      ${recs.map(r=>`<div class="sum-box" style="align-items:flex-start"><span style="font-size:1.1rem">${r.icon}</span><b style="font-weight:500;color:${r.col};text-align:left;flex:1;margin-left:8px">${r.txt}</b></div>`).join('')}</div>`;
 
+  // CONSEIL MARGE PAR PARFUM — panneau honnête (confiance + procureur). Interprète A, ne recalcule rien.
+  const cm = conseilMargeParfum(A, s, data);
+  const confDot = c => c.niveau==='solide'?'🟢':(c.niveau==='correcte'?'🟠':(c.niveau==='mince'?'🔴':'⚪'));
+  const conseilBlock=`<div class="panel" style="border-left:4px solid #7b1e2b">
+     <h2 style="color:#7b1e2b">⚖️ Conseil marge — parfums sous-margés</h2>
+     <div class="banner" style="background:#faf4f4;border-color:#e0c4c4;margin:2px 0 10px"><div>${esc(cm.synthese)}</div></div>
+     ${cm.sousMarges.map(x=>`<div class="sum-box" style="flex-direction:column;align-items:stretch;gap:6px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <b style="flex:1;color:${x.tauxMarge<0?'#b3261e':(x.ferme?'#7b1e2b':'#d98324')}">${confDot(x.confiance)} ${esc(x.nom)} — marge ${x.tauxMarge}%${x.ferme?' · <span style="color:#2e7d32">action fondée</span>':(x.tauxMarge<0?'':' · <span style="color:#9a8a82">à confirmer</span>')}</b>
+        </div>
+        <div style="font-size:.86rem;color:#4a3f3a;text-align:left">${esc(x.action)}</div>
+        ${x.procureur.length?`<details style="font-size:.8rem;color:#7a6a62"><summary style="cursor:pointer;color:#a8841f">🔍 Le procureur (${x.procureur.length} objection${x.procureur.length>1?'s':''})</summary><ul style="margin:4px 0 0 16px;padding:0">${x.procureur.map(o=>`<li style="margin:2px 0">${esc(o)}</li>`).join('')}</ul></details>`:''}
+      </div>`).join('')}
+     <div style="margin-top:10px;padding:8px 10px;background:#f6f2ea;border-radius:8px;font-size:.82rem;color:#6a5a52">
+       <b>Ce que ce conseil ignore volontairement :</b>
+       <ul style="margin:4px 0 0 16px;padding:0">${cm.ignore.map(i=>`<li style="margin:2px 0">${esc(i)}</li>`).join('')}</ul>
+     </div>
+   </div>`;
+
   // évolution de la rentabilité dans le temps (marge brute mensuelle, par CA - coût des ventes)
   const evolBlock = await buildFlavorEvolutionBlock(data, A);
 
@@ -33663,6 +33818,7 @@ async function renderParfums(){
        ${sortBtn('marge','Marge')} ${sortBtn('ca','CA')} ${sortBtn('pieces','Volume')} ${sortBtn('taux','Taux')} ${sortBtn('stock','Stock')} ${sortBtn('nom','A→Z')}</div>
      ${mainTable}</div>
    ${unmatchedBlock}
+   ${conseilBlock}
    ${recBlock}
    ${paretoBlock}
    ${rankBlock}

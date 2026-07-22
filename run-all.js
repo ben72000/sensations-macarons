@@ -107,7 +107,14 @@ const SUITES = [
   'v1384-import-validation.test.js',  // v1384 · chantier B : le contenu d'une sauvegarde est validé AVANT écriture (réparation du non-ambigu, signalement du reste)
   'v1385-sortie-sauvegardes.test.js',  // v1385 · chantier C : une sortie n'est acquise que CONSTATÉE (tentée ≠ confirmée, instantanés nommés comme non protecteurs)
   'v1386-frontiere-qr.test.js',       // v1386 · chantier D : tout code scanné passe une porte qui peut dire NON, et le refus se VOIT
-  'v1388-transaction-finished.test.js' // v1388 · _activeTx mort (gel iOS) → le moteur se rétablit seul, plus de « The transaction finished » sur tous les écrans
+  'v1387-affectation-inclusion.test.js', // v1387 · le seuil d'inclusion, oublié sur les 2 portes d'affectation du chantier D, est désormais centralisé et inévitable
+  'v1388-assemblage-dlc-ganache.test.js', // v1388 · la DLC de l'assemblage suit la GARNITURE (jamais rognée par l'âge des coques) + fin de la durée négative (assemblage instantané)
+  'v1389-moteur-rangement-unique.test.js', // v1389 · moteur de rangement unique (un seul chemin de préparation des boîtes)
+  'v1389-repli-boites.test.js',            // v1389 · repli Voie 2 des boîtes
+  'v1391-portee-transaction.test.js',      // v1391 · la transaction du moteur déclare TOUTES les tables touchées transitivement (productions + recipes)
+  'v1392-assemblage-coques-monocouleur.test.js', // v1392 · résumé d'assemblage mono-couleur : « N coques <couleur>s » (total réel), pas « de chaque couleur »
+  'v1393-conseil-marge-parfum.test.js',    // v1393 · conseil marge par parfum : reco ferme seulement si l'échantillon le permet + procureur + élasticité déclarée incalculable
+  'v1394-calendrier-commandes.test.js'     // v1394 · commande TOUJOURS au calendrier via syncOrderEvent (plus de case f_cal) ; historique exclu
 ];
 
 let allOk = true;
