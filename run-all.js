@@ -122,7 +122,8 @@ const SUITES = [
   'v1400-prix-unitaire-precision.test.js', // v1400 · prix unitaire de lot en pleine précision + euroPrec
   'v1401-normalisation-ingredients.test.js', // v1401 · fiches produit : ingrédients dédupliqués + simplifiés, gélatine de poisson exceptée
   'v1402-stock-parfum-reserve.test.js',    // v1402 · la liste Stock par parfum soustrait la réserve online (fin de la logique parallèle qui ignorait la réserve)
-  'v1403-fusion-recettes.test.js'          // v1403 · fusion de recettes doublons (réaffecte les productions, supprime le doublon, atomique)
+  'v1403-fusion-recettes.test.js',         // v1403 · fusion de recettes doublons (réaffecte les productions, supprime le doublon, atomique)
+  'v1404-diagnostic-noms-stock.test.js'    // v1404 · diagnostic : d'où vient chaque nom du stock (recette / garniture / libre), détecte les noms proches
 ];
 
 let allOk = true;

@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1403';
+const APP_VERSION = 'v1404';
 const APP_MAJ = 'CHANTIER A — L’APP NE PEUT PLUS ÉCHOUER EN SILENCE. Le constat de l’audit était dur : 347 endroits du code attrapaient une erreur et l’enregistraient fidèlement… dans un carnet que TU NE POUVAIS PAS OUVRIR. Il fallait brancher l’iPhone sur un Mac. Autant dire jamais. ET LE CARNET ÉTAIT EFFACÉ À CHAQUE RECHARGEMENT. C’est le mécanisme EXACT qui a caché la panne Dexie pendant un mois : chaque écriture kv échouait, la validation ne démarrait jamais, et l’écran affichait « 0 refus, 0 suspects » — ce qui RESSEMBLAIT à une bonne nouvelle alors que ça voulait dire « le contrôle n’a jamais démarré ». CE QUI CHANGE. 1) UN ÉCRAN « Santé de l’app » (Sauvegarde & sécurité) : tu lis enfin ce qui a cassé, depuis ton téléphone, sans Mac. 2) LES INCIDENTS VIVENT EN BASE (nouvelle table errLog) : ils survivent à un rechargement, donc tu peux constater qu’une panne DURE — c’est précisément ce que l’ancien carnet en mémoire rendait impossible. 3) UN FILET GLOBAL : une erreur hors try/catch te donnait un écran figé sans trace ; elle est maintenant enregistrée et annoncée par une bannière discrète. 4) UNE PASTILLE SUR L’ACCUEIL quand des incidents IMPORTANTS s’accumulent. LE TRI QUE J’AI FIGÉ, et qui est le cœur du travail : un échec d’AFFICHAGE et un échec d’ÉCRITURE EN BASE ne se valent pas. Base, sauvegarde, import, validation, compta → IMPORTANT, ça parle. Rendu, affichage → mineur, ça s’enregistre sans crier. Confondre les deux, c’est noyer le signal sous le bruit, et une alerte qui crie tout le temps est une alerte qu’on ne regarde plus. CE QUE JE N’AI PAS FAIT : deviner la cause d’une erreur, ni prétendre la réparer. L’écran montre ce qui s’est réellement passé. Une explication inventée serait pire qu’un silence. ET UNE MISE EN GARDE QUE JE TE DOIS : un écran Santé VIDE n’est PAS une preuve que tout va bien — c’est une absence d’incident enregistré, ce qui n’est pas la même chose. LA RÈGLE FIGÉE : une protection qu’on ne peut pas VOIR marcher doit être considérée comme ABSENTE jusqu’à preuve du contraire. Reste à faire : chantier B (valider le contenu à l’import), C (sortir les sauvegardes de la boîte qu’elles protègent), D (durcir import et QR). Suite : 88 → 89 suites, 1437 → 1475 assertions vertes.';
 
 // ============================================================
@@ -25374,6 +25374,75 @@ function _froidCloseDessus(){ const h=document.getElementById('froid-sheet'); if
 // à la vente en ligne sortent du stock direct affiché (mise de côté, jamais de double vente). Ne
 // réserve que ce qui existe (min avec le dispo) ; renseigne b.reserveOnline (part mise de côté) et
 // b.dispoTotalAvant (avant réservation, pour info). PURE : modifie byNom en place, pas d'I/O.
+// [v1404] DIAGNOSTIC DES NOMS DE STOCK — pour comprendre pourquoi deux libellés proches
+// (« Praliné noisette » / « Praliné noisettes ») apparaissent séparément. Pour chaque production
+// EN STOCK, on relève : le nom affiché, sa PROVENANCE (recette / garniture catalogue / libre) et
+// son TYPE (fini / coques / ganache / dégustation). On regroupe par nom pour voir, nom par nom,
+// combien de productions le portent et d'où elles viennent. PURE : ne lit que ses arguments.
+//   prods   : productions (toutes, filtrées qteRestante>0 par l'appelant)
+//   recipes : recettes (pour résoudre les noms)
+function _diagnosticNomsStock(prods, recipes){
+  const parNom = {};
+  (prods||[]).forEach(p=>{
+    const nom = prodNomComplet(p, recipes);
+    // provenance
+    let provenance;
+    if(p.composantCatalogue && p.garnitureNom) provenance = 'garniture catalogue';
+    else if(p.libre) provenance = 'produit libre';
+    else {
+      const r = (recipes||[]).find(x=> +x.id === +p.recipeId);
+      provenance = r ? 'recette' : 'recette supprimée';
+    }
+    const type = prodComposant(p); // complet / coques / ganache / degustation
+    (parNom[nom] ||= { nom, total:0, count:0, provenances:{}, types:{} });
+    parNom[nom].total = round3(parNom[nom].total + (+p.qteRestante||0));
+    parNom[nom].count++;
+    parNom[nom].provenances[provenance] = (parNom[nom].provenances[provenance]||0) + 1;
+    parNom[nom].types[type] = (parNom[nom].types[type]||0) + 1;
+  });
+  return parNom;
+}
+
+// [v1404] Affiche le diagnostic dans un modal. Met en évidence les noms qui se ressemblent
+// (candidats doublons : mêmes lettres à la casse/accents/pluriel près).
+async function ouvrirDiagnosticNomsStock(){
+  const [prodsAll, recipes] = await Promise.all([
+    db.productions.toArray().catch(()=>[]),
+    db.recipes.toArray().catch(()=>[]),
+  ]);
+  const prods = prodsAll.filter(p=>round3(+p.qteRestante||0)>0);
+  const parNom = _diagnosticNomsStock(prods, recipes);
+  const noms = Object.keys(parNom).sort((a,b)=>a.localeCompare(b));
+
+  // Détecte les groupes de noms « proches » (une fois normalisés : minuscule, sans accents,
+  // sans s final, espaces réduits) → ce sont les candidats à l'origine des lignes en double.
+  const cleProche = s => String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .replace(/s\b/g,'').replace(/\s+/g,' ').trim();
+  const groupes = {};
+  noms.forEach(n=>{ const k=cleProche(n); (groupes[k] ||= []).push(n); });
+  const proches = Object.values(groupes).filter(g=>g.length>1);
+
+  const fmt = obj => Object.entries(obj).map(([k,v])=>`${k}×${v}`).join(', ');
+  const lignes = noms.map(n=>{
+    const d = parNom[n];
+    const estProche = proches.some(g=>g.includes(n));
+    return `<div style="padding:8px 0;border-bottom:1px solid #eee${estProche?';background:#fdf3e8':''}">
+      <b>${esc(n)}</b> ${estProche?'<span style="color:#b3261e;font-size:.7rem">⚠ nom proche d\'un autre</span>':''}<br>
+      <span style="font-size:.78rem;color:#7a6a62">${qty(d.total)} pièce(s) · ${d.count} production(s) · provenance : ${esc(fmt(d.provenances))} · type : ${esc(fmt(d.types))}</span>
+    </div>`;
+  }).join('');
+
+  const alerte = proches.length
+    ? `<div class="banner" style="background:#fdf3e8;border-color:#e5a35a"><div>⚠ <b>${proches.length} groupe(s) de noms proches</b> détecté(s) — c'est probablement la cause de tes lignes en double. Regarde leur <b>provenance</b> ci-dessous : si l'une vient d'une « garniture catalogue » et l'autre d'une « recette », ce ne sont pas des doublons de recette mais deux objets différents portant presque le même nom.</div></div>`
+    : `<div class="banner" style="background:#eef6ee;border-color:#7bb07b"><div>✓ Aucun nom proche en double détecté dans le stock actuel.</div></div>`;
+
+  openModal(`<h3>🔎 D'où viennent mes noms de stock ?</h3>
+    <p class="note">Pour chaque parfum affiché dans « Stock par parfum », voici combien de productions le portent et d'où elles viennent. Les lignes surlignées ont un nom très proche d'un autre.</p>
+    ${alerte}
+    <div style="max-height:50vh;overflow:auto;margin-top:8px">${lignes||'<p class="note">Aucune production en stock.</p>'}</div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+}
+
 function _appliquerReserveOnlineAuxCartes(byNom, reserve){
   reserve = reserve || {};
   const key = (typeof stockMoveKey==='function') ? stockMoveKey : (n=>String(n||'').toLowerCase().trim());
@@ -25482,7 +25551,7 @@ async function buildStockParfumsListeHtml(){
   const _swBtn = (v,l)=>`<button class="${_vue===v?'on':''}" onclick="stockSetVue('${v}')">${l}</button>`;
   const listeHtml = `
    <div class="panel">
-     <p class="note" style="margin-bottom:12px">Vue d'ensemble des macarons finis <b>vendables</b> disponibles, par parfum. Les pastilles reprennent les couleurs de la boutique. Les parfums à 0 sont grisés.</p>
+     <p class="note" style="margin-bottom:12px">Vue d'ensemble des macarons finis <b>vendables</b> disponibles, par parfum. Les pastilles reprennent les couleurs de la boutique. Les parfums à 0 sont grisés. <button class="btn ghost sm" onclick="ouvrirDiagnosticNomsStock()" style="margin-left:4px">🔎 D'où viennent mes noms ?</button></p>
      <div class="flavor-stock-grid">${cardsPetits}</div>
      ${nomsGF.length?`
      <h2 style="margin:18px 0 4px;font-size:1.02rem;color:var(--bordeaux)">🍪 Grand format</h2>
