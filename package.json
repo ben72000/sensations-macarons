@@ -1,0 +1,13 @@
+{
+  "name": "sas-shopify-sensations",
+  "version": "1.0.0",
+  "description": "Sas miroir Shopify <-> ERP Sensations Macarons — tient l'enveloppe de reserve et journalise les ventes. L'ERP reste seul maitre.",
+  "main": "src/serveur.js",
+  "scripts": {
+    "start": "node src/serveur.js",
+    "test": "node tests/coeur.test.js && node tests/serveur.test.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

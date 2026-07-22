@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1395';
+const APP_VERSION = 'v1399';
 const APP_MAJ = 'CHANTIER A — L’APP NE PEUT PLUS ÉCHOUER EN SILENCE. Le constat de l’audit était dur : 347 endroits du code attrapaient une erreur et l’enregistraient fidèlement… dans un carnet que TU NE POUVAIS PAS OUVRIR. Il fallait brancher l’iPhone sur un Mac. Autant dire jamais. ET LE CARNET ÉTAIT EFFACÉ À CHAQUE RECHARGEMENT. C’est le mécanisme EXACT qui a caché la panne Dexie pendant un mois : chaque écriture kv échouait, la validation ne démarrait jamais, et l’écran affichait « 0 refus, 0 suspects » — ce qui RESSEMBLAIT à une bonne nouvelle alors que ça voulait dire « le contrôle n’a jamais démarré ». CE QUI CHANGE. 1) UN ÉCRAN « Santé de l’app » (Sauvegarde & sécurité) : tu lis enfin ce qui a cassé, depuis ton téléphone, sans Mac. 2) LES INCIDENTS VIVENT EN BASE (nouvelle table errLog) : ils survivent à un rechargement, donc tu peux constater qu’une panne DURE — c’est précisément ce que l’ancien carnet en mémoire rendait impossible. 3) UN FILET GLOBAL : une erreur hors try/catch te donnait un écran figé sans trace ; elle est maintenant enregistrée et annoncée par une bannière discrète. 4) UNE PASTILLE SUR L’ACCUEIL quand des incidents IMPORTANTS s’accumulent. LE TRI QUE J’AI FIGÉ, et qui est le cœur du travail : un échec d’AFFICHAGE et un échec d’ÉCRITURE EN BASE ne se valent pas. Base, sauvegarde, import, validation, compta → IMPORTANT, ça parle. Rendu, affichage → mineur, ça s’enregistre sans crier. Confondre les deux, c’est noyer le signal sous le bruit, et une alerte qui crie tout le temps est une alerte qu’on ne regarde plus. CE QUE JE N’AI PAS FAIT : deviner la cause d’une erreur, ni prétendre la réparer. L’écran montre ce qui s’est réellement passé. Une explication inventée serait pire qu’un silence. ET UNE MISE EN GARDE QUE JE TE DOIS : un écran Santé VIDE n’est PAS une preuve que tout va bien — c’est une absence d’incident enregistré, ce qui n’est pas la même chose. LA RÈGLE FIGÉE : une protection qu’on ne peut pas VOIR marcher doit être considérée comme ABSENTE jusqu’à preuve du contraire. Reste à faire : chantier B (valider le contenu à l’import), C (sortir les sauvegardes de la boîte qu’elles protègent), D (durcir import et QR). Suite : 88 → 89 suites, 1437 → 1475 assertions vertes.';
 
 // ============================================================
@@ -4082,6 +4082,124 @@ function allergenesPourNom(nom){
   }
   return null;
 }
+
+// [v1399] FICHE PRODUIT CONFORME (boutique en ligne). PURE et testable : produit le TEXTE d'une
+// fiche à coller dans Shopify, à partir des données RÉELLES de l'ERP. Format choisi par Ben :
+// liste d'ingrédients (ordre de poids décroissant) PUIS bloc « Allergènes » en gras dessous (issu
+// de la base fiable par parfum — PAS de mise en gras devinée dans la liste, ce serait risqué).
+// INCO : en vente à distance, ces infos doivent être accessibles AVANT l'achat (la DLC, elle, est
+// donnée au retrait). Renvoie { nom, ingredients:[...], allergenes:[...], texteHtml, texteBrut }.
+//   recette : { produitNom, allergenes }
+//   items   : recipeItems de cette recette [{materialId, qteParBatch}]
+//   mats    : materials [{id, nom, unite}]
+//   opts    : { operateur, conservation } (identité + mention conservation, libres)
+function _ficheProduitTexte(recette, items, mats, opts){
+  opts = opts || {};
+  const nom = (recette && recette.produitNom) || '(sans nom)';
+  const matById = {}; (mats||[]).forEach(m=>{ matById[+m.id] = m; });
+  // Ingrédients ordonnés par poids décroissant (converti en grammes si dispo).
+  const toG = (typeof rdToGrams==='function') ? rdToGrams : (q)=>+q||0;
+  const ings = (items||[])
+    .map(it=>{ const m=matById[+it.materialId]; if(!m||!m.nom) return null;
+      return { nom:m.nom, g: toG(+it.qteParBatch||0, m.unite||'g') }; })
+    .filter(Boolean)
+    .sort((a,b)=> b.g - a.g);
+  const listeIngredients = ings.map(i=>i.nom);
+  // Allergènes : source fiable = la recette, repli sur le dictionnaire par nom.
+  let allergenes = Array.isArray(recette && recette.allergenes) && recette.allergenes.length
+    ? recette.allergenes.slice()
+    : (allergenesPourNom(nom) || []);
+  const conservation = opts.conservation || 'À conserver au réfrigérateur (4 °C). À consommer de préférence sous quelques jours après le retrait.';
+  const operateur = opts.operateur || '';
+
+  // Texte HTML (pour Shopify, qui accepte le HTML dans les descriptions).
+  const htmlParts = [];
+  htmlParts.push(`<p><strong>${escOrRaw(nom)}</strong></p>`);
+  if(listeIngredients.length){
+    htmlParts.push(`<p><strong>Ingrédients :</strong> ${listeIngredients.map(escOrRaw).join(', ')}.</p>`);
+  } else {
+    htmlParts.push(`<p><em>Liste d'ingrédients à compléter (aucun ingrédient détaillé dans la recette).</em></p>`);
+  }
+  if(allergenes.length){
+    htmlParts.push(`<p><strong>Allergènes : ${allergenes.map(escOrRaw).join(', ')}.</strong></p>`);
+    htmlParts.push(`<p>Fabriqué dans un atelier qui manipule également d'autres fruits à coque, œuf, lait et gluten — présence possible de traces.</p>`);
+  } else {
+    htmlParts.push(`<p><strong>Allergènes : à vérifier avant mise en ligne.</strong></p>`);
+  }
+  htmlParts.push(`<p>${escOrRaw(conservation)}</p>`);
+  if(operateur) htmlParts.push(`<p>${escOrRaw(operateur)}</p>`);
+
+  // Version texte brut (pour copier ailleurs qu'en HTML).
+  const brutParts = [];
+  brutParts.push(nom);
+  brutParts.push('Ingrédients : ' + (listeIngredients.length ? listeIngredients.join(', ') + '.' : '(à compléter)'));
+  brutParts.push('Allergènes : ' + (allergenes.length ? allergenes.join(', ') + '.' : '(à vérifier)'));
+  brutParts.push(conservation);
+  if(operateur) brutParts.push(operateur);
+
+  return {
+    nom,
+    ingredients: listeIngredients,
+    allergenes,
+    texteHtml: htmlParts.join('\n'),
+    texteBrut: brutParts.join('\n'),
+  };
+}
+// Échappement défensif : utilise esc() si dispo (contexte app), sinon renvoie brut (contexte test).
+function escOrRaw(s){ return (typeof esc==='function') ? esc(s) : String(s==null?'':s); }
+
+// [v1399] ÉCRAN « Fiches produit (boutique en ligne) » : génère, pour chaque recette, une fiche
+// conforme prête à coller dans Shopify. Part des données réelles (recettes + items + matières).
+// Chaque fiche a un bouton « Copier » (HTML prêt pour Shopify).
+async function renderFichesProduit(){
+  let recipes=[], allItems=[], mats=[];
+  try{
+    recipes = await db.recipes.toArray();
+    allItems = await db.recipeItems.toArray();
+    mats = await db.materials.toArray();
+  }catch(e){ swallow(e,'renderFichesProduit'); }
+  const s = (typeof getSettings==='function') ? getSettings() : {};
+  const operateur = (s.legal && (s.legal.raison || s.legal.nom)) ? [s.legal.raison||s.legal.nom, s.legal.adresse, s.legal.siret?('SIRET '+s.legal.siret):''].filter(Boolean).join(' · ') : 'Sensations Macarons';
+
+  const recsTriees = recipes.slice().sort((a,b)=>(a.produitNom||'').localeCompare(b.produitNom||''));
+  window._fichesCache = {};   // pour le bouton copier
+
+  const cartes = recsTriees.map((r,idx)=>{
+    const items = allItems.filter(it=>+it.recipeId===+r.id);
+    const fiche = _ficheProduitTexte(r, items, mats, { operateur });
+    window._fichesCache[idx] = fiche.texteHtml;
+    const alerte = (!fiche.ingredients.length || !fiche.allergenes.length)
+      ? `<div class="banner" style="background:#f6e3e0;border-color:var(--red);color:#7a2a20;margin-top:6px">⚠ Fiche incomplète : ${!fiche.ingredients.length?'ingrédients manquants':''}${(!fiche.ingredients.length&&!fiche.allergenes.length)?' et ':''}${!fiche.allergenes.length?'allergènes à vérifier':''}. Complète la recette avant mise en ligne.</div>`
+      : '';
+    return `<div class="panel">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <h3 style="margin:0">${esc(r.produitNom||'(sans nom)')}</h3>
+        <button class="btn ghost" onclick="ficheCopier(${idx})">📋 Copier</button>
+      </div>
+      <div style="font-size:.85rem;color:#4a3f3a;margin-top:6px">${fiche.texteHtml}</div>
+      ${alerte}
+    </div>`;
+  }).join('');
+
+  document.getElementById('main').innerHTML=`
+   <div class="topbar"><div><h1>Fiches produit — boutique en ligne</h1>
+     <p>${recsTriees.length} fiche(s) · prêtes à coller dans Shopify</p></div></div>
+   <div class="panel" style="background:#f0f6f0">
+     <p class="note" style="margin:0">Chaque fiche liste les ingrédients (par poids) et les allergènes en gras, à partir de tes recettes. <b>Vérifie chaque fiche avant de la publier</b> — tu restes responsable de l'exactitude. La DLC n'est pas ici : elle se donne au retrait du client (règle vente à distance).</p>
+   </div>
+   ${cartes || '<div class="panel"><p class="note">Aucune recette pour l\'instant.</p></div>'}`;
+}
+
+// Copie le HTML d'une fiche dans le presse-papier.
+async function ficheCopier(idx){
+  const html = (window._fichesCache||{})[idx] || '';
+  const brut = html.replace(/<[^>]+>/g,'').replace(/\n{2,}/g,'\n').trim();
+  try{
+    if(navigator.clipboard && navigator.clipboard.writeText){ await navigator.clipboard.writeText(brut); toast('Fiche copiée ✓'); }
+    else { toast('Copie non disponible sur cet appareil'); }
+  }catch(e){ toast('Copie impossible'); }
+}
+
 // Pré-remplit les allergènes des recettes qui n'en ont pas encore (jamais d'écrasement).
 async function seedAllergenes(){
   try{
@@ -4643,7 +4761,13 @@ function getSettings(){
       // en direct (cf parfumDispoSource) → jamais de double vente. Pilotée À LA MAIN par Ben ;
       // rien d'automatique, aucun décrément non planifié. Vide par défaut = rien en ligne.
       reserveOnline: (s.reserveOnline && typeof s.reserveOnline==='object' && !Array.isArray(s.reserveOnline)) ? s.reserveOnline : {},
-      exportReminderDays: (parseInt(s.exportReminderDays,10)>0)?parseInt(s.exportReminderDays,10):EXPORT_REMINDER_DAYS_DEFAULT,
+      // [v1398] SYNCHRO SAS — connexion au sas Shopify (le pont vente en ligne). URL + jeton
+      // configurables (jamais en dur : le jeton est un secret partagé avec le sas). sasCurseur =
+      // jusqu'où l'ERP a DÉJÀ intégré le journal des ventes du sas (idempotence : on ne rejoue pas).
+      // Vides par défaut = pas de sas branché → la synchro reste inactive, semi-manuel possible.
+      sasUrl: (s.sasUrl!=null) ? String(s.sasUrl) : '',
+      sasToken: (s.sasToken!=null) ? String(s.sasToken) : '',
+      sasCurseur: (parseInt(s.sasCurseur,10)>0) ? parseInt(s.sasCurseur,10) : 0,
       // [v1283] Trésorerie prospective : solde bancaire saisi à la main, mis à jour périodiquement.
       // Pas de valeur par défaut pertinente (0€ serait une vraie saisie) → null tant que non renseigné.
       soldeBancaire: (s.soldeBancaire!=null && s.soldeBancaire!=='') ? +s.soldeBancaire : null,
@@ -6437,7 +6561,7 @@ const VIEWS = {
   fournisseurs:renderSuppliers, matieres:renderMaterials, recettes:renderRecipes, achats:renderAchats,
   productions:renderProductions, couts:renderCosts, auditcouts:renderCostAudit, dlc:renderDlc, picking:renderPicking,
   mrp:renderMrp,
-  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, tresorerie:renderTresorerie, scenarios:renderScenarios, avoirs:renderAvoirs, panierMoyen:renderPanierMoyen, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, netpoche:renderNetPoche, chargesventil:renderChargesVentil, optimisation:renderOptimisation, stockparfums:renderStockParfums, histostock:renderHistoStock, tempsproduction:renderTempsProductionCompat, controletemps:renderControleTempsCompat, temps:renderTemps, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, agendaprod:renderAgendaProduction, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, productionsv2:renderProductionsV2, rdrefs:renderRdRefs, rangement:renderRangementGuide, documents:renderDocuments, prospects:renderProspects, personas:renderPersonas,
+  tracabilite:renderTrace, etiquettes:renderLabels, stats:renderStats, compta:renderCompta, tresorerie:renderTresorerie, scenarios:renderScenarios, avoirs:renderAvoirs, panierMoyen:renderPanierMoyen, pilotage:renderPilotage, rentabilite:renderProfit, rentaparfum:renderParfums, netpoche:renderNetPoche, chargesventil:renderChargesVentil, optimisation:renderOptimisation, stockparfums:renderStockParfums, histostock:renderHistoStock, tempsproduction:renderTempsProductionCompat, controletemps:renderControleTempsCompat, temps:renderTemps, marches:renderMarkets, analyse:renderAnalyse, previsionnel:renderForecast, agendaprod:renderAgendaProduction, evenements:renderEvents, sauvegardes:renderBackups, integrite:renderIntegrity, atelier:renderAtelier, guide:renderGuide, assistant:renderAssistant, pms:renderPMS, migration:renderMigration, revenuhoraire:renderRevenuHoraire, consommables:renderConsommables, boites:renderBoites, equipements:renderEquipements, composants:renderComposants, productionsv2:renderProductionsV2, rdrefs:renderRdRefs, rangement:renderRangementGuide, documents:renderDocuments, prospects:renderProspects, personas:renderPersonas, fichesproduit:renderFichesProduit,
   ventilation:renderVentilation,
   compositeur:renderCompositeur,
   carrousel:renderCarrousel,
@@ -25205,9 +25329,19 @@ async function buildStockParfumsListeHtml(){
 async function _stockReserveOnlineHtml(){
   let src = {};
   try{ src = await parfumDispoSource(); }catch(e){ swallow(e,'_stockReserveOnlineHtml'); }
+  const reserveMap = (typeof getSettings==='function' ? (getSettings().reserveOnline||{}) : {});
   const parfums = Object.values(src)
-    .filter(b => (b.mobilisableTotal||b.mobilisable||0) > 0)
+    .filter(b => (b.mobilisableTotal||b.mobilisable||0) > 0
+              || (typeof reserveMap[stockMoveKey(b.nom)] !== 'undefined')) // garde ceux en réassort (clé=0)
     .sort((a,b)=> (a.nom||'').localeCompare(b.nom||''));
+  // Parfums RÉSERVÉS mais dont le stock est tombé à 0 (absents de src car qteRestante=0) : on les
+  // ajoute pour que Ben voie « réassort sous 48h » et sache quoi reproduire. Nom = celui d'une prod
+  // si trouvable, sinon la clé normalisée (repli).
+  const dejaVus = new Set(parfums.map(b=>stockMoveKey(b.nom)));
+  Object.keys(reserveMap).forEach(k=>{
+    if(dejaVus.has(k)) return;
+    parfums.push({ nom:k, mobilisable:0, mobilisableTotal:0, reserveOnline: round3(+reserveMap[k]||0), _orphelin:true });
+  });
   const totalReserve = parfums.reduce((s,b)=>s+(+b.reserveOnline||0),0);
   if(!parfums.length){
     return `<div class="panel"><h2>🛒 Réserve vente en ligne</h2>
@@ -25217,18 +25351,63 @@ async function _stockReserveOnlineHtml(){
     const total = round3(b.mobilisableTotal!=null ? b.mobilisableTotal : b.mobilisable);
     const res   = round3(b.reserveOnline||0);
     const direct= round3(b.mobilisable||0);
-    const k = esc(b.nom);
+    // État réassort : la clé existe (mis en ligne) mais tombée à 0 → « délai 48h ».
+    const etat = (typeof etatReassortOnline==='function') ? etatReassortOnline(b.nom) : 'dispo';
+    const enReassort = (etat==='reassort');
+    const badge = res>0 ? ` · <span style="color:#a9772a">${qty(res)} en ligne 🛒</span>`
+                        : (enReassort ? ` · <span style="color:#b3261e">réassort sous ${REASSORT_DELAI_H}h ⏳</span>` : '');
     return `<div class="prlv-card" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
       <div style="flex:1;min-width:120px"><b>${esc(b.nom)}</b>
-        <div style="font-size:.76rem;color:#7a6a62">${qty(total)} en stock · <span style="color:#3f7d52">${qty(direct)} en direct</span>${res>0?` · <span style="color:#a9772a">${qty(res)} en ligne 🛒</span>`:''}</div></div>
+        <div style="font-size:.76rem;color:#7a6a62">${qty(total)} en stock · <span style="color:#3f7d52">${qty(direct)} en direct</span>${badge}</div></div>
       <label style="font-size:.76rem;color:#7a6a62;display:flex;align-items:center;gap:6px">réserver en ligne
         <input type="number" min="0" max="${total}" step="1" value="${res}" style="width:64px"
           onchange="stockReserveSet('${escJs(b.nom)}', this.value)"></label>
     </div>`;
   }).join('');
-  return `<div class="panel"><h2>🛒 Réserve vente en ligne</h2>
+  // [v1395] Section REPLIABLE (chevron fermé par défaut) : Ben ne l'ouvre que quand il en a besoin.
+  // Le résumé garde l'info clé visible sans déplier : nombre de pièces actuellement réservées.
+  const resume = totalReserve>0 ? ` — <b style="color:#a9772a">${qty(totalReserve)} en ligne 🛒</b>` : '';
+  // [v1398] Bloc synchro sas : bouton explicite + config (URL/jeton). Replié dans le panneau.
+  const s = (typeof getSettings==='function') ? getSettings() : {};
+  const sasConfig = (s.sasUrl||'') ? '' : ' <span style="color:#9a8a82">(sas non configuré)</span>';
+  const syncHtml = `<div style="margin-top:12px;padding-top:10px;border-top:1px solid #eadfd8">
+    <button class="btn" onclick="synchroniserVentesEnLigneUI()">🔄 Synchroniser les ventes en ligne</button>${sasConfig}
+    <button class="btn ghost" style="margin-left:6px" onclick="goView('fichesproduit')">📄 Fiches produit (Shopify)</button>
+    <details style="margin-top:8px"><summary style="cursor:pointer;font-size:.8rem;color:#7a6a62">⚙️ Réglages du sas</summary>
+      <div style="padding:8px 0;display:flex;flex-direction:column;gap:6px">
+        <label style="font-size:.78rem;color:#7a6a62">Adresse du sas
+          <input type="text" id="f_sasUrl" value="${esc(s.sasUrl||'')}" placeholder="https://…" style="width:100%"></label>
+        <label style="font-size:.78rem;color:#7a6a62">Jeton partagé
+          <input type="password" id="f_sasToken" value="${esc(s.sasToken||'')}" placeholder="jeton secret" style="width:100%"></label>
+        <button class="btn ghost" style="align-self:flex-start" onclick="sasConfigSave()">Enregistrer la connexion</button>
+      </div></details>
+  </div>`;
+  return `<details class="panel" style="padding:0"><summary style="padding:14px 16px;cursor:pointer;font-weight:600;font-size:1.05rem">🛒 Réserve vente en ligne${resume}</summary>
+    <div style="padding:0 16px 14px">
     <p class="note">Ce que tu réserves ici est mis de côté pour la boutique en ligne (click & collect) et <b>sort automatiquement de ton stock vendable en direct</b> — aucune pièce ne peut être vendue deux fois. Tu ajustes quand tu veux ; rien ne part sans ton geste.${totalReserve>0?` <b>${qty(totalReserve)} pièce(s)</b> actuellement réservée(s).`:''}</p>
-    ${lignes}</div>`;
+    ${lignes}${syncHtml}</div></details>`;
+}
+
+// [v1398] Wrapper UI de la synchro : appelle le flux C, affiche un compte-rendu clair, rafraîchit.
+async function synchroniserVentesEnLigneUI(){
+  toast('Synchronisation en cours…');
+  const r = await synchroniserVentesEnLigne();
+  if(!r.ok){ toast('⚠️ ' + (r.raison||'Échec de la synchronisation')); return; }
+  if(r.nbAppliquees===0){ toast('✓ À jour — aucune nouvelle vente en ligne'); }
+  else { toast(`✓ ${r.nbAppliquees} vente(s) en ligne intégrée(s) · ${qty(r.totalPieces)} pièce(s)`); }
+  if(typeof renderStockParfums==='function') renderStockParfums();
+}
+
+// Enregistre l'adresse + le jeton du sas dans les réglages.
+function sasConfigSave(){
+  const url = (document.getElementById('f_sasUrl')||{}).value || '';
+  const tok = (document.getElementById('f_sasToken')||{}).value || '';
+  const s = getSettings();
+  s.sasUrl = url.trim(); s.sasToken = tok.trim();
+  saveSettings(s);
+  if(typeof markUnsaved==='function') markUnsaved();
+  toast('Connexion au sas enregistrée');
+  if(typeof renderStockParfums==='function') renderStockParfums();
 }
 
 // Enregistre la réserve online d'un parfum (bornée : ≥0, jamais plus que le stock existant côté
@@ -25244,6 +25423,123 @@ async function stockReserveSet(nom, valeur){
   if(typeof markUnsaved==='function') markUnsaved();
   toast(q>0 ? `${qty(q)} ${esc(nom)} réservé(s) à la vente en ligne` : `Réserve en ligne retirée pour ${esc(nom)}`);
   if(typeof renderStockParfums==='function') renderStockParfums();
+}
+
+// [v1397] VENTE EN LIGNE — décrément de la réserve après une vente validée (OPTION A choisie par
+// Ben : la réserve baisse automatiquement de ce qui est vendu). PUR et testable : prend la map de
+// réserve + les besoins par parfum de la commande, renvoie la nouvelle réserve. Plancher à 0.
+// `garderZero` (défaut true pour une VENTE) : une clé qui tombe à 0 est CONSERVÉE à 0, car « 0 »
+// signifie « mis en ligne mais épuisé → réassort 48h » (à distinguer de « jamais mis en ligne » =
+// clé absente). Le retrait MANUEL d'une réserve (stockReserveSet) supprime la clé, lui : ce sont
+// deux intentions différentes.
+// Les clés de `needs` (orderFlavorNeeds) sont des NOMS de parfum ; on les normalise via stockMoveKey
+// pour matcher exactement les clés de reserveOnline.
+function _reserveApresVente(reserve, needs, garderZero){
+  if(garderZero===undefined) garderZero = true;
+  const out = Object.assign({}, reserve||{});
+  Object.keys(needs||{}).forEach(nom=>{
+    const k = stockMoveKey(nom);
+    if(out[k]==null) return;                       // pas de réserve sur ce parfum → rien à libérer
+    const reste = Math.max(0, round3((+out[k]||0) - (+needs[nom]||0)));
+    if(reste > 0) out[k] = reste;
+    else if(garderZero) out[k] = 0;                // épuisé mais TOUJOURS en ligne → réassort 48h
+    else delete out[k];
+  });
+  return out;
+}
+
+// Applique le décrément de réserve aux réglages, pour une commande online validée. Écrit une seule
+// fois. Sans effet si la commande n'a pas de besoins parfum (rien à libérer).
+async function libererReserveOnline(order){
+  if(!order) return;
+  const needs = (typeof orderFlavorNeeds==='function') ? orderFlavorNeeds(order) : {};
+  if(!needs || !Object.keys(needs).length) return;
+  const s = getSettings();
+  const avant = s.reserveOnline || {};
+  const apres = _reserveApresVente(avant, needs);
+  s.reserveOnline = apres;
+  saveSettings(s);
+  if(typeof markUnsaved==='function') markUnsaved();
+}
+
+// [v1397] VENTE EN LIGNE — enregistre une vente du canal online. Modèle « réserve mise de côté » :
+// les pièces réservées SONT DÉJÀ hors du stock direct (parfumDispoSource les soustrait), donc une
+// vente online ne fait QU'UNE chose ici : décrémenter le compteur de réserve du parfum vendu
+// (OPTION A). `ventes` = map {nomParfum: qtéVendue}. Décrément AUTOMATIQUE, sûr parce que borné à
+// une enveloppe que Ben a posée à la main en amont. Renvoie l'état après vente (pour l'UI/log).
+async function enregistrerVenteOnline(ventes){
+  if(!ventes || !Object.keys(ventes).length) return { ok:false, raison:'rien vendu' };
+  const s = getSettings();
+  const avant = s.reserveOnline || {};
+  const apres = _reserveApresVente(avant, ventes);
+  s.reserveOnline = apres;
+  saveSettings(s);
+  if(typeof markUnsaved==='function') markUnsaved();
+  return { ok:true, reserveApres: apres };
+}
+
+// [v1397] État « réassort » d'un parfum pour la boutique : la réserve online est-elle épuisée ?
+// Renvoie 'dispo' (il reste de la réserve), 'reassort' (compteur à 0 → afficher « délai 48h »),
+// ou 'nonMisEnLigne' (jamais réservé). C'est ce que la vitrine (ou le sas plus tard) lira pour
+// décider entre « ajouter au panier » et « délai de 48h pour réassort ».
+function etatReassortOnline(nom){
+  const res = getSettings().reserveOnline || {};
+  const k = stockMoveKey(nom);
+  if(res[k] == null) return 'nonMisEnLigne';       // jamais mis en ligne
+  return round3(+res[k]||0) > 0 ? 'dispo' : 'reassort';
+}
+// Délai de réassort annoncé au client quand la réserve online est épuisée (heures).
+const REASSORT_DELAI_H = 48;
+
+// [v1398] SYNCHRO SAS — le flux C côté ERP. Geste EXPLICITE (bouton), jamais automatique.
+// 1) lit le journal des ventes du sas depuis notre curseur ; 2) applique chaque vente via
+// enregistrerVenteOnline (SEUL chemin de décrément, déjà testé) ; 3) avance le curseur (idempotence :
+// on ne rejoue jamais une vente) ; 4) re-pousse la réserve à jour au sas. L'ERP reste SEUL MAÎTRE :
+// il LIT le sas, applique chez lui, puis renvoie sa vérité. Le sas n'écrit jamais dans l'ERP.
+// Tolérant à la panne : si le sas est injoignable, on ne touche à RIEN et on renvoie l'erreur.
+async function synchroniserVentesEnLigne(){
+  const s = getSettings();
+  const base = (s.sasUrl||'').replace(/\/+$/,'');
+  if(!base) return { ok:false, raison:'Aucun sas configuré (renseigne son adresse dans les réglages).' };
+  const headers = { 'Authorization': 'Bearer ' + (s.sasToken||'') };
+  const curseur = +s.sasCurseur||0;
+
+  // 1) LIRE le journal depuis notre curseur.
+  let data;
+  try{
+    const r = await fetch(base + '/erp/journal?curseur=' + curseur, { headers });
+    if(r.status===401) return { ok:false, raison:'Jeton refusé par le sas (vérifie le jeton dans les réglages).' };
+    if(!r.ok) return { ok:false, raison:'Le sas a répondu une erreur ('+r.status+').' };
+    data = await r.json();
+  }catch(e){ return { ok:false, raison:'Sas injoignable (pas de réseau, ou adresse incorrecte).' }; }
+
+  const ventes = Array.isArray(data && data.ventes) ? data.ventes : [];
+  // 2) APPLIQUER chaque vente (chemin unique de décrément). Chaque vente = {id, ligne:{parfum:qte}}.
+  let nbAppliquees = 0, totalPieces = 0;
+  for(const v of ventes){
+    const ligne = (v && v.ligne) || {};
+    if(!Object.keys(ligne).length) continue;
+    await enregistrerVenteOnline(ligne);    // décrémente la réserve, marque réassort à 0
+    nbAppliquees++;
+    totalPieces += Object.values(ligne).reduce((a,b)=>a+(+b||0),0);
+  }
+  // 3) AVANCER le curseur (idempotence). On mémorise jusqu'où on a intégré.
+  const nouveauCurseur = (data && data.curseur!=null) ? +data.curseur : curseur;
+  { const s2 = getSettings(); s2.sasCurseur = nouveauCurseur; saveSettings(s2); }
+
+  // 4) RE-POUSSER la réserve à jour au sas (notre vérité recalculée).
+  let repousse = false;
+  try{
+    const s3 = getSettings();
+    const r2 = await fetch(base + '/erp/reserve', {
+      method:'POST',
+      headers: Object.assign({ 'Content-Type':'application/json' }, headers),
+      body: JSON.stringify({ reserve: s3.reserveOnline||{} })
+    });
+    repousse = r2.ok;
+  }catch(e){ repousse = false; }
+
+  return { ok:true, nbAppliquees, totalPieces, repousse, curseur:nouveauCurseur };
 }
 
 async function renderStockParfums(){

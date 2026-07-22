@@ -115,7 +115,10 @@ const SUITES = [
   'v1392-assemblage-coques-monocouleur.test.js', // v1392 · résumé d'assemblage mono-couleur : « N coques <couleur>s » (total réel), pas « de chaque couleur »
   'v1393-conseil-marge-parfum.test.js',    // v1393 · conseil marge par parfum : reco ferme seulement si l'échantillon le permet + procureur + élasticité déclarée incalculable
   'v1394-calendrier-commandes.test.js',    // v1394 · commande TOUJOURS au calendrier via syncOrderEvent (plus de case f_cal) ; historique exclu
-  'v1394-reserve-online.test.js'           // v1394 · réserve de stock vente en ligne : une pièce réservée sort du mobilisable direct (invariant anti-double-vente à la source)
+  'v1394-reserve-online.test.js',          // v1394 · réserve de stock vente en ligne : une pièce réservée sort du mobilisable direct (invariant anti-double-vente à la source)
+  'v1397-reserve-decrement.test.js',       // v1397 · vente en ligne décrémente la réserve (option A) + état réassort 48h à 0
+  'v1398-synchro-sas.test.js',             // v1398 · bouton de synchro sas côté ERP (flux C) : applique le journal, curseur idempotent, panne réseau sans casse
+  'v1399-fiche-produit.test.js'            // v1399 · fiches produit conformes : ingrédients par poids + allergènes fiables en gras
 ];
 
 let allOk = true;
