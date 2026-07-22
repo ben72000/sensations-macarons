@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1404';
+const APP_VERSION = 'v1405';
 const APP_MAJ = 'CHANTIER A — L’APP NE PEUT PLUS ÉCHOUER EN SILENCE. Le constat de l’audit était dur : 347 endroits du code attrapaient une erreur et l’enregistraient fidèlement… dans un carnet que TU NE POUVAIS PAS OUVRIR. Il fallait brancher l’iPhone sur un Mac. Autant dire jamais. ET LE CARNET ÉTAIT EFFACÉ À CHAQUE RECHARGEMENT. C’est le mécanisme EXACT qui a caché la panne Dexie pendant un mois : chaque écriture kv échouait, la validation ne démarrait jamais, et l’écran affichait « 0 refus, 0 suspects » — ce qui RESSEMBLAIT à une bonne nouvelle alors que ça voulait dire « le contrôle n’a jamais démarré ». CE QUI CHANGE. 1) UN ÉCRAN « Santé de l’app » (Sauvegarde & sécurité) : tu lis enfin ce qui a cassé, depuis ton téléphone, sans Mac. 2) LES INCIDENTS VIVENT EN BASE (nouvelle table errLog) : ils survivent à un rechargement, donc tu peux constater qu’une panne DURE — c’est précisément ce que l’ancien carnet en mémoire rendait impossible. 3) UN FILET GLOBAL : une erreur hors try/catch te donnait un écran figé sans trace ; elle est maintenant enregistrée et annoncée par une bannière discrète. 4) UNE PASTILLE SUR L’ACCUEIL quand des incidents IMPORTANTS s’accumulent. LE TRI QUE J’AI FIGÉ, et qui est le cœur du travail : un échec d’AFFICHAGE et un échec d’ÉCRITURE EN BASE ne se valent pas. Base, sauvegarde, import, validation, compta → IMPORTANT, ça parle. Rendu, affichage → mineur, ça s’enregistre sans crier. Confondre les deux, c’est noyer le signal sous le bruit, et une alerte qui crie tout le temps est une alerte qu’on ne regarde plus. CE QUE JE N’AI PAS FAIT : deviner la cause d’une erreur, ni prétendre la réparer. L’écran montre ce qui s’est réellement passé. Une explication inventée serait pire qu’un silence. ET UNE MISE EN GARDE QUE JE TE DOIS : un écran Santé VIDE n’est PAS une preuve que tout va bien — c’est une absence d’incident enregistré, ce qui n’est pas la même chose. LA RÈGLE FIGÉE : une protection qu’on ne peut pas VOIR marcher doit être considérée comme ABSENTE jusqu’à preuve du contraire. Reste à faire : chantier B (valider le contenu à l’import), C (sortir les sauvegardes de la boîte qu’elles protègent), D (durcir import et QR). Suite : 88 → 89 suites, 1437 → 1475 assertions vertes.';
 
 // ============================================================
@@ -351,7 +351,7 @@ const FLAVOR_COLORS = {
   'framboise':'#d76b86', 'vanille':'#efe3c4', 'pistache':'#9bc081',
   'coco rafaello':'#f3ece0', 'cannelle noisette':'#c79a6a', 'caramel beurre sale':'#cf9a52',
   'chocolat passion':'#d98e4e', 'nocciolata':'#8a5a3c', 'coco citron vert':'#cfe2a5',
-  'praline noisettes':'#bd8a55', 'popcorn':'#ecd9a4', 'cafe':'#7d5436'
+  'praline noisette':'#bd8a55', 'popcorn':'#ecd9a4', 'cafe':'#7d5436'
 };
 // Renvoie la couleur d'un parfum (gris neutre si inconnu, ex. grand format / parfum libre).
 function flavorColor(nom){ return FLAVOR_COLORS[normTxt(nom)] || '#cbb89f'; }
@@ -1867,7 +1867,7 @@ function renderFiguresModal(){
 const FLAVORS = [
   'Citron crémeux','Chocolat au lait','Chocolat noir','Framboise','Vanille',
   'Pistache','Coco Rafaello','Cannelle noisette','Caramel beurre salé',
-  'Chocolat passion','Nocciolata','Coco citron vert','Praliné noisettes',
+  'Chocolat passion','Nocciolata','Coco citron vert','Praliné noisette',
   'Popcorn','Café'
 ];
 const BOX_SIZES = [6, 8, 16, 25];
@@ -5491,7 +5491,7 @@ const FLAVOR_CODES = {
   'Citron crémeux':'CIT', 'Chocolat au lait':'CHL', 'Chocolat noir':'CHN',
   'Framboise':'FRA', 'Vanille':'VAN', 'Pistache':'PIS', 'Coco Rafaello':'RAF',
   'Cannelle noisette':'CAN', 'Caramel beurre salé':'CAR', 'Chocolat passion':'CHP',
-  'Nocciolata':'NOC', 'Coco citron vert':'CCV', 'Praliné noisettes':'PRA',
+  'Nocciolata':'NOC', 'Coco citron vert':'CCV', 'Praliné noisette':'PRA',
   'Popcorn':'POP', 'Café':'CAF', 'Mangue passion':'MAN',
   'Madeleine':'MAD', 'Myrtille framboise':'MYR', 'Deux chocolats':'2CH',
   'Chantache':'CHA'
@@ -37564,7 +37564,7 @@ function aiFindFlavor(txt, flavors){
   // 3) Dernier repli : mapping indicatif, uniquement si le nom existe réellement dans flavors.
   const map={chocolat:'Chocolat noir', vanille:'Vanille', framboise:'Framboise', pistache:'Pistache',
     citron:'Citron crémeux', cafe:'Café', caramel:'Caramel beurre salé', coco:'Coco Rafaello',
-    praline:'Praliné noisettes', popcorn:'Popcorn', cannelle:'Cannelle noisette'};
+    praline:'Praliné noisette', popcorn:'Popcorn', cannelle:'Cannelle noisette'};
   for(const k in map){ if(n.includes(k) && flavors.includes(map[k])) return map[k]; }
   return null;
 }
