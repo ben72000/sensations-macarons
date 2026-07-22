@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1399';
+const APP_VERSION = 'v1401';
 const APP_MAJ = 'CHANTIER A — L’APP NE PEUT PLUS ÉCHOUER EN SILENCE. Le constat de l’audit était dur : 347 endroits du code attrapaient une erreur et l’enregistraient fidèlement… dans un carnet que TU NE POUVAIS PAS OUVRIR. Il fallait brancher l’iPhone sur un Mac. Autant dire jamais. ET LE CARNET ÉTAIT EFFACÉ À CHAQUE RECHARGEMENT. C’est le mécanisme EXACT qui a caché la panne Dexie pendant un mois : chaque écriture kv échouait, la validation ne démarrait jamais, et l’écran affichait « 0 refus, 0 suspects » — ce qui RESSEMBLAIT à une bonne nouvelle alors que ça voulait dire « le contrôle n’a jamais démarré ». CE QUI CHANGE. 1) UN ÉCRAN « Santé de l’app » (Sauvegarde & sécurité) : tu lis enfin ce qui a cassé, depuis ton téléphone, sans Mac. 2) LES INCIDENTS VIVENT EN BASE (nouvelle table errLog) : ils survivent à un rechargement, donc tu peux constater qu’une panne DURE — c’est précisément ce que l’ancien carnet en mémoire rendait impossible. 3) UN FILET GLOBAL : une erreur hors try/catch te donnait un écran figé sans trace ; elle est maintenant enregistrée et annoncée par une bannière discrète. 4) UNE PASTILLE SUR L’ACCUEIL quand des incidents IMPORTANTS s’accumulent. LE TRI QUE J’AI FIGÉ, et qui est le cœur du travail : un échec d’AFFICHAGE et un échec d’ÉCRITURE EN BASE ne se valent pas. Base, sauvegarde, import, validation, compta → IMPORTANT, ça parle. Rendu, affichage → mineur, ça s’enregistre sans crier. Confondre les deux, c’est noyer le signal sous le bruit, et une alerte qui crie tout le temps est une alerte qu’on ne regarde plus. CE QUE JE N’AI PAS FAIT : deviner la cause d’une erreur, ni prétendre la réparer. L’écran montre ce qui s’est réellement passé. Une explication inventée serait pire qu’un silence. ET UNE MISE EN GARDE QUE JE TE DOIS : un écran Santé VIDE n’est PAS une preuve que tout va bien — c’est une absence d’incident enregistré, ce qui n’est pas la même chose. LA RÈGLE FIGÉE : une protection qu’on ne peut pas VOIR marcher doit être considérée comme ABSENTE jusqu’à preuve du contraire. Reste à faire : chantier B (valider le contenu à l’import), C (sortir les sauvegardes de la boîte qu’elles protègent), D (durcir import et QR). Suite : 88 → 89 suites, 1437 → 1475 assertions vertes.';
 
 // ============================================================
@@ -4093,18 +4093,58 @@ function allergenesPourNom(nom){
 //   items   : recipeItems de cette recette [{materialId, qteParBatch}]
 //   mats    : materials [{id, nom, unite}]
 //   opts    : { operateur, conservation } (identité + mention conservation, libres)
+// [v1401] Normalise un nom d'ingrédient pour la fiche produit, selon les règles de Ben :
+// détailler le moins possible, un même ingrédient ne doit jamais apparaître deux fois. Exemples :
+// « Sucre semoule »/« Sucre glace » → « sucre » ; « Lait entier » → « lait » ; « Purée de noisette »
+// → « noisette » ; « Pectine NH » → « pectine ». SEULE EXCEPTION : « Gélatine de poisson » reste
+// telle quelle (c'est l'information allergène). Renvoie un libellé simplifié (minuscule).
+function _normaliserIngredient(nom){
+  const brut = String(nom||'').trim();
+  const n = brut.toLowerCase()
+    .replace(/œ/g,'oe').replace(/æ/g,'ae')            // ligatures (NFD ne les décompose pas)
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,''); // sans accents
+  // Exception explicite AVANT toute simplification : gélatine de poisson garde son nom complet.
+  if(/gelatine.*poisson/.test(n)) return 'gélatine de poisson';
+  // Familles regroupées : on renvoie le terme générique.
+  if(/\bsucre\b/.test(n))    return 'sucre';        // semoule, glace, roux… → sucre
+  if(/\blait\b/.test(n))     return 'lait';         // lait entier, demi-écrémé… → lait
+  if(/noisette/.test(n))     return 'noisette';     // purée de noisette, noisettes → noisette
+  if(/amande/.test(n))       return 'amande';       // poudre d'amande → amande
+  if(/pectine/.test(n))      return 'pectine';      // pectine NH, jaune… → pectine
+  if(/gelatine/.test(n))     return 'gélatine';     // gélatine (hors poisson, traité plus haut)
+  if(/beurre/.test(n))       return 'beurre';
+  if(/creme|creme/.test(n))  return 'crème';
+  if(/chocolat/.test(n))     return 'chocolat';
+  if(/vanille/.test(n))      return 'vanille';
+  if(/pistache/.test(n))     return 'pistache';
+  if(/\boeuf|blanc.*oeuf|jaune.*oeuf/.test(n)) return 'œuf';
+  // Par défaut : on garde le nom tel quel mais en minuscule (retire une éventuelle unité entre
+  // parenthèses, ex. « Noisettes (g) » → « noisettes »).
+  return brut.replace(/\s*\([^)]*\)\s*$/,'').trim().toLowerCase();
+}
+
 function _ficheProduitTexte(recette, items, mats, opts){
   opts = opts || {};
   const nom = (recette && recette.produitNom) || '(sans nom)';
   const matById = {}; (mats||[]).forEach(m=>{ matById[+m.id] = m; });
-  // Ingrédients ordonnés par poids décroissant (converti en grammes si dispo).
+  // Ingrédients : on NORMALISE le nom (règles de Ben), puis on FUSIONNE les doublons en
+  // additionnant leurs poids (ex. sucre semoule + sucre glace = « sucre », poids cumulé → un seul
+  // libellé, bien placé dans l'ordre). Enfin on trie par poids décroissant. Un ingrédient
+  // n'apparaît ainsi JAMAIS deux fois, même s'il vient de deux composants/parties de la recette.
   const toG = (typeof rdToGrams==='function') ? rdToGrams : (q)=>+q||0;
-  const ings = (items||[])
-    .map(it=>{ const m=matById[+it.materialId]; if(!m||!m.nom) return null;
-      return { nom:m.nom, g: toG(+it.qteParBatch||0, m.unite||'g') }; })
-    .filter(Boolean)
+  const parNom = {};
+  (items||[]).forEach(it=>{
+    const m = matById[+it.materialId]; if(!m||!m.nom) return;
+    const label = _normaliserIngredient(m.nom);
+    if(!label) return;
+    const g = toG(+it.qteParBatch||0, m.unite||'g');
+    parNom[label] = (parNom[label]||0) + g;   // fusion : somme des poids des doublons
+  });
+  const ings = Object.keys(parNom)
+    .map(label => ({ nom: label, g: parNom[label] }))
     .sort((a,b)=> b.g - a.g);
-  const listeIngredients = ings.map(i=>i.nom);
+  // Premier ingrédient capitalisé (début de phrase « Ingrédients : Sucre, noisette, … »).
+  const listeIngredients = ings.map((i,idx)=> idx===0 ? (i.nom.charAt(0).toUpperCase()+i.nom.slice(1)) : i.nom);
   // Allergènes : source fiable = la recette, repli sur le dictionnaire par nom.
   let allergenes = Array.isArray(recette && recette.allergenes) && recette.allergenes.length
     ? recette.allergenes.slice()
@@ -5257,6 +5297,22 @@ function privacyMasked(){ return privacyModeEnabled() && _privacySuspend<=0; }
 // Comme tous les écrans passent par euro(), un seul interrupteur masque l'argent partout.
 const euro = n => privacyMasked() ? '••• €'
   : (money2(n)).toLocaleString('fr-FR', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' €';
+// [v1400] Prix UNITAIRE (souvent des centimes par gramme) : 2 décimales écrasent la précision
+// (0,01995 €/g → « 0,02 » = +25% d'erreur apparente). euroPrec montre jusqu'à 4 décimales pour les
+// petits montants, en gardant 2 pour les prix « normaux ». N'affecte QUE l'affichage ; les calculs
+// utilisent la valeur non arrondie stockée. Ne remplace pas euro() ailleurs.
+const euroPrec = n => {
+  if(privacyMasked()) return '••• €';
+  const v = +n||0;
+  // Prix au gramme = souvent des millièmes d'euro. On adapte les décimales à l'ordre de grandeur
+  // pour ne jamais masquer la précision : < 0,10 € → 4 déc., < 1 € → 3 déc., sinon 2. On force
+  // minimumFractionDigits = maximumFractionDigits pour que les zéros significatifs restent visibles
+  // (sinon 0,0200 se réduirait à « 0,02 » et on perdrait tout le bénéfice).
+  let dec = 2;
+  if(v!==0 && Math.abs(v) < 0.10) dec = 4;
+  else if(v!==0 && Math.abs(v) < 1) dec = 3;
+  return v.toLocaleString('fr-FR', {minimumFractionDigits:dec, maximumFractionDigits:dec}) + ' €';
+};
 // Quantité : arrondit proprement (max 3 décimales) et supprime les zéros parasites
 const qty = n => { const v = round3(n); return v.toLocaleString('fr-FR', {maximumFractionDigits:3}); };
 // AFFICHAGE UNIFORME EN GRAMMES — sans modifier les données stockées.
@@ -7773,7 +7829,7 @@ async function getSupplierRecommendations(){
       const pu = lotPU(lot);                                 // gère qte 0 / prix absent → 0
       if(!(pu>0)) continue;                                  // on écarte les offres sans prix exploitable
       offres.push({ supplierId, fournisseur: supName.get(supplierId) || 'Fournisseur #'+supplierId,
-        prixUnitaire: money2(pu), dateReception: lot.dateReception||'', lotId: lot.id });
+        prixUnitaire: pu, dateReception: lot.dateReception||'', lotId: lot.id });
     }
     if(offres.length < 2) continue;                          // <2 offres chiffrables → pas de comparaison
     offres.sort((a,b)=> a.prixUnitaire - b.prixUnitaire);    // du moins cher au plus cher
@@ -7811,7 +7867,7 @@ async function renderAchats(){
       const plusCher = a===r.pire && r.alternatives.length>0;
       return `<div class="achat-alt">
         <span class="achat-alt-sup">⚠️ ${esc(a.fournisseur)}</span>
-        <span class="achat-alt-prix" style="color:${plusCher?'var(--red,#b3261e)':'#7a6a62'}">${euro(a.prixUnitaire)} / ${u}</span></div>`;
+        <span class="achat-alt-prix" style="color:${plusCher?'var(--red,#b3261e)':'#7a6a62'}">${euroPrec(a.prixUnitaire)} / ${u}</span></div>`;
     }).join('');
     return `<div class="achat-card">
       <div class="achat-head">
@@ -7820,7 +7876,7 @@ async function renderAchats(){
       </div>
       <div class="achat-best">
         <span class="achat-best-sup">🏆 ${esc(r.meilleur.fournisseur)}</span>
-        <span class="achat-best-prix">${euro(r.meilleur.prixUnitaire)} / ${u}</span>
+        <span class="achat-best-prix">${euroPrec(r.meilleur.prixUnitaire)} / ${u}</span>
       </div>
       ${alt}
       ${r.economieEuro>0?`<div class="achat-eco">Économie : <b>${euro(r.economieEuro)} / ${u}</b> vs le plus cher (${esc(r.pire.fournisseur)})</div>`:''}
@@ -8667,7 +8723,7 @@ function majPrixUnit(){
   const uSaisie = isEmb ? unite : (uSel ? uSel.value : 'g');
   if(q>0 && p>0){
     if(isEmb){
-      el.textContent = euro(p/q)+' / '+uSaisie;
+      el.textContent = euroPrec(p/q)+' / '+uSaisie;
     } else {
       // Unité native de la matière (kg par défaut, mais peut être g).
       const uNative = unite || 'kg';
@@ -8675,7 +8731,7 @@ function majPrixUnit(){
       let qNative = q;
       if(uSaisie==='g'  && uNative==='kg') qNative = q/1000;
       else if(uSaisie==='kg' && uNative==='g')  qNative = q*1000;
-      el.textContent = qNative>0 ? (euro(p/qNative)+' / '+uNative) : '\u2014';
+      el.textContent = qNative>0 ? (euroPrec(p/qNative)+' / '+uNative) : '\u2014';
     }
   }
   else { el.textContent='\u2014'; }
@@ -8708,7 +8764,7 @@ async function saveLot(){
   const data={
     materialId:_matId, supplierId:+val('f_sup')||0,
     lotFournisseur:val('f_lotf'), qteInitiale:qte, qteRestante:qte,
-    prix, prixUnitaire: qte>0 ? money2(prix/qte) : 0,
+    prix, prixUnitaire: qte>0 ? (prix/qte) : 0,
     dateReception:val('f_date')||today(), dlc:val('f_dlc')||'',
     refProduit:val('f_ref')||'', commentaire:val('f_comm')||''
   };

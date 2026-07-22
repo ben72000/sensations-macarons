@@ -30,9 +30,10 @@ const G = global;
 G.rdToGrams = (q, u) => { const n = +q || 0; return (u === 'kg') ? n * 1000 : n; };
 // esc absent → escOrRaw renverra le brut (ok pour le test).
 
-// Charge les 2 fonctions (escOrRaw utilisée par _ficheProduitTexte).
+// Charge les fonctions (escOrRaw + _normaliserIngredient utilisées par _ficheProduitTexte).
 new Function('G', `with(G){ ${extractFunction('escOrRaw')}\n G.escOrRaw = escOrRaw; }`)(G);
-new Function('G', `with(G){ const escOrRaw = G.escOrRaw; const allergenesPourNom = ()=>null; ${extractFunction('_ficheProduitTexte')}\n G._ficheProduitTexte = _ficheProduitTexte; }`)(G);
+new Function('G', `with(G){ ${extractFunction('_normaliserIngredient')}\n G._normaliserIngredient = _normaliserIngredient; }`)(G);
+new Function('G', `with(G){ const escOrRaw = G.escOrRaw; const _normaliserIngredient = G._normaliserIngredient; const allergenesPourNom = ()=>null; ${extractFunction('_ficheProduitTexte')}\n G._ficheProduitTexte = _ficheProduitTexte; }`)(G);
 const f = G._ficheProduitTexte;
 
 const mats = [
@@ -52,8 +53,8 @@ const mats = [
     { materialId: 3, qteParBatch: 90 },  // blancs 90
   ];
   const fiche = f(recette, items, mats, {});
-  ok(fiche.ingredients[0] === 'Poudre d\'amande', '1 · ingrédient le plus lourd en tête (amande 250)');
-  ok(fiche.ingredients[fiche.ingredients.length-1] === 'Blancs d\'œufs', '2 · le plus léger en dernier (blancs 90)');
+  ok(fiche.ingredients[0] === 'Amande', '1 · ingrédient le plus lourd en tête, normalisé et capitalisé (amande 250)');
+  ok(fiche.ingredients[fiche.ingredients.length-1] === 'œuf', '2 · le plus léger en dernier, normalisé (blancs d œufs → œuf)');
   ok(fiche.ingredients.length === 4, '3 · tous les ingrédients listés');
 }
 

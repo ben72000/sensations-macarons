@@ -118,7 +118,9 @@ const SUITES = [
   'v1394-reserve-online.test.js',          // v1394 · réserve de stock vente en ligne : une pièce réservée sort du mobilisable direct (invariant anti-double-vente à la source)
   'v1397-reserve-decrement.test.js',       // v1397 · vente en ligne décrémente la réserve (option A) + état réassort 48h à 0
   'v1398-synchro-sas.test.js',             // v1398 · bouton de synchro sas côté ERP (flux C) : applique le journal, curseur idempotent, panne réseau sans casse
-  'v1399-fiche-produit.test.js'            // v1399 · fiches produit conformes : ingrédients par poids + allergènes fiables en gras
+  'v1399-fiche-produit.test.js',           // v1399 · fiches produit conformes : ingrédients par poids + allergènes fiables en gras
+  'v1400-prix-unitaire-precision.test.js', // v1400 · prix unitaire de lot en pleine précision + euroPrec
+  'v1401-normalisation-ingredients.test.js' // v1401 · fiches produit : ingrédients dédupliqués + simplifiés (sucre unifié, lait entier→lait…), gélatine de poisson exceptée
 ];
 
 let allOk = true;
