@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1402';
+const APP_VERSION = 'v1403';
 const APP_MAJ = 'CHANTIER A — L’APP NE PEUT PLUS ÉCHOUER EN SILENCE. Le constat de l’audit était dur : 347 endroits du code attrapaient une erreur et l’enregistraient fidèlement… dans un carnet que TU NE POUVAIS PAS OUVRIR. Il fallait brancher l’iPhone sur un Mac. Autant dire jamais. ET LE CARNET ÉTAIT EFFACÉ À CHAQUE RECHARGEMENT. C’est le mécanisme EXACT qui a caché la panne Dexie pendant un mois : chaque écriture kv échouait, la validation ne démarrait jamais, et l’écran affichait « 0 refus, 0 suspects » — ce qui RESSEMBLAIT à une bonne nouvelle alors que ça voulait dire « le contrôle n’a jamais démarré ». CE QUI CHANGE. 1) UN ÉCRAN « Santé de l’app » (Sauvegarde & sécurité) : tu lis enfin ce qui a cassé, depuis ton téléphone, sans Mac. 2) LES INCIDENTS VIVENT EN BASE (nouvelle table errLog) : ils survivent à un rechargement, donc tu peux constater qu’une panne DURE — c’est précisément ce que l’ancien carnet en mémoire rendait impossible. 3) UN FILET GLOBAL : une erreur hors try/catch te donnait un écran figé sans trace ; elle est maintenant enregistrée et annoncée par une bannière discrète. 4) UNE PASTILLE SUR L’ACCUEIL quand des incidents IMPORTANTS s’accumulent. LE TRI QUE J’AI FIGÉ, et qui est le cœur du travail : un échec d’AFFICHAGE et un échec d’ÉCRITURE EN BASE ne se valent pas. Base, sauvegarde, import, validation, compta → IMPORTANT, ça parle. Rendu, affichage → mineur, ça s’enregistre sans crier. Confondre les deux, c’est noyer le signal sous le bruit, et une alerte qui crie tout le temps est une alerte qu’on ne regarde plus. CE QUE JE N’AI PAS FAIT : deviner la cause d’une erreur, ni prétendre la réparer. L’écran montre ce qui s’est réellement passé. Une explication inventée serait pire qu’un silence. ET UNE MISE EN GARDE QUE JE TE DOIS : un écran Santé VIDE n’est PAS une preuve que tout va bien — c’est une absence d’incident enregistré, ce qui n’est pas la même chose. LA RÈGLE FIGÉE : une protection qu’on ne peut pas VOIR marcher doit être considérée comme ABSENTE jusqu’à preuve du contraire. Reste à faire : chantier B (valider le contenu à l’import), C (sortir les sauvegardes de la boîte qu’elles protègent), D (durcir import et QR). Suite : 88 → 89 suites, 1437 → 1475 assertions vertes.';
 
 // ============================================================
@@ -9016,7 +9016,7 @@ async function renderRecipes(){
   }
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Recettes (BOM)</h1><p>${recipes.length} recette(s) — nomenclature matières</p></div>
-     <button class="btn" onclick="recForm()">+ Nouvelle recette</button></div>
+     <button class="btn" onclick="recForm()">+ Nouvelle recette</button><button class="btn ghost" onclick="ouvrirFusionRecettes()">🔗 Fusionner des doublons</button></div>
    ${recipes.length?`<div class="panel"><input class="search" id="recSearch" style="width:100%;margin-bottom:8px" placeholder="Parfum, ingrédient (ex. « œufs »), allergène (ex. « sulfite »)…" value="${esc(recSearch||'')}" oninput="filterRecipes(this.value)" autocomplete="off" autocapitalize="off" autocorrect="off">
      <p class="note" id="recSearchInfo" style="margin:0">Cherche dans les noms, les ingrédients et les allergènes.</p></div>`:''}
    <div id="recList">${recipes.length?blocks.join(''):`<div class="panel"><div class="empty">Aucune recette. Une recette définit les matières consommées par batch (le « Bill of Materials »).</div></div>`}</div>`;
@@ -9388,6 +9388,92 @@ async function saveRec(id){
   });
   closeModal(); renderRecipes(); toast('Recette enregistrée ✓');
 }
+// [v1403] FUSION DE DEUX RECETTES DOUBLONS (ex. « Praliné noisette » vs « Praliné noisettes »).
+// Remède DURABLE à la source : au lieu de bloquer la suppression d'une recette qui a des productions
+// (garde-fou POINT D de delRec), on RÉAFFECTE ces productions vers la recette survivante, PUIS on
+// supprime le doublon vidé. Atomique (tout ou rien). L'ingrédientier du doublon est supprimé (celui
+// de la survivante fait foi — c'est elle qu'on garde). Renvoie un compte-rendu.
+//   idGarde   : recette survivante (celle dont le nom et l'ingrédientier sont conservés)
+//   idSupprime: recette doublon (sera vidée puis supprimée)
+async function fusionnerRecettes(idGarde, idSupprime){
+  idGarde = +idGarde; idSupprime = +idSupprime;
+  if(!idGarde || !idSupprime || idGarde===idSupprime){
+    return { ok:false, raison:'Choisis deux recettes différentes.' };
+  }
+  const [rGarde, rSupp] = await Promise.all([
+    db.recipes.get(idGarde).catch(()=>null),
+    db.recipes.get(idSupprime).catch(()=>null),
+  ]);
+  if(!rGarde || !rSupp) return { ok:false, raison:'Recette introuvable.' };
+
+  // Productions rattachées au doublon → à réaffecter vers la survivante.
+  const prodsDoublon = await db.productions.where('recipeId').equals(idSupprime).toArray().catch(()=>[]);
+  let nbReaffectees = 0;
+
+  await db.transaction('rw', db.productions, db.recipes, db.recipeItems, async () => {
+    for(const p of prodsDoublon){
+      await db.productions.update(p.id, { recipeId: idGarde });
+      nbReaffectees++;
+    }
+    // L'ingrédientier du doublon disparaît (la survivante garde le sien).
+    await db.recipeItems.where('recipeId').equals(idSupprime).delete();
+    await db.recipes.delete(idSupprime);
+  });
+
+  return { ok:true, nbReaffectees, garde:rGarde.produitNom, supprime:rSupp.produitNom };
+}
+
+// [v1403] Ouvre le modal guidé de fusion de recettes doublons.
+async function ouvrirFusionRecettes(){
+  const recipes = (await db.recipes.toArray().catch(()=>[])).sort((a,b)=>(a.produitNom||'').localeCompare(b.produitNom||''));
+  if(recipes.length<2){ toast('Il faut au moins deux recettes.'); return; }
+  const opts = recipes.map(r=>`<option value="${r.id}">${esc(r.produitNom||('#'+r.id))}</option>`).join('');
+  openModal(`<h3>🔗 Fusionner deux recettes doublons</h3>
+    <p class="note">Utile quand le même parfum existe en deux orthographes (ex. « Praliné noisette » / « Praliné noisettes »). La recette <b>gardée</b> conserve son nom et son ingrédientier ; toutes les productions de la recette <b>doublon</b> lui sont réaffectées, puis le doublon est supprimé.</p>
+    <label style="display:block;margin:10px 0 4px;font-weight:600">Recette à GARDER (survivante)</label>
+    <select id="f_fusionGarde" style="width:100%">${opts}</select>
+    <label style="display:block;margin:12px 0 4px;font-weight:600">Recette DOUBLON (à supprimer)</label>
+    <select id="f_fusionSupp" style="width:100%">${opts}</select>
+    <div id="f_fusionInfo" class="note" style="margin-top:10px"></div>
+    <div class="modal-actions" style="margin-top:14px">
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="confirmerFusionRecettes()">Fusionner</button>
+    </div>`);
+  const selSupp = document.getElementById('f_fusionSupp');
+  if(selSupp && selSupp.options.length>1) selSupp.selectedIndex = 1;
+  const maj = () => majApercuFusion();
+  document.getElementById('f_fusionGarde').addEventListener('change', maj);
+  document.getElementById('f_fusionSupp').addEventListener('change', maj);
+  majApercuFusion();
+}
+
+// Met à jour l'aperçu : combien de productions seront réaffectées.
+async function majApercuFusion(){
+  const g = +(document.getElementById('f_fusionGarde')||{}).value||0;
+  const s = +(document.getElementById('f_fusionSupp')||{}).value||0;
+  const box = document.getElementById('f_fusionInfo'); if(!box) return;
+  if(g===s){ box.innerHTML = '⚠ Choisis deux recettes <b>différentes</b>.'; return; }
+  const prods = await db.productions.where('recipeId').equals(s).toArray().catch(()=>[]);
+  const enStock = prods.filter(p=>round3(+p.qteRestante||0)>0).length;
+  box.innerHTML = `Le doublon a <b>${prods.length} production(s)</b> (${enStock} en stock) qui seront réaffectées à la recette gardée. Son ingrédientier sera supprimé (celui de la recette gardée fait foi).`;
+}
+
+// Confirme et exécute la fusion.
+async function confirmerFusionRecettes(){
+  const g = +(document.getElementById('f_fusionGarde')||{}).value||0;
+  const s = +(document.getElementById('f_fusionSupp')||{}).value||0;
+  if(g===s){ toast('Choisis deux recettes différentes.'); return; }
+  const rG = await db.recipes.get(g).catch(()=>null);
+  const rS = await db.recipes.get(s).catch(()=>null);
+  if(!rG||!rS){ toast('Recette introuvable.'); return; }
+  if(!confirm(`Fusionner « ${rS.produitNom} » dans « ${rG.produitNom} » ?\n\nLes productions du doublon seront réaffectées, puis « ${rS.produitNom} » sera supprimée. Action définitive.`)) return;
+  const r = await fusionnerRecettes(g, s);
+  if(!r.ok){ toast('⚠️ ' + (r.raison||'Échec de la fusion')); return; }
+  closeModal();
+  toast(`✓ Fusionné · ${r.nbReaffectees} production(s) réaffectée(s)`);
+  if(typeof renderRecipes==='function') renderRecipes();
+}
+
 async function delRec(id){
   // [POINT D — préventif] On ne supprime pas une recette qui a encore des productions EN STOCK :
   // sinon ces lots deviennent « (recette supprimée) » et perdent leur nom/coût.
@@ -48640,7 +48726,7 @@ async function _etiqResultats(boxes){
         <button class="btn ghost sm" onclick="shareLabelImage(${b.id})">🖼 Image</button>
       </div></div>`);
   }
-  const html = `<h3>🏷 Étiquettes prêtes</h3>${_prelevCss()}${rows.join('')}
+  const html = `<h3>🏷 Étiquettes prêtes</h3>${rows.join('')}
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`;
   // ════════════════════════════════════════════════════════════════════════════
   // [v1375] RÈGLE GRAVÉE : ON NE FERME-PUIS-ROUVRE PAS UN MODAL À TRAVERS UN SAUT ASYNC.
