@@ -114,7 +114,8 @@ const SUITES = [
   'v1391-portee-transaction.test.js',      // v1391 · la transaction du moteur déclare TOUTES les tables touchées transitivement (productions + recipes)
   'v1392-assemblage-coques-monocouleur.test.js', // v1392 · résumé d'assemblage mono-couleur : « N coques <couleur>s » (total réel), pas « de chaque couleur »
   'v1393-conseil-marge-parfum.test.js',    // v1393 · conseil marge par parfum : reco ferme seulement si l'échantillon le permet + procureur + élasticité déclarée incalculable
-  'v1394-calendrier-commandes.test.js'     // v1394 · commande TOUJOURS au calendrier via syncOrderEvent (plus de case f_cal) ; historique exclu
+  'v1394-calendrier-commandes.test.js',    // v1394 · commande TOUJOURS au calendrier via syncOrderEvent (plus de case f_cal) ; historique exclu
+  'v1394-reserve-online.test.js'           // v1394 · réserve de stock vente en ligne : une pièce réservée sort du mobilisable direct (invariant anti-double-vente à la source)
 ];
 
 let allOk = true;

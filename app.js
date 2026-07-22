@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1394';
+const APP_VERSION = 'v1395';
 const APP_MAJ = 'CHANTIER A — L’APP NE PEUT PLUS ÉCHOUER EN SILENCE. Le constat de l’audit était dur : 347 endroits du code attrapaient une erreur et l’enregistraient fidèlement… dans un carnet que TU NE POUVAIS PAS OUVRIR. Il fallait brancher l’iPhone sur un Mac. Autant dire jamais. ET LE CARNET ÉTAIT EFFACÉ À CHAQUE RECHARGEMENT. C’est le mécanisme EXACT qui a caché la panne Dexie pendant un mois : chaque écriture kv échouait, la validation ne démarrait jamais, et l’écran affichait « 0 refus, 0 suspects » — ce qui RESSEMBLAIT à une bonne nouvelle alors que ça voulait dire « le contrôle n’a jamais démarré ». CE QUI CHANGE. 1) UN ÉCRAN « Santé de l’app » (Sauvegarde & sécurité) : tu lis enfin ce qui a cassé, depuis ton téléphone, sans Mac. 2) LES INCIDENTS VIVENT EN BASE (nouvelle table errLog) : ils survivent à un rechargement, donc tu peux constater qu’une panne DURE — c’est précisément ce que l’ancien carnet en mémoire rendait impossible. 3) UN FILET GLOBAL : une erreur hors try/catch te donnait un écran figé sans trace ; elle est maintenant enregistrée et annoncée par une bannière discrète. 4) UNE PASTILLE SUR L’ACCUEIL quand des incidents IMPORTANTS s’accumulent. LE TRI QUE J’AI FIGÉ, et qui est le cœur du travail : un échec d’AFFICHAGE et un échec d’ÉCRITURE EN BASE ne se valent pas. Base, sauvegarde, import, validation, compta → IMPORTANT, ça parle. Rendu, affichage → mineur, ça s’enregistre sans crier. Confondre les deux, c’est noyer le signal sous le bruit, et une alerte qui crie tout le temps est une alerte qu’on ne regarde plus. CE QUE JE N’AI PAS FAIT : deviner la cause d’une erreur, ni prétendre la réparer. L’écran montre ce qui s’est réellement passé. Une explication inventée serait pire qu’un silence. ET UNE MISE EN GARDE QUE JE TE DOIS : un écran Santé VIDE n’est PAS une preuve que tout va bien — c’est une absence d’incident enregistré, ce qui n’est pas la même chose. LA RÈGLE FIGÉE : une protection qu’on ne peut pas VOIR marcher doit être considérée comme ABSENTE jusqu’à preuve du contraire. Reste à faire : chantier B (valider le contenu à l’import), C (sortir les sauvegardes de la boîte qu’elles protègent), D (durcir import et QR). Suite : 88 → 89 suites, 1437 → 1475 assertions vertes.';
 
 // ============================================================
@@ -4638,6 +4638,11 @@ function getSettings(){
       prodCustomTasks: Array.isArray(s.prodCustomTasks) ? s.prodCustomTasks : [],
       // Cible de ventilation marché par parfum : [{parfum, pct}]. Vide par défaut.
       marketMix: Array.isArray(s.marketMix) ? s.marketMix : [],
+      // [v1394] VENTE EN LIGNE — enveloppe de stock réservée au canal online, par parfum.
+      // Map { cléParfumNormalisée : quantité réservée }. Ces pièces SORTENT du stock mobilisable
+      // en direct (cf parfumDispoSource) → jamais de double vente. Pilotée À LA MAIN par Ben ;
+      // rien d'automatique, aucun décrément non planifié. Vide par défaut = rien en ligne.
+      reserveOnline: (s.reserveOnline && typeof s.reserveOnline==='object' && !Array.isArray(s.reserveOnline)) ? s.reserveOnline : {},
       exportReminderDays: (parseInt(s.exportReminderDays,10)>0)?parseInt(s.exportReminderDays,10):EXPORT_REMINDER_DAYS_DEFAULT,
       // [v1283] Trésorerie prospective : solde bancaire saisi à la main, mis à jour périodiquement.
       // Pas de valeur par défaut pertinente (0€ serait une vraie saisie) → null tant que non renseigné.
@@ -25193,18 +25198,69 @@ async function buildStockParfumsListeHtml(){
   return {listeHtml, totalDispo, enStock};
 }
 
+// [v1394] VENTE EN LIGNE — panneau de pilotage de la réserve, par parfum, PILOTÉ À LA MAIN.
+// Lit parfumDispoSource (la SOURCE UNIQUE) : pour chaque parfum en stock il montre le total, ce qui
+// est réservé au online, et ce qui reste vendable en direct. Ben ajuste la réserve à la main ; rien
+// d'automatique. Aucune écriture sur les productions : la réserve vit dans les réglages (settings).
+async function _stockReserveOnlineHtml(){
+  let src = {};
+  try{ src = await parfumDispoSource(); }catch(e){ swallow(e,'_stockReserveOnlineHtml'); }
+  const parfums = Object.values(src)
+    .filter(b => (b.mobilisableTotal||b.mobilisable||0) > 0)
+    .sort((a,b)=> (a.nom||'').localeCompare(b.nom||''));
+  const totalReserve = parfums.reduce((s,b)=>s+(+b.reserveOnline||0),0);
+  if(!parfums.length){
+    return `<div class="panel"><h2>🛒 Réserve vente en ligne</h2>
+      <p class="note">Aucun parfum en stock à réserver pour l'instant. Dès que tu as du stock vendable, tu pourras en allouer une partie à la boutique en ligne ici.</p></div>`;
+  }
+  const lignes = parfums.map(b=>{
+    const total = round3(b.mobilisableTotal!=null ? b.mobilisableTotal : b.mobilisable);
+    const res   = round3(b.reserveOnline||0);
+    const direct= round3(b.mobilisable||0);
+    const k = esc(b.nom);
+    return `<div class="prlv-card" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <div style="flex:1;min-width:120px"><b>${esc(b.nom)}</b>
+        <div style="font-size:.76rem;color:#7a6a62">${qty(total)} en stock · <span style="color:#3f7d52">${qty(direct)} en direct</span>${res>0?` · <span style="color:#a9772a">${qty(res)} en ligne 🛒</span>`:''}</div></div>
+      <label style="font-size:.76rem;color:#7a6a62;display:flex;align-items:center;gap:6px">réserver en ligne
+        <input type="number" min="0" max="${total}" step="1" value="${res}" style="width:64px"
+          onchange="stockReserveSet('${escJs(b.nom)}', this.value)"></label>
+    </div>`;
+  }).join('');
+  return `<div class="panel"><h2>🛒 Réserve vente en ligne</h2>
+    <p class="note">Ce que tu réserves ici est mis de côté pour la boutique en ligne (click & collect) et <b>sort automatiquement de ton stock vendable en direct</b> — aucune pièce ne peut être vendue deux fois. Tu ajustes quand tu veux ; rien ne part sans ton geste.${totalReserve>0?` <b>${qty(totalReserve)} pièce(s)</b> actuellement réservée(s).`:''}</p>
+    ${lignes}</div>`;
+}
+
+// Enregistre la réserve online d'un parfum (bornée : ≥0, jamais plus que le stock existant côté
+// affichage — parfumDispoSource re-plafonne de toute façon à la lecture). Écrit dans les réglages.
+async function stockReserveSet(nom, valeur){
+  let q = Math.max(0, Math.round(+valeur||0));
+  const s = getSettings();
+  const res = Object.assign({}, s.reserveOnline||{});
+  const k = stockMoveKey(nom);
+  if(q<=0) delete res[k]; else res[k] = q;
+  s.reserveOnline = res;
+  saveSettings(s);
+  if(typeof markUnsaved==='function') markUnsaved();
+  toast(q>0 ? `${qty(q)} ${esc(nom)} réservé(s) à la vente en ligne` : `Réserve en ligne retirée pour ${esc(nom)}`);
+  if(typeof renderStockParfums==='function') renderStockParfums();
+}
+
 async function renderStockParfums(){
   const {listeHtml, totalDispo, enStock} = await buildStockParfumsListeHtml();
   const _vue = window._stockVue || 'liste';
   const _swBtn = (v,l)=>`<button class="${_vue===v?'on':''}" onclick="stockSetVue('${v}')">${l}</button>`;
   let froidHtml='';
   if(_vue==='froid'){ try{ froidHtml = await _renderStockFroidHtml(); }catch(e){ console.error('froid',e); froidHtml=`<div class="panel"><p class="note">Impossible d'afficher l'occupation pour le moment.</p></div>`; } }
+  // [v1394] Panneau de réserve vente en ligne (vue liste seulement).
+  let reserveHtml='';
+  if(_vue!=='froid'){ try{ reserveHtml = await _stockReserveOnlineHtml(); }catch(e){ swallow(e,'reserveHtml'); } }
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Stock par parfum</h1>
      <p>${enStock} parfum(s) en stock · ${qty(totalDispo)} macaron(s) vendable(s)</p></div>
      <div class="flex"><button class="btn ghost" onclick="fusionOuvrir()">🔀 Fusionner des boîtes</button><button class="btn" onclick="goView('productions')">🍩 Productions →</button></div></div>
    <div class="stock-switch">${_swBtn('liste','📋 Liste')}${_swBtn('froid','❄️ Espaces froids')}</div>
-   ${_vue==='froid' ? froidHtml : listeHtml}`;
+   ${_vue==='froid' ? froidHtml : reserveHtml + listeHtml}`;
 }
 // Détail d'un parfum : liste de ses batchs en stock, chacun ouvrant la traçabilité complète.
 async function stockParfumDetail(nom){
@@ -62909,6 +62965,23 @@ async function parfumDispoSource(){
     b.assemblable = Math.max(0, Math.min(b.coquesMac, b.ganacheMac));
     b.mobilisable = addQty(b.finis, b.assemblable);
   });
+  // [v1394] VENTE EN LIGNE — cloisonnement de l'enveloppe réservée au canal online.
+  // INVARIANT DE SÉCURITÉ : une pièce réservée à la vente en ligne N'EST PLUS mobilisable en
+  // direct. On la retire ici, à la source unique de disponibilité, pour qu'AUCUN appelant
+  // (coffrets, marché, commandes) ne puisse vendre une pièce déjà promise au online → jamais de
+  // double vente. `reserveOnline` (réglages, piloté à la main) porte la quantité par parfum ;
+  // `reserveEff` ne peut retirer que ce qui existe (min avec le mobilisable), et on expose
+  // `reserveOnline` + `mobilisableTotal` pour que l'écran montre la ventilation sans ambiguïté.
+  try{
+    const reserve = (typeof getSettings==='function' ? (getSettings().reserveOnline||{}) : {});
+    Object.values(out).forEach(b=>{
+      const k = stockMoveKey(b.nom);
+      const r = round3(+reserve[k] || 0);
+      b.mobilisableTotal = b.mobilisable;                 // avant réservation (info)
+      b.reserveOnline    = Math.max(0, Math.min(r, b.mobilisable)); // ne réserve que le possible
+      b.mobilisable      = Math.max(0, subQty(b.mobilisable, b.reserveOnline)); // vendable en DIRECT
+    });
+  }catch(e){ swallow(e,'parfumDispoSource reserveOnline'); }
   return out;
 }
 
