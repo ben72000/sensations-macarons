@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1407';
+const APP_VERSION = 'v1409';
 const APP_MAJ = 'CHANTIER A — L’APP NE PEUT PLUS ÉCHOUER EN SILENCE. Le constat de l’audit était dur : 347 endroits du code attrapaient une erreur et l’enregistraient fidèlement… dans un carnet que TU NE POUVAIS PAS OUVRIR. Il fallait brancher l’iPhone sur un Mac. Autant dire jamais. ET LE CARNET ÉTAIT EFFACÉ À CHAQUE RECHARGEMENT. C’est le mécanisme EXACT qui a caché la panne Dexie pendant un mois : chaque écriture kv échouait, la validation ne démarrait jamais, et l’écran affichait « 0 refus, 0 suspects » — ce qui RESSEMBLAIT à une bonne nouvelle alors que ça voulait dire « le contrôle n’a jamais démarré ». CE QUI CHANGE. 1) UN ÉCRAN « Santé de l’app » (Sauvegarde & sécurité) : tu lis enfin ce qui a cassé, depuis ton téléphone, sans Mac. 2) LES INCIDENTS VIVENT EN BASE (nouvelle table errLog) : ils survivent à un rechargement, donc tu peux constater qu’une panne DURE — c’est précisément ce que l’ancien carnet en mémoire rendait impossible. 3) UN FILET GLOBAL : une erreur hors try/catch te donnait un écran figé sans trace ; elle est maintenant enregistrée et annoncée par une bannière discrète. 4) UNE PASTILLE SUR L’ACCUEIL quand des incidents IMPORTANTS s’accumulent. LE TRI QUE J’AI FIGÉ, et qui est le cœur du travail : un échec d’AFFICHAGE et un échec d’ÉCRITURE EN BASE ne se valent pas. Base, sauvegarde, import, validation, compta → IMPORTANT, ça parle. Rendu, affichage → mineur, ça s’enregistre sans crier. Confondre les deux, c’est noyer le signal sous le bruit, et une alerte qui crie tout le temps est une alerte qu’on ne regarde plus. CE QUE JE N’AI PAS FAIT : deviner la cause d’une erreur, ni prétendre la réparer. L’écran montre ce qui s’est réellement passé. Une explication inventée serait pire qu’un silence. ET UNE MISE EN GARDE QUE JE TE DOIS : un écran Santé VIDE n’est PAS une preuve que tout va bien — c’est une absence d’incident enregistré, ce qui n’est pas la même chose. LA RÈGLE FIGÉE : une protection qu’on ne peut pas VOIR marcher doit être considérée comme ABSENTE jusqu’à preuve du contraire. Reste à faire : chantier B (valider le contenu à l’import), C (sortir les sauvegardes de la boîte qu’elles protègent), D (durcir import et QR). Suite : 88 → 89 suites, 1437 → 1475 assertions vertes.';
 
 // ============================================================
@@ -6048,6 +6048,75 @@ function reliquatCommandeMere(mere, orders){
     entierementRetiree: reste <= 0.01 && filles.length > 0,
   };
 }
+
+// [v1409] RECHERCHE INTELLIGENTE DE COMMANDE MÈRE + règle d'éligibilité corrigée.
+// Retour de Ben : (1) le sélecteur déroulant était inutilisable (tout l'historique, scroll
+// infini) — il veut taper « avril 2026 David Siempé » ; (2) BUG MAJEUR : une mère DISPARAISSAIT
+// du sélecteur dès sa première fille, rendant impossible d'en rattacher plusieurs. La règle
+// correcte, dictée par Ben : « tant que le montant total n'est pas atteint, la mère reste
+// disponible ».
+
+const MOIS_FR = ['janvier','février','mars','avril','mai','juin','juillet','août','septembre','octobre','novembre','décembre'];
+
+// Normalise pour comparer sans accents ni casse (« Siempé » ↔ « siempe »).
+function _normRech(s){
+  return String(s==null?'':s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
+}
+
+// Découpe une saisie libre en { mois, annee, texte }. L'ordre des mots n'importe pas :
+// « avril 2026 David Siempé », « David Siempé 04/2026 » et « siempe 2026 avril » sont
+// équivalents. Tout mot non reconnu comme date alimente la recherche par nom. PURE.
+function parseRechercheMere(q){
+  const mots = _normRech(q).split(/\s+/).filter(Boolean);
+  let mois=null, annee=null; const reste=[];
+  mots.forEach(m=>{
+    const iMois = MOIS_FR.findIndex(x=>_normRech(x)===m);
+    if(iMois>=0){ mois=iMois+1; return; }
+    if(/^\d{4}$/.test(m)){ annee=+m; return; }
+    const mm = m.match(/^(\d{1,2})[\/\-](\d{4})$/);       // 04/2026
+    if(mm){ mois=+mm[1]; annee=+mm[2]; return; }
+    const jma = m.match(/^(\d{4})-(\d{2})(-\d{2})?$/);     // 2026-04 / 2026-04-12
+    if(jma){ annee=+jma[1]; mois=+jma[2]; return; }
+    reste.push(m);
+  });
+  return { mois, annee, texte: reste.join(' ') };
+}
+
+// Une commande peut-elle servir de MÈRE à la commande `idExclu` ?
+// Règle de Ben : elle reste éligible TANT QUE son reliquat n'est pas épuisé — c'est ce qui
+// permet de lui rattacher plusieurs filles successives. PURE.
+function commandeMereEligible(o, orders, idExclu){
+  if(!o || o.id==null) return false;
+  if(idExclu!=null && +o.id===+idExclu) return false;   // pas elle-même
+  if(o.commandeMereId!=null) return false;              // une fille ne peut pas être mère (pas de chaîne)
+  if(o.histo) return false;
+  return reliquatCommandeMere(o, orders).reste > 0.01;  // ← le cœur du correctif
+}
+
+// Filtre les mères candidates selon la saisie libre. `clients` sert à retrouver le nom
+// (les commandes ne portent qu'un clientId). Résultat trié du plus récent au plus ancien,
+// et plafonné par `max` pour ne jamais réafficher tout l'historique. PURE.
+function filtrerCommandesMere(q, orders, clients, idExclu, max){
+  const f = parseRechercheMere(q);
+  const nomDuClient = cid => {
+    const c = (clients||[]).find(x=>+x.id===+cid);
+    return c ? (c.nom||'') : '';
+  };
+  const res = (orders||[]).filter(o=>{
+    if(!commandeMereEligible(o, orders, idExclu)) return false;
+    const d = String(o.date||'');
+    if(f.annee && +d.slice(0,4)!==f.annee) return false;
+    if(f.mois  && +d.slice(5,7)!==f.mois)  return false;
+    if(f.texte){
+      const nom = _normRech(nomDuClient(o.clientId) || o.clientNom || '');
+      if(!nom.includes(f.texte)) return false;
+    }
+    return true;
+  });
+  res.sort((a,b)=> String(b.date||'').localeCompare(String(a.date||'')));
+  return (max>0) ? res.slice(0, max) : res;
+}
+
 
 // [v1407] Rattacher une commande qui a DÉJÀ des paiements enregistrés est un vrai signal
 // d'alerte (double comptage probable) — mais Ben veut GARDER LA MAIN, pas être bloqué : le cas
@@ -19289,6 +19358,14 @@ async function cmdView(id){
     }
     return '';
   }).join('');
+  // [v1407] Contexte mère/filles pour cet écran : une commande FILLE doit montrer D'OÙ vient
+  // son paiement (sinon elle affiche « Payé » sans aucune date ni moyen — incompréhensible) ;
+  // une commande MÈRE doit lister ses sous-commandes et son reliquat.
+  const _mereDeCetteCmd = (o.commandeMereId!=null)
+    ? await db.orders.get(+o.commandeMereId).catch(()=>null) : null;
+  const _ordersTous = await db.orders.toArray().catch(()=>[]);
+  const _fillesDeCetteCmd = commandesFillesDe(o.id, _ordersTous);
+  const _reliquatSiMere = _fillesDeCetteCmd.length ? reliquatCommandeMere(o, _ordersTous) : null;
   openModal(`<h3>Détail commande</h3>
     <p style="margin-bottom:10px"><b>${cl?`<span class="link-name" onclick="closeModal();clientForm(${cl.id})">${esc(cl.nom)}</span>`:'—'}</b> · ${fmtDate(o.date)}${o.heureLivraison?' · '+esc(o.heureLivraison):''}</p>
     ${(function(){
@@ -19301,7 +19378,20 @@ async function cmdView(id){
         <span style="font-size:.92rem;color:#3a2a22">📅 <b>${fmtDate(p.date)||'date ?'}</b> &nbsp;·&nbsp; 💳 <b>${esc(p.moyen||'moyen ?')}</b></span>
         <b style="font-size:.95rem;color:${col}">${euro(p.montant)}</b></div>`;
       let detail='';
-      if(o.paiements&&o.paiements.length){
+      if(_mereDeCetteCmd){
+        // Commande FILLE : on remonte le(s) paiement(s) de la mère, daté(s) et avec le moyen.
+        const pm = paiementsDe(_mereDeCetteCmd);
+        const lignesMere = pm.length
+          ? pm.map(ligne).join('')
+          : `<div style="font-size:.9rem;color:#b3261e;padding-top:6px;font-weight:600">⚠ Aucun encaissement enregistré sur la commande mère #${_mereDeCetteCmd.id}</div>`;
+        detail = `<div style="font-size:.86rem;color:#2f5c2f;padding:6px 0 2px;font-weight:600">
+            ↳ Réglé sur la commande mère <span class="link-name" onclick="closeModal();cmdView(${_mereDeCetteCmd.id})">#${_mereDeCetteCmd.id}</span> — non réencaissé ici</div>`
+          + lignesMere
+          + ((o.paiements&&o.paiements.length)
+             ? `<div style="font-size:.82rem;color:#b3261e;padding-top:8px;font-weight:600">⚠ Cette sous-commande porte AUSSI ses propres paiements (vérifier un éventuel double encaissement) :</div>`
+               + o.paiements.map(ligne).join('')
+             : '');
+      } else if(o.paiements&&o.paiements.length){
         detail = o.paiements.map(ligne).join('');
       } else if(o.paiement==='Payé'){
         detail = ligne({date:o.datePaiement, moyen:o.reglement, montant:o.montant});
@@ -19319,6 +19409,12 @@ async function cmdView(id){
         ${solde>0.009?`<div style="display:flex;justify-content:space-between;font-size:.9rem;padding-top:2px"><span><b>Reste à encaisser</b></span><b style="color:#b3261e">${euro(solde)}</b></div>`:''}
       </div>`;
     })()}
+    ${_reliquatSiMere ? `<div style="border:2px solid var(--bordeaux);background:#fdfaf6;border-radius:14px;padding:12px 14px;margin-bottom:14px">
+      <div style="font-weight:800;color:var(--bordeaux);font-size:1rem;margin-bottom:6px">🔗 ${_fillesDeCetteCmd.length} sous-commande${_fillesDeCetteCmd.length>1?'s':''} rattachée${_fillesDeCetteCmd.length>1?'s':''}</div>
+      <div style="font-size:.88rem;color:#5a4a52;margin-bottom:8px">Déjà retiré <b>${euro(_reliquatSiMere.montantCouvertParFilles)}</b> · Reste à retirer <b style="color:${_reliquatSiMere.reste>0?'#b3261e':'#3f7d52'}">${euro(_reliquatSiMere.reste)}</b>${_reliquatSiMere.entierementRetiree?' <span style="color:#3f7d52;font-weight:600">✓ soldée</span>':''}</div>
+      ${_fillesDeCetteCmd.map(f=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:#fff;border:1px solid #eadfd4;border-radius:8px;margin-bottom:4px;font-size:.86rem">
+        <span class="link-name" onclick="closeModal();cmdView(${f.id})">#${f.id} · retiré le ${fmtDate(f.date)}</span><b>${euro(+f.montant||0)}</b></div>`).join('')}
+    </div>` : ''}
     ${o.lieuLivraison?`<div class="sum-box"><span>📍 Livraison</span><b>${esc(o.lieuLivraison)}</b></div>`:''}
     ${blocks||'<p class="note">Aucun produit.</p>'}
     ${cmdALocation(lignes)?`<div class="sum-box" style="margin-top:8px;background:#faf7f2;color:#8a7a72;font-size:.82rem"><span>🔖 Chèque de caution <span style="font-size:.74rem">(location)</span></span><b>${euro(CAUTION_CHEQUE)} — le jour de la livraison</b></div>`:''}
@@ -19775,33 +19871,121 @@ async function cmdRenderMereBlock(id, mereIdActuel){
   const filles = id ? commandesFillesDe(id, orders) : [];
 
   if(filles.length){
-    const mereFictive = { id, montant: (+((document.getElementById('f_montant')||{}).value)||0) };
+    // [v1407] Vue MÈRE : le montant vient du champ f_mt (et NON f_montant, qui n'existe pas —
+    // bug de la première version : le reliquat affichait toujours 0 €).
+    const mereFictive = { id, montant: (+((document.getElementById('f_mt')||{}).value)||0) };
     const r = reliquatCommandeMere(mereFictive, orders);
+    const paiements = paiementsDe(orders.find(o=>+o.id===+id) || {});
+    const resumePaiement = paiements.length
+      ? paiements.map(p=>`${qty(p.montant)} € en ${esc(p.moyen||'—')} le ${fmtDate(p.date)}`).join(' · ')
+      : '<span style="color:#b3261e">aucun paiement enregistré sur cette commande mère</span>';
     zone.innerHTML = `
-      <label style="font-weight:600;color:var(--bordeaux)">🔗 Sous-commandes rattachées (${filles.length})</label>
-      <div style="font-size:.82rem;color:#5a4a52;margin:4px 0 8px">
-        Payé en une fois ici. Reste à retirer : <b>${qty(r.reste)} €</b> sur ${qty(r.montantTotal)} € commandés.
-        ${r.entierementRetiree ? ' <span style="color:#3d7a3d">✓ Entièrement retirée</span>' : ''}
-      </div>
-      <div style="display:flex;flex-direction:column;gap:4px">
-        ${filles.map(f=>`<div style="font-size:.8rem;padding:6px 10px;background:#f7f2ec;border-radius:8px">
-          #${f.id} · ${fmtDate(f.date)} · ${qty(+f.montant||0)} €
-          <button type="button" class="btn ghost sm" style="float:right;padding:2px 8px" onclick="cmdForm(${f.id})">Ouvrir</button>
-        </div>`).join('')}
+      <div style="border:2px solid var(--bordeaux);border-radius:12px;padding:12px 14px;background:#fdfaf6">
+        <label style="font-weight:600;color:var(--bordeaux);display:block;margin-bottom:6px">🔗 Commande mère · ${filles.length} sous-commande${filles.length>1?'s':''} rattachée${filles.length>1?'s':''}</label>
+        <div style="font-size:.82rem;color:#5a4a52;margin-bottom:4px">💶 Encaissé ici : <b>${resumePaiement}</b></div>
+        <div style="font-size:.82rem;color:#5a4a52;margin-bottom:10px">
+          Déjà retiré : <b>${qty(r.montantCouvertParFilles)} €</b> · Reste à retirer : <b style="color:${r.reste>0?'#b3261e':'#3d7a3d'}">${qty(r.reste)} €</b> sur ${qty(r.montantTotal)} €
+          ${r.entierementRetiree ? ' <span style="color:#3d7a3d;font-weight:600">✓ Entièrement retirée</span>' : ''}
+        </div>
+        <div style="display:flex;flex-direction:column;gap:5px">
+          ${filles.map(f=>`<div style="font-size:.8rem;padding:7px 10px;background:#fff;border:1px solid #eadfd4;border-radius:8px;display:flex;justify-content:space-between;align-items:center">
+            <span>#${f.id} · retiré le ${fmtDate(f.date)} · <b>${qty(+f.montant||0)} €</b></span>
+            <button type="button" class="btn ghost sm" style="padding:2px 10px" onclick="cmdForm(${f.id})">Ouvrir</button>
+          </div>`).join('')}
+        </div>
       </div>`;
     return;
   }
 
-  // Pas encore mère : propose de rattacher CETTE commande à une autre (comme fille).
-  const candidates = orders.filter(o => o.id!==id && o.commandeMereId==null && !commandesFillesDe(o.id, orders).length);
+  // Vue FILLE (ou commande libre) : recherche intelligente + remontée du paiement de la mère.
+  // [v1409] Plus de <select> avec tout l'historique : une barre de recherche « avril 2026
+  // David Siempé ». Et une mère reste proposée TANT QUE son reliquat n'est pas épuisé.
+  const mereActuelle = mereIdActuel ? orders.find(o=>+o.id===+mereIdActuel) : null;
   zone.innerHTML = `
     <label>Rattacher cette commande à une commande mère <span style="color:#9a8a82;font-weight:400">— optionnel, pour un paiement déjà réglé ailleurs</span></label>
-    <select id="f_commandeMereId" onchange="cmdOnMereChange()">
-      <option value="">— Aucune (commande indépendante) —</option>
-      ${candidates.map(o=>`<option value="${o.id}" ${(+mereIdActuel===+o.id)?'selected':''}>#${o.id} · ${fmtDate(o.date)} · ${qty(+o.montant||0)} €</option>`).join('')}
-    </select>
+    <input type="hidden" id="f_commandeMereId" value="${mereIdActuel||''}">
+    <input type="text" id="f_mereRech" placeholder="Rechercher : avril 2026 David Siempé…"
+           oninput="cmdChercherMere(${id||0})" autocomplete="off"
+           style="width:100%;margin-bottom:6px">
+    <div id="cmdMereResultats"></div>
+    <div id="cmdMereInfo"></div>
     <div id="cmdMereAlerte"></div>`;
-  if(mereIdActuel) cmdOnMereChange();
+  if(mereActuelle) await cmdRenderInfoMere();
+  else cmdChercherMere(id||0);
+}
+
+// [v1409] Recherche des mères candidates et rendu de la liste (max 12 résultats — jamais
+// tout l'historique). Chaque résultat montre le client, la date, le montant ET le reste à
+// retirer : c'est ce reste qui indique d'un coup d'œil si la mère peut encore accueillir
+// une sous-commande.
+async function cmdChercherMere(idCourant){
+  const zone = document.getElementById('cmdMereResultats');
+  const champ = document.getElementById('f_mereRech');
+  if(!zone || !champ) return;
+  const [orders, clients] = await Promise.all([
+    db.orders.toArray().catch(()=>[]),
+    db.clients.toArray().catch(()=>[]),
+  ]);
+  const q = champ.value || '';
+  const res = filtrerCommandesMere(q, orders, clients, idCourant, 12);
+  const nomDe = cid => { const c=clients.find(x=>+x.id===+cid); return c?(c.nom||'—'):'—'; };
+  const selId = +((document.getElementById('f_commandeMereId')||{}).value)||0;
+
+  if(!res.length){
+    zone.innerHTML = `<p class="note" style="font-size:.8rem;color:#9a8a82;padding:6px 0">
+      ${q.trim() ? 'Aucune commande mère disponible pour cette recherche.' : 'Tape un nom de client, un mois ou une année pour trouver la commande mère.'}
+      <br><span style="font-size:.74rem">Seules les commandes dont le montant n'est pas entièrement retiré peuvent recevoir une sous-commande.</span></p>`;
+    return;
+  }
+  zone.innerHTML = res.map(o=>{
+    const r = reliquatCommandeMere(o, orders);
+    const actif = (+o.id===selId);
+    return `<div onclick="cmdChoisirMere(${o.id},${idCourant})"
+      style="cursor:pointer;padding:8px 10px;margin-bottom:4px;border-radius:9px;font-size:.84rem;
+             border:2px solid ${actif?'var(--bordeaux)':'#eadfd4'};background:${actif?'#fdf2f4':'#fff'}">
+      <div style="display:flex;justify-content:space-between;gap:8px">
+        <b>${esc(nomDe(o.clientId))}</b><span style="color:#7a6a62">${fmtDate(o.date)}</span>
+      </div>
+      <div style="font-size:.78rem;color:#5a4a52;margin-top:2px">
+        #${o.id} · total ${qty(r.montantTotal)} € · reste à retirer <b style="color:#b3261e">${qty(r.reste)} €</b>
+        ${r.nbFilles ? ` · déjà ${r.nbFilles} sous-commande${r.nbFilles>1?'s':''}` : ''}
+        ${actif ? ' <span style="color:var(--bordeaux);font-weight:700">✓ sélectionnée</span>' : ''}
+      </div></div>`;
+  }).join('');
+}
+
+// Sélectionne une mère depuis la liste de résultats.
+function cmdChoisirMere(mereId, idCourant){
+  const hid = document.getElementById('f_commandeMereId');
+  if(!hid) return;
+  hid.value = (+hid.value===+mereId) ? '' : mereId;   // re-cliquer désélectionne
+  cmdChercherMere(idCourant);
+  cmdOnMereChange();
+}
+
+// [v1407] Bandeau vert sur une commande FILLE : rappelle d'où vient l'argent, de façon
+// explicite et datée — « Payé en espèces le 12/07/2026 sur la commande mère #42 ».
+// Sans ça, une sous-commande semblait payée sans qu'on sache ni quand, ni comment, ni où.
+async function cmdRenderInfoMere(){
+  const zone = document.getElementById('cmdMereInfo');
+  const sel = document.getElementById('f_commandeMereId');
+  if(!zone || !sel) return;
+  if(!sel.value){ zone.innerHTML=''; return; }
+  const mere = await db.orders.get(+sel.value).catch(()=>null);
+  if(!mere){ zone.innerHTML=''; return; }
+  const paiements = paiementsDe(mere);
+  const orders = await db.orders.toArray().catch(()=>[]);
+  const r = reliquatCommandeMere(mere, orders);
+  const lignes = paiements.length
+    ? paiements.map(p=>`Payé ${qty(p.montant)} € en <b>${esc(p.moyen||'—')}</b> le <b>${fmtDate(p.date)}</b>`).join('<br>')
+    : '<span style="color:#b3261e">⚠ Aucun paiement enregistré sur la commande mère #'+mere.id+'</span>';
+  zone.innerHTML = `
+    <div style="margin-top:8px;padding:10px 12px;background:#eef6ee;border:1px solid #7bb07b;border-radius:10px;font-size:.82rem;color:#2f5c2f">
+      <b>✓ Déjà réglé sur la commande mère #${mere.id}</b><br>
+      ${lignes}
+      <div style="margin-top:6px;color:#4a6a4a">Cette sous-commande n'est donc <b>pas encaissée à nouveau</b>. Reste à retirer sur la mère : <b>${qty(r.reste)} €</b>.</div>
+      <button type="button" class="btn ghost sm" style="margin-top:6px;padding:2px 10px" onclick="cmdForm(${mere.id})">Ouvrir la commande mère</button>
+    </div>`;
 }
 
 // Réagit au choix d'une mère : affiche l'avertissement rouge si CETTE commande (la future fille)
@@ -19810,11 +19994,12 @@ function cmdOnMereChange(){
   const sel = document.getElementById('f_commandeMereId');
   const alerteZone = document.getElementById('cmdMereAlerte');
   if(!sel || !alerteZone) return;
-  if(!sel.value){ alerteZone.innerHTML=''; return; }
+  if(!sel.value){ alerteZone.innerHTML=''; cmdRenderInfoMere(); return; }
   const alerte = alerteRattachementFille({ paiements: (typeof cmdPayments!=='undefined' ? cmdPayments : []) });
   alerteZone.innerHTML = alerte
     ? `<p style="color:#b3261e;font-size:.78rem;margin-top:6px;padding:8px;background:#fdf0ee;border-radius:8px">${alerte.message}</p>`
     : '';
+  cmdRenderInfoMere();
 }
 
 function cmdAddPayment(){
