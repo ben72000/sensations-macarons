@@ -250,6 +250,18 @@ G.money2 = n => Math.round((+n||0)*100)/100;
   // -- tri : le plus récent en premier --
   const tri = G.filtrerCommandesMere('siempe', orders, clients, 99);
   ok(tri[0].date === '2026-11-03', '51 · résultats triés du plus récent au plus ancien');
+
+  // -- [v1410] RIEN tant que rien n'est tapé --
+  // Ben : « les commandes potentiellement rattachables ne doivent pas apparaître […] je me
+  // retrouve avec une liste longue comme le bras qui vient polluer ma page. »
+  ok(G.filtrerCommandesMere('', orders, clients, 99).length === 0,
+     '52 · saisie VIDE → aucun résultat (la page reste propre à l\'ouverture)');
+  ok(G.filtrerCommandesMere('   ', orders, clients, 99).length === 0,
+     '53 · saisie composée d\'espaces → aucun résultat non plus');
+  ok(G.filtrerCommandesMere(null, orders, clients, 99).length === 0,
+     '54 · saisie nulle → aucun résultat (robuste)');
+  ok(G.filtrerCommandesMere('s', orders, clients, 99).length === 2,
+     '55 · dès la 1re lettre tapée, les résultats apparaissent');
 }
 
 console.log(`\n=== v1407 : ${nOk} OK, ${nKo} KO ===\n`);
