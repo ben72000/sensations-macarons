@@ -124,7 +124,9 @@ const SUITES = [
   'v1402-stock-parfum-reserve.test.js',    // v1402 · la liste Stock par parfum soustrait la réserve online (fin de la logique parallèle qui ignorait la réserve)
   'v1403-fusion-recettes.test.js',         // v1403 · fusion de recettes doublons (réaffecte les productions, supprime le doublon, atomique)
   'v1404-diagnostic-noms-stock.test.js',   // v1404 · diagnostic : d'où vient chaque nom du stock
-  'v1405-praline-noisette-coherence.test.js' // v1405 · « Praliné noisette » singulier aligné (FLAVORS/couleur/code) — fin de la pastille fantôme au pluriel
+  'v1405-praline-noisette-coherence.test.js', // v1405 · « Praliné noisette » singulier aligné (FLAVORS/couleur/code)
+  'v1406-reglages-livraison.test.js',      // v1406 · réglages vente en ligne : adresse labo, tarif 1€/km, créneaux hebdo max 3, message rupture client
+  'v1407-commande-mere-filles.test.js'     // v1407 · commandes mère/filles : paiement groupé encaissé UNE fois, retraits échelonnés rattachés après coup (anti double comptage)
 ];
 
 let allOk = true;

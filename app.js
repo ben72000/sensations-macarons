@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1405';
+const APP_VERSION = 'v1407';
 const APP_MAJ = 'CHANTIER A — L’APP NE PEUT PLUS ÉCHOUER EN SILENCE. Le constat de l’audit était dur : 347 endroits du code attrapaient une erreur et l’enregistraient fidèlement… dans un carnet que TU NE POUVAIS PAS OUVRIR. Il fallait brancher l’iPhone sur un Mac. Autant dire jamais. ET LE CARNET ÉTAIT EFFACÉ À CHAQUE RECHARGEMENT. C’est le mécanisme EXACT qui a caché la panne Dexie pendant un mois : chaque écriture kv échouait, la validation ne démarrait jamais, et l’écran affichait « 0 refus, 0 suspects » — ce qui RESSEMBLAIT à une bonne nouvelle alors que ça voulait dire « le contrôle n’a jamais démarré ». CE QUI CHANGE. 1) UN ÉCRAN « Santé de l’app » (Sauvegarde & sécurité) : tu lis enfin ce qui a cassé, depuis ton téléphone, sans Mac. 2) LES INCIDENTS VIVENT EN BASE (nouvelle table errLog) : ils survivent à un rechargement, donc tu peux constater qu’une panne DURE — c’est précisément ce que l’ancien carnet en mémoire rendait impossible. 3) UN FILET GLOBAL : une erreur hors try/catch te donnait un écran figé sans trace ; elle est maintenant enregistrée et annoncée par une bannière discrète. 4) UNE PASTILLE SUR L’ACCUEIL quand des incidents IMPORTANTS s’accumulent. LE TRI QUE J’AI FIGÉ, et qui est le cœur du travail : un échec d’AFFICHAGE et un échec d’ÉCRITURE EN BASE ne se valent pas. Base, sauvegarde, import, validation, compta → IMPORTANT, ça parle. Rendu, affichage → mineur, ça s’enregistre sans crier. Confondre les deux, c’est noyer le signal sous le bruit, et une alerte qui crie tout le temps est une alerte qu’on ne regarde plus. CE QUE JE N’AI PAS FAIT : deviner la cause d’une erreur, ni prétendre la réparer. L’écran montre ce qui s’est réellement passé. Une explication inventée serait pire qu’un silence. ET UNE MISE EN GARDE QUE JE TE DOIS : un écran Santé VIDE n’est PAS une preuve que tout va bien — c’est une absence d’incident enregistré, ce qui n’est pas la même chose. LA RÈGLE FIGÉE : une protection qu’on ne peut pas VOIR marcher doit être considérée comme ABSENTE jusqu’à preuve du contraire. Reste à faire : chantier B (valider le contenu à l’import), C (sortir les sauvegardes de la boîte qu’elles protègent), D (durcir import et QR). Suite : 88 → 89 suites, 1437 → 1475 assertions vertes.';
 
 // ============================================================
@@ -1257,7 +1257,8 @@ const VALIDE_SCHEMAS = {
     champs: { date:'dateJ', statut:'chaineNonVide', clientId:'idRef', montant:'nombreFini',
               lignes:'tableau', paiements:'tableau', remiseGlobale:'nombreFini', remiseGlobaleEur:'nombreFini',
               fraisLivraison:'nombreFini', distanceKm:'nombreFini', tempsLivraisonMin:'nombreFini',
-              persoMacarons:'nombreFini', dateEvenement:'chaine', heureLivraison:'chaine' },
+              persoMacarons:'nombreFini', dateEvenement:'chaine', heureLivraison:'chaine',
+              commandeMereId:'idRef' },
     alertes: { montant:{ min:0 } }
   },
   orderItems: {
@@ -4808,6 +4809,17 @@ function getSettings(){
       sasUrl: (s.sasUrl!=null) ? String(s.sasUrl) : '',
       sasToken: (s.sasToken!=null) ? String(s.sasToken) : '',
       sasCurseur: (parseInt(s.sasCurseur,10)>0) ? parseInt(s.sasCurseur,10) : 0,
+      // [v1406] VENTE EN LIGNE — LIVRAISON. Ces réglages sont pilotés dans l'ERP puis destinés à
+      // voyager vers Shopify (via le sas) qui calcule les frais au moment de la commande client.
+      // adresseLabo = point de départ du calcul de distance (Ben la saisit ici, jamais en dur).
+      // tarifLivraisonKm = prix par km ALLER (défaut 1 €/km). creneaux = créneaux hebdo de livraison
+      // et d'enlèvement (max 3 chacun), que Ben modifie semaine après semaine.
+      adresseLabo: (s.adresseLabo!=null) ? String(s.adresseLabo) : '',
+      tarifLivraisonKm: (s.tarifLivraisonKm!=null && s.tarifLivraisonKm!=='' && +s.tarifLivraisonKm>=0) ? +s.tarifLivraisonKm : 1,
+      creneaux: (s.creneaux && typeof s.creneaux==='object' && !Array.isArray(s.creneaux))
+        ? { livraison: Array.isArray(s.creneaux.livraison)?s.creneaux.livraison.slice(0,3):[],
+            enlevement: Array.isArray(s.creneaux.enlevement)?s.creneaux.enlevement.slice(0,3):[] }
+        : { livraison: [], enlevement: [] },
       // [v1283] Trésorerie prospective : solde bancaire saisi à la main, mis à jour périodiquement.
       // Pas de valeur par défaut pertinente (0€ serait une vraie saisie) → null tant que non renseigné.
       soldeBancaire: (s.soldeBancaire!=null && s.soldeBancaire!=='') ? +s.soldeBancaire : null,
@@ -6003,6 +6015,58 @@ function paiementsDe(o){
   }
   return [];
 }
+
+// [v1407] COMMANDES MÈRE / FILLES — paiement groupé, retraits échelonnés à des dates inconnues
+// d'avance. Cas Ben : un client paie une grosse commande d'un coup (la « mère », avec son
+// montant et son registre paiements[] normal), puis vient chercher sa commande en plusieurs
+// fois, à des dates qui ne sont pas connues à l'avance. Chaque venue devient une commande
+// normale (une « fille »), créée le jour même comme n'importe quelle commande, mais avec
+// `commandeMereId` pointant vers la mère. Une fille N'A JAMAIS SON PROPRE PAIEMENT : son argent
+// a déjà été compté une seule fois, à la mère. RÈGLE D'OR : commandeMereId ⇒ paiements[] doit
+// rester vide sur la fille (appliqué par cmdSave, cf plus bas) — sinon double comptage du CA.
+
+// Renvoie les commandes filles d'une mère donnée (jamais la mère elle-même). PURE.
+function commandesFillesDe(mereId, orders){
+  if(mereId==null) return [];
+  return (orders||[]).filter(o => o && +o.commandeMereId===+mereId);
+}
+
+// Calcule ce qu'il reste à retirer sur une commande mère : son montant total moins la part déjà
+// couverte par ses filles. On raisonne en euros (proxy simple du « reste dû en valeur »), pas en
+// quantités de macarons — la composition exacte de chaque venue reste libre. PURE.
+//   mere   : la commande mère (doit avoir un montant)
+//   orders : toutes les commandes (pour y retrouver les filles)
+// Renvoie { montantTotal, montantCouvertParFilles, reste, nbFilles, entierementRetiree }.
+function reliquatCommandeMere(mere, orders){
+  const montantTotal = money2(+((mere && mere.montant) || 0));
+  const filles = commandesFillesDe(mere && mere.id, orders);
+  const montantCouvertParFilles = money2(filles.reduce((s,f) => s + (+((f && f.montant) || 0)), 0));
+  const reste = money2(Math.max(0, montantTotal - montantCouvertParFilles));
+  return {
+    montantTotal, montantCouvertParFilles, reste,
+    nbFilles: filles.length,
+    entierementRetiree: reste <= 0.01 && filles.length > 0,
+  };
+}
+
+// [v1407] Rattacher une commande qui a DÉJÀ des paiements enregistrés est un vrai signal
+// d'alerte (double comptage probable) — mais Ben veut GARDER LA MAIN, pas être bloqué : le cas
+// peut être légitime (correction manuelle, ancienne commande à réorganiser). On ne bloque donc
+// jamais ; on renvoie un avertissement détaillé que l'écran affichera en rouge AVANT confirmation.
+// PURE — ne modifie rien, se contente de décrire la situation.
+function alerteRattachementFille(fille){
+  const paiements = paiementsDe(fille);
+  if(!paiements.length) return null;  // rien à signaler : cas normal
+  const total = money2(paiements.reduce((s,p)=>s+(+p.montant||0),0));
+  const detail = paiements.map(p => `${qty(p.montant)} € (${esc(p.moyen||'—')}) le ${fmtDate(p.date)}`).join(', ');
+  return {
+    total,
+    detail,
+    message: `⚠ Cette commande a déjà ${paiements.length} paiement(s) enregistré(s) pour ${qty(total)} € : ${detail}. `
+           + `La rattacher comme sous-commande ne les supprime pas, mais ils resteront comptés ICI en plus du paiement de la commande mère — vérifie qu'il ne s'agit pas d'un double encaissement avant de confirmer.`,
+  };
+}
+
 // ============================================================================
 //  [v1336] LE CA DES MARCHÉS AVAIT DISPARU — et le fond de caisse était compté comme du CA.
 // ----------------------------------------------------------------------------
@@ -6129,6 +6193,11 @@ function caEncaisseParMois(orders, markets){
       const k=ymKey(p.date||o.date||'');
       if(k) parMois[k]=(parMois[k]||0)+m;
     });
+    // [v1407] Une commande FILLE (commandeMereId renseigné) n'a jamais son propre paiement :
+    // l'argent a déjà été encaissé une seule fois, à la mère. Sans cette exclusion, son montant
+    // (non payé ICI) gonflerait « en attente » alors que la commande est en réalité déjà réglée
+    // — double comptage inversé, aussi faux qu'un double encaissement.
+    if(o.commandeMereId!=null) return;
     // reste à encaisser sur cette commande → en attente (pas compté dans le CA mensuel)
     const reste=(+o.montant||0)-encaisse;
     if(reste>0.01) enAttente+=reste;
@@ -18243,6 +18312,11 @@ function orderPaid(o){
 function orderBalance(o){ return money2(((+o.montant)||0) - orderPaid(o)); }
 // Statut dérivé : Payé (solde ≤ 0), Partiel (encaissé > 0), sinon En attente.
 function orderPayStatus(o){
+  // [v1407] Une commande FILLE (commandeMereId renseigné) est réputée PAYÉE : son argent a déjà
+  // été encaissé, une seule fois, sur la commande mère. Sans ce cas particulier, elle
+  // apparaîtrait « En attente » partout dans l'app (listes, bouton « Solder »…) alors qu'elle
+  // est en réalité déjà réglée — source de confusion et de double-encaissement par erreur.
+  if(o && o.commandeMereId!=null) return 'Payé';
   const total=(+o.montant)||0, paid=orderPaid(o);
   if(total>0 && paid+1e-9>=total) return 'Payé';
   if(paid>0) return 'Partiel';
@@ -19626,6 +19700,8 @@ async function cmdForm(id, opts){
 
    <label class="switch-row" style="margin-top:10px"><input type="checkbox" id="f_acompteMention" ${o.acompteMention!==false?'checked':''}> Afficher la mention « acompte de 75 % requis » sur le devis <span style="color:#9a8a82;font-weight:400">— décoche pour la masquer sur cette commande</span></label>
 
+   <div class="field" style="margin-top:14px" id="cmdMereBlock"></div>
+
    <div class="pay-ledger" style="margin-top:14px">
      <div style="margin-bottom:6px">
        <label style="font-weight:600;color:var(--bordeaux)">Paiements encaissés</label>
@@ -19642,6 +19718,7 @@ async function cmdForm(id, opts){
 
    <p class="note" style="font-size:.78rem;color:#7a6a62;display:flex;gap:6px;align-items:center;margin-top:4px">📅 <span>Cette commande est ajoutée automatiquement au calendrier${(o.dateEvenement||o.date) ? ` le ${fmtDate(o.dateEvenement||o.date)}` : ''}.</span></p>
    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveCmd(${id||0})">Enregistrer</button></div>`);
+  await cmdRenderMereBlock(id||0, o.commandeMereId||null);
   // initialise le registre de paiements en mémoire (copie de travail)
   // Initialise le registre d'édition. Pour une ancienne commande « Payé » sans registre,
   // on reconstitue une ligne à partir des données réellement enregistrées (date/mode si connus),
@@ -19686,6 +19763,60 @@ async function cmdForm(id, opts){
 }
 // Registre de paiements en cours d'édition (copie de travail, écrit en base au save)
 let cmdPayments=[];
+// [v1407] Dessine le bloc de rattachement mère/fille dans le formulaire commande.
+//   - Commande NEUVE ou SANS filles ⇒ champ « Rattacher à une commande mère » (sélection libre
+//     parmi les commandes existantes, la commande courante exclue de la liste).
+//   - Commande MÈRE (a déjà ≥1 fille) ⇒ liste des filles + reliquat, PAS de champ de
+//     rattachement (une mère ne peut pas être elle-même une fille — évite les cycles).
+async function cmdRenderMereBlock(id, mereIdActuel){
+  const zone = document.getElementById('cmdMereBlock');
+  if(!zone) return;
+  const orders = await db.orders.toArray().catch(()=>[]);
+  const filles = id ? commandesFillesDe(id, orders) : [];
+
+  if(filles.length){
+    const mereFictive = { id, montant: (+((document.getElementById('f_montant')||{}).value)||0) };
+    const r = reliquatCommandeMere(mereFictive, orders);
+    zone.innerHTML = `
+      <label style="font-weight:600;color:var(--bordeaux)">🔗 Sous-commandes rattachées (${filles.length})</label>
+      <div style="font-size:.82rem;color:#5a4a52;margin:4px 0 8px">
+        Payé en une fois ici. Reste à retirer : <b>${qty(r.reste)} €</b> sur ${qty(r.montantTotal)} € commandés.
+        ${r.entierementRetiree ? ' <span style="color:#3d7a3d">✓ Entièrement retirée</span>' : ''}
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        ${filles.map(f=>`<div style="font-size:.8rem;padding:6px 10px;background:#f7f2ec;border-radius:8px">
+          #${f.id} · ${fmtDate(f.date)} · ${qty(+f.montant||0)} €
+          <button type="button" class="btn ghost sm" style="float:right;padding:2px 8px" onclick="cmdForm(${f.id})">Ouvrir</button>
+        </div>`).join('')}
+      </div>`;
+    return;
+  }
+
+  // Pas encore mère : propose de rattacher CETTE commande à une autre (comme fille).
+  const candidates = orders.filter(o => o.id!==id && o.commandeMereId==null && !commandesFillesDe(o.id, orders).length);
+  zone.innerHTML = `
+    <label>Rattacher cette commande à une commande mère <span style="color:#9a8a82;font-weight:400">— optionnel, pour un paiement déjà réglé ailleurs</span></label>
+    <select id="f_commandeMereId" onchange="cmdOnMereChange()">
+      <option value="">— Aucune (commande indépendante) —</option>
+      ${candidates.map(o=>`<option value="${o.id}" ${(+mereIdActuel===+o.id)?'selected':''}>#${o.id} · ${fmtDate(o.date)} · ${qty(+o.montant||0)} €</option>`).join('')}
+    </select>
+    <div id="cmdMereAlerte"></div>`;
+  if(mereIdActuel) cmdOnMereChange();
+}
+
+// Réagit au choix d'une mère : affiche l'avertissement rouge si CETTE commande (la future fille)
+// a déjà des paiements enregistrés — sans jamais bloquer (Ben garde la main).
+function cmdOnMereChange(){
+  const sel = document.getElementById('f_commandeMereId');
+  const alerteZone = document.getElementById('cmdMereAlerte');
+  if(!sel || !alerteZone) return;
+  if(!sel.value){ alerteZone.innerHTML=''; return; }
+  const alerte = alerteRattachementFille({ paiements: (typeof cmdPayments!=='undefined' ? cmdPayments : []) });
+  alerteZone.innerHTML = alerte
+    ? `<p style="color:#b3261e;font-size:.78rem;margin-top:6px;padding:8px;background:#fdf0ee;border-radius:8px">${alerte.message}</p>`
+    : '';
+}
+
 function cmdAddPayment(){
   const reste=cmdCurrentBalance();
   // Aucune donnée auto-générée : date et mode vides, à saisir manuellement.
@@ -21658,6 +21789,12 @@ async function saveCmd(id){
     paiements,
     dateReglementFinal: val('f_dateFinal')||'',
     statut:val('f_st'), notes:val('f_notes'),
+    // [v1407] Rattachement à une commande mère (paiement déjà encaissé ailleurs). Champ absent
+    // du formulaire (commande déjà mère, avec des filles) ⇒ on NE TOUCHE PAS à une éventuelle
+    // valeur existante, pour ne jamais casser un rattachement en rouvrant/resauvant la fiche.
+    ...(document.getElementById('f_commandeMereId')
+        ? { commandeMereId: val('f_commandeMereId') ? +val('f_commandeMereId') : null }
+        : {}),
     prixManuel: !!_cmdPriceManual,   // mémorise un prix forcé à la main (respecté à la réouverture)
     // on neutralise les anciens champs mono-type
     type:'multi', taille:0, parfums:[], evQte:0, equip:0, tarif:'', bigItems:[]
@@ -21666,7 +21803,10 @@ async function saveCmd(id){
   syncPaymentFields(o);
   if(o.montant<0){toast('Le prix ne peut pas être négatif');return;}
   // garde-fou : un encaissement sans date ne doit jamais passer (traçabilité)
-  if(orderPayStatus(o)!=='En attente' && !o.datePaiement){ toast('Date de paiement manquante'); return; }
+  // [v1407] EXCEPTION : une commande fille est réputée « Payé » (cf orderPayStatus) alors qu'elle
+  // n'a PAS de datePaiement propre — c'est normal, son encaissement vit sur la commande mère.
+  // Sans cette exception, le garde-fou bloquerait toute sauvegarde de sous-commande.
+  if(o.commandeMereId==null && orderPayStatus(o)!=='En attente' && !o.datePaiement){ toast('Date de paiement manquante'); return; }
   // === MODE DEVIS : on enregistre dans le registre 'documents', pas dans les commandes ===
   if(_cmdDevisMode){
     const numero = _cmdDevisId ? (await db.documents.get(_cmdDevisId)||{}).numero : await nextDocNumero('devis');
@@ -25620,6 +25760,19 @@ async function _stockReserveOnlineHtml(){
           <input type="password" id="f_sasToken" value="${esc(s.sasToken||'')}" placeholder="jeton secret" style="width:100%"></label>
         <button class="btn ghost" style="align-self:flex-start" onclick="sasConfigSave()">Enregistrer la connexion</button>
       </div></details>
+    <details style="margin-top:8px"><summary style="cursor:pointer;font-size:.8rem;color:#7a6a62">🚚 Livraison & créneaux</summary>
+      <div style="padding:8px 0;display:flex;flex-direction:column;gap:6px">
+        <label style="font-size:.78rem;color:#7a6a62">Adresse du labo (point de départ des livraisons)
+          <input type="text" id="f_adresseLabo" value="${esc(s.adresseLabo||'')}" placeholder="ex : 12 rue des Macarons, 72000 Le Mans" style="width:100%"></label>
+        <label style="font-size:.78rem;color:#7a6a62">Tarif livraison (€ par km, aller seulement)
+          <input type="number" id="f_tarifKm" value="${esc(String(s.tarifLivraisonKm!=null?s.tarifLivraisonKm:1))}" step="0.1" min="0" style="width:100%"></label>
+        <label style="font-size:.78rem;color:#7a6a62">Créneaux de livraison (un par ligne, max 3)
+          <textarea id="f_creneauxLivr" rows="3" placeholder="ex : Mercredi 17h-19h" style="width:100%">${esc((s.creneaux&&s.creneaux.livraison||[]).join('\n'))}</textarea></label>
+        <label style="font-size:.78rem;color:#7a6a62">Créneaux d'enlèvement / click & collect (un par ligne, max 3)
+          <textarea id="f_creneauxEnlv" rows="3" placeholder="ex : Samedi 10h-12h" style="width:100%">${esc((s.creneaux&&s.creneaux.enlevement||[]).join('\n'))}</textarea></label>
+        <p style="font-size:.72rem;color:#9a8a82;margin:2px 0">Ces réglages te servent de référence ; ils seront transmis à la boutique en ligne (via le sas) pour calculer les frais et proposer les créneaux au client. Au-delà de 3 créneaux, seuls les 3 premiers sont gardés.</p>
+        <button class="btn ghost" style="align-self:flex-start" onclick="livraisonConfigSave()">Enregistrer la livraison</button>
+      </div></details>
   </div>`;
   return `<details class="panel" style="padding:0"><summary style="padding:14px 16px;cursor:pointer;font-weight:600;font-size:1.05rem">🛒 Réserve vente en ligne${resume}</summary>
     <div style="padding:0 16px 14px">
@@ -25646,6 +25799,36 @@ function sasConfigSave(){
   saveSettings(s);
   if(typeof markUnsaved==='function') markUnsaved();
   toast('Connexion au sas enregistrée');
+  if(typeof renderStockParfums==='function') renderStockParfums();
+}
+
+// [v1406] Normalise une liste de créneaux : nettoie, retire les vides, PLAFONNE à 3 (règle de Ben :
+// pas plus de 3 par semaine). PURE. Chaque créneau est une chaîne libre (« Mercredi 17h-19h »).
+function _normaliserCreneaux(liste){
+  return (Array.isArray(liste)?liste:[])
+    .map(c => String(c==null?'':c).trim())
+    .filter(c => c.length>0)
+    .slice(0, 3);   // jamais plus de 3
+}
+
+// [v1406] Enregistre les réglages de livraison (adresse labo, tarif/km, créneaux). Les créneaux
+// arrivent en 2 champs multi-lignes (un créneau par ligne), plafonnés à 3 chacun.
+function livraisonConfigSave(){
+  const adresse = (document.getElementById('f_adresseLabo')||{}).value || '';
+  const tarif = (document.getElementById('f_tarifKm')||{}).value;
+  const livrTxt = (document.getElementById('f_creneauxLivr')||{}).value || '';
+  const enlvTxt = (document.getElementById('f_creneauxEnlv')||{}).value || '';
+  const s = getSettings();
+  s.adresseLabo = adresse.trim();
+  const t = parseFloat(String(tarif).replace(',','.'));
+  s.tarifLivraisonKm = (isFinite(t) && t>=0) ? t : 1;
+  s.creneaux = {
+    livraison: _normaliserCreneaux(livrTxt.split('\n')),
+    enlevement: _normaliserCreneaux(enlvTxt.split('\n')),
+  };
+  saveSettings(s);
+  if(typeof markUnsaved==='function') markUnsaved();
+  toast('Réglages de livraison enregistrés');
   if(typeof renderStockParfums==='function') renderStockParfums();
 }
 
@@ -25729,6 +25912,9 @@ function etatReassortOnline(nom){
 }
 // Délai de réassort annoncé au client quand la réserve online est épuisée (heures).
 const REASSORT_DELAI_H = 48;
+// [v1406] Message affiché au client en boutique quand un parfum est en réassort (réserve à 0).
+// La commande reste AUTORISÉE (le client achète, il attend le réassort) — voulu par Ben.
+const MSG_REASSORT_CLIENT = 'Votre macaron préféré revient très vite. Un délai de réassort de '+REASSORT_DELAI_H+'h est nécessaire pour pouvoir honorer votre commande.';
 
 // [v1398] SYNCHRO SAS — le flux C côté ERP. Geste EXPLICITE (bouton), jamais automatique.
 // 1) lit le journal des ventes du sas depuis notre curseur ; 2) applique chaque vente via
