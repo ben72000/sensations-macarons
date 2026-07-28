@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1411';
+const APP_VERSION = 'v1412';
 const APP_MAJ = 'CHANTIER A — L’APP NE PEUT PLUS ÉCHOUER EN SILENCE. Le constat de l’audit était dur : 347 endroits du code attrapaient une erreur et l’enregistraient fidèlement… dans un carnet que TU NE POUVAIS PAS OUVRIR. Il fallait brancher l’iPhone sur un Mac. Autant dire jamais. ET LE CARNET ÉTAIT EFFACÉ À CHAQUE RECHARGEMENT. C’est le mécanisme EXACT qui a caché la panne Dexie pendant un mois : chaque écriture kv échouait, la validation ne démarrait jamais, et l’écran affichait « 0 refus, 0 suspects » — ce qui RESSEMBLAIT à une bonne nouvelle alors que ça voulait dire « le contrôle n’a jamais démarré ». CE QUI CHANGE. 1) UN ÉCRAN « Santé de l’app » (Sauvegarde & sécurité) : tu lis enfin ce qui a cassé, depuis ton téléphone, sans Mac. 2) LES INCIDENTS VIVENT EN BASE (nouvelle table errLog) : ils survivent à un rechargement, donc tu peux constater qu’une panne DURE — c’est précisément ce que l’ancien carnet en mémoire rendait impossible. 3) UN FILET GLOBAL : une erreur hors try/catch te donnait un écran figé sans trace ; elle est maintenant enregistrée et annoncée par une bannière discrète. 4) UNE PASTILLE SUR L’ACCUEIL quand des incidents IMPORTANTS s’accumulent. LE TRI QUE J’AI FIGÉ, et qui est le cœur du travail : un échec d’AFFICHAGE et un échec d’ÉCRITURE EN BASE ne se valent pas. Base, sauvegarde, import, validation, compta → IMPORTANT, ça parle. Rendu, affichage → mineur, ça s’enregistre sans crier. Confondre les deux, c’est noyer le signal sous le bruit, et une alerte qui crie tout le temps est une alerte qu’on ne regarde plus. CE QUE JE N’AI PAS FAIT : deviner la cause d’une erreur, ni prétendre la réparer. L’écran montre ce qui s’est réellement passé. Une explication inventée serait pire qu’un silence. ET UNE MISE EN GARDE QUE JE TE DOIS : un écran Santé VIDE n’est PAS une preuve que tout va bien — c’est une absence d’incident enregistré, ce qui n’est pas la même chose. LA RÈGLE FIGÉE : une protection qu’on ne peut pas VOIR marcher doit être considérée comme ABSENTE jusqu’à preuve du contraire. Reste à faire : chantier B (valider le contenu à l’import), C (sortir les sauvegardes de la boîte qu’elles protègent), D (durcir import et QR). Suite : 88 → 89 suites, 1437 → 1475 assertions vertes.';
 
 // ============================================================
@@ -7578,6 +7578,30 @@ async function caDuMois(mk){
     });
   }catch(e){swallow(e,'caDuMois')}
   return { total: money2(totalCmd+totalMk), totalCmd: money2(totalCmd), totalMk: money2(totalMk), lignesCmd, lignesMk };
+}
+
+// [v1412] Détail d'UNE CATÉGORIE (marchandise ou service) du Bilan URSSAF, pour LE MOIS affiché.
+// Retour de Ben : cliquer sur « Vente de marchandise » ou « Prestation de service » envoyait vers
+// l'écran Commandes en vrac (tout l'historique, non trié) ou vers la Rentabilité par client — ni
+// l'un ni l'autre ne filtre par mois ni par catégorie. Le détail (detailGoods/detailService)
+// existait DÉJÀ dans computeMonthlyBilan, mais rien ne l'affichait. Cet écran corrige ça : liste
+// triée par date, du plus récent au plus ancien, chaque ligne ouvre sa commande d'origine.
+async function comptaCategorieDetail(ym, categorie){
+  const B = await computeMonthlyBilan(ym);
+  const lignes = (categorie==='service' ? B.detailService : B.detailGoods).slice()
+    .sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
+  const titre = categorie==='service' ? '🧑‍🍳 Prestation de service' : '🛍️ Vente de marchandise';
+  const total = categorie==='service' ? B.service : B.goods;
+  const rows = lignes.length ? lignes.map(l=>
+    `<div class="sum-box" style="${l.oid?'cursor:pointer':''}" ${l.oid?`onclick="closeModal();cmdView(${l.oid})"`:''}>
+       <span>${l.date?fmtDate(l.date)+' · ':''}${esc(l.label)}</span>
+       <b style="color:${l.montant<0?'#b3261e':'inherit'}">${euro(l.montant)}</b></div>`).join('')
+    : '<p class="note">Aucune ligne dans cette catégorie ce mois-ci.</p>';
+  openModal(`<h3>${titre} — ${esc(monthLabel(ym))}</h3>
+    <p class="note">Détail des encaissements de cette catégorie, triés du plus récent au plus ancien. Touche une ligne pour ouvrir la commande.</p>
+    ${rows}
+    <div class="sum-box" style="border-top:2px solid var(--bordeaux);margin-top:10px"><span><b>Total</b></span><b style="color:var(--bordeaux)">${euro(total)}</b></div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
 }
 
 async function caMonthDetail(mk){
@@ -24430,15 +24454,17 @@ async function computeMonthlyBilan(ym){
     // [v1194] Source unique paiementsDe : capte le legacy « Payé » même sans datePaiement (daté sur
     // o.date), IDENTIQUE au dashboard et à computeAccounting. L'ancien repli le ratait → le bilan
     // mensuel (goods/service, base URSSAF) pouvait diverger du CA encaissé affiché ailleurs.
-    let encMois=0;
-    paiementsDe(o).forEach(p=>{ if(monthKey(p.date)===ym) encMois=money2(encMois+money2(p.montant)); });
+    let encMois=0, dateEncMois='';
+    paiementsDe(o).forEach(p=>{ if(monthKey(p.date)===ym){ encMois=money2(encMois+money2(p.montant)); if(!dateEncMois || (p.date||'')>dateEncMois) dateEncMois=p.date||o.date||''; } });
     if(encMois<=0) return;
     const sPart=money2(encMois*partSvc), gPart=money2(encMois-sPart);
     if(gPart>0){ goods=money2(goods+gPart); }
     if(sPart>0){ service=money2(service+sPart); }
     const cl=o.histoLabel||'';
-    if(gPart>0) detailGoods.push({label:(cl||('commande #'+o.id)), montant:gPart});
-    if(sPart>0) detailService.push({label:(cl||('prestation #'+o.id)), montant:sPart});
+    // [v1412] date + oid ajoutés : sans eux, le détail affiché au clic ne pouvait ni se trier
+    // chronologiquement ni ouvrir la commande d'origine — cf retour de Ben sur ce point.
+    if(gPart>0) detailGoods.push({label:(cl||('commande #'+o.id)), montant:gPart, date:dateEncMois, oid:o.id});
+    if(sPart>0) detailService.push({label:(cl||('prestation #'+o.id)), montant:sPart, date:dateEncMois, oid:o.id});
   });
   // Marchés clôturés du mois = vente de marchandise.
   markets.forEach(mk=>{
@@ -24448,7 +24474,7 @@ async function computeMonthlyBilan(ym){
     const esp=money2(Math.max(0,(+ca.especes||0)-fond)), cb=money2(ca.cb||0), au=money2(ca.autre||0);
     const tot=money2(esp+cb+au); if(tot<=0) return;
     goods=money2(goods+tot);
-    detailGoods.push({label:'Marché : '+(mk.nom||mk.lieu||'—'), montant:tot});
+    detailGoods.push({label:'Marché : '+(mk.nom||mk.lieu||'—'), montant:tot, date:mk.date||''});
   });
 
   // [v1283 · JOURNAL D'AVOIRS] Avoirs émis CE MOIS : déduits de la base URSSAF (goods/service),
@@ -30175,13 +30201,13 @@ async function renderCompta(){
        </div>
      </div>
      <div class="banner" style="background:#f0f4fa;border-color:#c4d2e6;margin-bottom:10px">📅 <div>Tous les chiffres ci-dessous concernent <b>${esc(monthLabel(_comptaMonth))}</b> (du 1ᵉʳ au dernier jour du mois).</div></div>
-     <div class="sum-box lnk" onclick="comptaGo('commandes')"><span>CA encaissé · ${esc(monthLabel(_comptaMonth))}</span><b>${euro(B.caTotal)}</b>${NAV_GO}</div>
+     <div class="sum-box lnk" onclick="caMonthDetail('${_comptaMonth}')"><span>CA encaissé · ${esc(monthLabel(_comptaMonth))}</span><b>${euro(B.caTotal)}</b>${NAV_GO}</div>
      ${(+B.reprisesEnc>0)?`<div class="note" style="margin:2px 0 6px;font-size:.76rem;color:#7a6a62;background:#f3eefa;border:1px solid #ddd0ee;border-radius:9px;padding:7px 10px;display:flex;justify-content:space-between;gap:8px;align-items:center">
        <span>↩︎ dont <b>reprises</b> : ${B.reprisesCount} <span style="color:#9a8a82">— hors URSSAF, déjà déclaré</span></span>
        <b style="white-space:nowrap;color:#6a4a8a">${euro(B.reprisesEnc)}</b></div>
      <div class="sum-box" style="background:#faf7fc;border:1px solid #e6dcf2"><span style="color:#6a5a62">📊 Activité globale du mois</span><b style="color:#52252f">${euro(B.caActiviteTotale)}</b></div>`:''}
-     <div class="sum-box lnk" onclick="comptaGo('rentabilite')"><span>🛍️ Vente de marchandise</span><b>${euro(B.goods)} <span style="color:#9a8a82;font-weight:400">(${fmtPct(B.goods,B.caTotal)}%)</span></b>${NAV_GO}</div>
-     <div class="sum-box lnk" onclick="comptaGo('rentabilite')"><span>🧑‍🍳 Prestation de service</span><b>${euro(B.service)} <span style="color:#9a8a82;font-weight:400">(${fmtPct(B.service,B.caTotal)}%)</span></b>${NAV_GO}</div>
+     <div class="sum-box lnk" onclick="comptaCategorieDetail('${_comptaMonth}','goods')"><span>🛍️ Vente de marchandise</span><b>${euro(B.goods)} <span style="color:#9a8a82;font-weight:400">(${fmtPct(B.goods,B.caTotal)}%)</span></b>${NAV_GO}</div>
+     <div class="sum-box lnk" onclick="comptaCategorieDetail('${_comptaMonth}','service')"><span>🧑‍🍳 Prestation de service</span><b>${euro(B.service)} <span style="color:#9a8a82;font-weight:400">(${fmtPct(B.service,B.caTotal)}%)</span></b>${NAV_GO}</div>
      <h3 style="font-size:.95rem;margin:14px 0 6px">Cotisations URSSAF estimées</h3>
      <div class="sum-box"><span>Marchandise · ${B.tauxGoods}%</span><b>${euro(B.cotisGoods)}</b></div>
      <div class="sum-box"><span>Service · ${B.tauxService}%</span><b>${euro(B.cotisService)}</b></div>

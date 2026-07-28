@@ -126,7 +126,8 @@ const SUITES = [
   'v1404-diagnostic-noms-stock.test.js',   // v1404 · diagnostic : d'où vient chaque nom du stock
   'v1405-praline-noisette-coherence.test.js', // v1405 · « Praliné noisette » singulier aligné (FLAVORS/couleur/code)
   'v1406-reglages-livraison.test.js',      // v1406 · réglages vente en ligne : adresse labo, tarif 1€/km, créneaux hebdo max 3, message rupture client
-  'v1407-commande-mere-filles.test.js'     // v1407 · commandes mère/filles : paiement groupé encaissé UNE fois, retraits échelonnés rattachés après coup (anti double comptage)
+  'v1407-commande-mere-filles.test.js',    // v1407 · commandes mère/filles : paiement groupé encaissé UNE fois, retraits échelonnés rattachés après coup (anti double comptage)
+  'v1412-detail-bilan-urssaf.test.js'      // v1412 · détail cliquable Vente de marchandise / Prestation de service dans le Bilan URSSAF, filtré par mois et trié par date
 ];
 
 let allOk = true;
