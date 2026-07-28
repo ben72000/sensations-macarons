@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1416';
+const APP_VERSION = 'v1417';
 const APP_MAJ = 'CHANTIER A — L’APP NE PEUT PLUS ÉCHOUER EN SILENCE. Le constat de l’audit était dur : 347 endroits du code attrapaient une erreur et l’enregistraient fidèlement… dans un carnet que TU NE POUVAIS PAS OUVRIR. Il fallait brancher l’iPhone sur un Mac. Autant dire jamais. ET LE CARNET ÉTAIT EFFACÉ À CHAQUE RECHARGEMENT. C’est le mécanisme EXACT qui a caché la panne Dexie pendant un mois : chaque écriture kv échouait, la validation ne démarrait jamais, et l’écran affichait « 0 refus, 0 suspects » — ce qui RESSEMBLAIT à une bonne nouvelle alors que ça voulait dire « le contrôle n’a jamais démarré ». CE QUI CHANGE. 1) UN ÉCRAN « Santé de l’app » (Sauvegarde & sécurité) : tu lis enfin ce qui a cassé, depuis ton téléphone, sans Mac. 2) LES INCIDENTS VIVENT EN BASE (nouvelle table errLog) : ils survivent à un rechargement, donc tu peux constater qu’une panne DURE — c’est précisément ce que l’ancien carnet en mémoire rendait impossible. 3) UN FILET GLOBAL : une erreur hors try/catch te donnait un écran figé sans trace ; elle est maintenant enregistrée et annoncée par une bannière discrète. 4) UNE PASTILLE SUR L’ACCUEIL quand des incidents IMPORTANTS s’accumulent. LE TRI QUE J’AI FIGÉ, et qui est le cœur du travail : un échec d’AFFICHAGE et un échec d’ÉCRITURE EN BASE ne se valent pas. Base, sauvegarde, import, validation, compta → IMPORTANT, ça parle. Rendu, affichage → mineur, ça s’enregistre sans crier. Confondre les deux, c’est noyer le signal sous le bruit, et une alerte qui crie tout le temps est une alerte qu’on ne regarde plus. CE QUE JE N’AI PAS FAIT : deviner la cause d’une erreur, ni prétendre la réparer. L’écran montre ce qui s’est réellement passé. Une explication inventée serait pire qu’un silence. ET UNE MISE EN GARDE QUE JE TE DOIS : un écran Santé VIDE n’est PAS une preuve que tout va bien — c’est une absence d’incident enregistré, ce qui n’est pas la même chose. LA RÈGLE FIGÉE : une protection qu’on ne peut pas VOIR marcher doit être considérée comme ABSENTE jusqu’à preuve du contraire. Reste à faire : chantier B (valider le contenu à l’import), C (sortir les sauvegardes de la boîte qu’elles protègent), D (durcir import et QR). Suite : 88 → 89 suites, 1437 → 1475 assertions vertes.';
 
 // ============================================================
@@ -49448,9 +49448,103 @@ function _dataURLtoBytes(dataURL){
 //
 // `ouvrirRangement(prodId)` = LA porte UI. Ouvre l'éditeur d'étiquettes (le point
 // d'entrée que Ben préfère), qui appelle le moteur unique à la validation.
+// [v1417] LES BOÎTES D'UN MÊME LOT. Un lot mis en boîtes devient : le lot PARENT (qui garde
+// l'éventuel reste non réparti) + des lignes-filles portant `etiquetteDe = id du parent`.
+// Depuis n'importe laquelle de ces lignes, cette fonction reconstitue la FAMILLE complète —
+// c'est ce qui permet à l'écran « Ranger » de montrer TOUTES les boîtes et leur emplacement,
+// au lieu de la seule ligne cliquée. Les boîtes absorbées par fusion sont exclues (leur contenu
+// vit ailleurs). PURE.
+function boitesDuLot(prod, prods){
+  if(!prod) return [];
+  const parentId = (prod.etiquetteDe!=null) ? +prod.etiquetteDe : +prod.id;
+  const famille = (prods||[]).filter(x=>{
+    if(!x || prodEstFusionnee(x)) return false;
+    if(+x.id === parentId) return round3(+x.qteRestante||0) > 0;   // parent : seulement s'il reste du non-réparti
+    return +x.etiquetteDe === parentId;
+  });
+  // Le parent d'abord (le reste en vrac), puis les boîtes dans l'ordre de leur lot.
+  famille.sort((a,b)=>{
+    const pa = (+a.id===parentId)?0:1, pb = (+b.id===parentId)?0:1;
+    if(pa!==pb) return pa-pb;
+    return String(a.lotProduction||'').localeCompare(String(b.lotProduction||''));
+  });
+  return famille;
+}
+
 async function ouvrirRangement(prodId){
+  // [v1417] Si ce lot est DÉJÀ en boîtes, on montre d'abord la vue d'ensemble : toutes les
+  // boîtes, leur emplacement, et quoi faire de chacune. Sinon (lot encore en vrac), on va
+  // directement au formulaire de mise en boîtes — le comportement historique.
+  const p = await db.productions.get(prodId).catch(()=>null);
+  if(!p){ toast('Lot introuvable'); return; }
+  const prods = await db.productions.toArray().catch(()=>[]);
+  const famille = boitesDuLot(p, prods);
+  const aDesBoites = famille.some(x=>+x.id!==((p.etiquetteDe!=null)?+p.etiquetteDe:+p.id));
+  if(aDesBoites) return vueBoitesDuLot(prodId);
   return prodEtiquetteBoites(prodId);
 }
+
+// [v1417] VUE D'ENSEMBLE DES BOÎTES D'UN LOT. Demande de Ben : en cliquant « Ranger » depuis
+// les DLC de l'accueil, voir TOUTES les boîtes avec leur emplacement et décider quoi faire de
+// chacune — au lieu du seul formulaire de découpe de la ligne cliquée.
+async function vueBoitesDuLot(prodId){
+  const p = await db.productions.get(prodId).catch(()=>null);
+  if(!p){ toast('Lot introuvable'); return; }
+  const [prods, recipes] = await Promise.all([
+    db.productions.toArray().catch(()=>[]),
+    db.recipes.toArray().catch(()=>[]),
+  ]);
+  const famille = boitesDuLot(p, prods);
+  const rec = recipes.find(r=>+r.id===+p.recipeId);
+  const nom = rec ? rec.produitNom : (p.produitLibre||'(libre)');
+  const parentId = (p.etiquetteDe!=null) ? +p.etiquetteDe : +p.id;
+  const total = round3(famille.reduce((s,x)=>s+(+x.qteRestante||0),0));
+  // Répartition par emplacement, pour lire d'un coup d'œil où est le lot.
+  const parEmp = {};
+  famille.forEach(x=>{ const k=x.emplacement||'?'; parEmp[k]=(parEmp[k]||0)+1; });
+  const repartition = Object.keys(parEmp).map(k=>`${parEmp[k]}×${empLettre(k)}`).join(' · ');
+
+  const lignes = famille.map(x=>{
+    const estParent = (+x.id===parentId);
+    const dlc = (typeof prodDlcEffective==='function') ? prodDlcEffective(x) : x.dlcProduit;
+    return `<div style="border:1px solid var(--hair,#e7ddd2);border-radius:11px;padding:10px;margin-bottom:7px;background:${estParent?'#fdf7ee':'#fff'}">
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline">
+        <b style="font-size:.9rem">${esc(x.lotProduction||('#'+x.id))}</b>
+        <span style="font-size:.86rem"><b>${qty(x.qteRestante)}</b> pièce(s)</span>
+      </div>
+      <div style="font-size:.8rem;color:#7a6a62;margin:3px 0 7px">
+        ${empIcon(x.emplacement)} ${esc(empNom(x.emplacement))} (${empLettre(x.emplacement)})
+        ${dlc?` · DLC ${fmtDate(dlc)}`:''}
+        ${estParent?' · <span style="color:#8a6d3b">reste non mis en boîte</span>':''}
+      </div>
+      <div style="display:flex;gap:5px;flex-wrap:wrap">
+        <select id="mv_${x.id}" style="padding:6px;border:1px solid var(--hair,#e7ddd2);border-radius:8px;font-size:.8rem">
+          ${_etiqOptionsEmp(x.emplacement)}
+        </select>
+        <button class="btn ghost sm" onclick="boiteDeplacer(${x.id},${prodId})">↔ Déplacer</button>
+        <button class="btn ghost sm" onclick="closeModal();prodEtiquetteBoites(${x.id})">📦 Mettre en boîtes</button>
+        <button class="btn ghost sm" onclick="closeModal();traceProd(${x.id})">🕘 Traçabilité</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  openModal(`<h3>📦 Boîtes du lot — ${esc(nom)}</h3>
+    <p class="note" style="margin-bottom:10px">
+      <b>${famille.length}</b> boîte(s) · <b>${qty(total)}</b> pièce(s) au total${repartition?` · ${esc(repartition)}`:''}.
+      Choisis un emplacement puis « Déplacer », ou agis boîte par boîte.
+    </p>
+    ${lignes}
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+}
+
+// Déplace UNE boîte vers l'emplacement choisi dans son menu, puis rafraîchit la vue d'ensemble.
+async function boiteDeplacer(boiteId, retourId){
+  const sel = document.getElementById('mv_'+boiteId);
+  if(!sel){ toast('Emplacement introuvable'); return; }
+  const ok = await doMoveEmplacement(boiteId, sel.value, {});
+  if(ok){ toast('Boîte déplacée ✓'); vueBoitesDuLot(retourId); }
+}
+
 // `rangerLot(prodId, boites, opts)` = alias programmatique fin. Tout appelant qui
 // range SANS passer par l'UI (plan auto, batch) tape ICI, donc le MÊME moteur.
 // Jamais d'écriture placements ailleurs : cette fonction ne fait que déléguer.

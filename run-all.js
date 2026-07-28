@@ -129,7 +129,8 @@ const SUITES = [
   'v1407-commande-mere-filles.test.js',    // v1407 · commandes mère/filles : paiement groupé encaissé UNE fois, retraits échelonnés rattachés après coup (anti double comptage)
   'v1412-detail-bilan-urssaf.test.js',     // v1412 · détail cliquable Vente de marchandise / Prestation de service dans le Bilan URSSAF
   'v1413-assemblage-bicolore.test.js',     // v1413 · assemblage bicolore : 2e lot de coques, capacité = minimum des 2 lots
-  'v1414-fil-tracabilite.test.js'          // v1414 · fil de traçabilité unifié d'une boîte : création + déplacements + prélèvements, antichronologique, reste reconstitué
+  'v1414-fil-tracabilite.test.js',         // v1414 · fil de traçabilité unifié d'une boîte (+ fusion v1415, archivage v1416)
+  'v1417-vue-boites-lot.test.js'           // v1417 · vue d'ensemble des boîtes d'un lot au clic sur « Ranger » : toutes les boîtes, leur emplacement, actions par boîte
 ];
 
 let allOk = true;
