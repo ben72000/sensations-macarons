@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1410';
+const APP_VERSION = 'v1411';
 const APP_MAJ = 'CHANTIER A — L’APP NE PEUT PLUS ÉCHOUER EN SILENCE. Le constat de l’audit était dur : 347 endroits du code attrapaient une erreur et l’enregistraient fidèlement… dans un carnet que TU NE POUVAIS PAS OUVRIR. Il fallait brancher l’iPhone sur un Mac. Autant dire jamais. ET LE CARNET ÉTAIT EFFACÉ À CHAQUE RECHARGEMENT. C’est le mécanisme EXACT qui a caché la panne Dexie pendant un mois : chaque écriture kv échouait, la validation ne démarrait jamais, et l’écran affichait « 0 refus, 0 suspects » — ce qui RESSEMBLAIT à une bonne nouvelle alors que ça voulait dire « le contrôle n’a jamais démarré ». CE QUI CHANGE. 1) UN ÉCRAN « Santé de l’app » (Sauvegarde & sécurité) : tu lis enfin ce qui a cassé, depuis ton téléphone, sans Mac. 2) LES INCIDENTS VIVENT EN BASE (nouvelle table errLog) : ils survivent à un rechargement, donc tu peux constater qu’une panne DURE — c’est précisément ce que l’ancien carnet en mémoire rendait impossible. 3) UN FILET GLOBAL : une erreur hors try/catch te donnait un écran figé sans trace ; elle est maintenant enregistrée et annoncée par une bannière discrète. 4) UNE PASTILLE SUR L’ACCUEIL quand des incidents IMPORTANTS s’accumulent. LE TRI QUE J’AI FIGÉ, et qui est le cœur du travail : un échec d’AFFICHAGE et un échec d’ÉCRITURE EN BASE ne se valent pas. Base, sauvegarde, import, validation, compta → IMPORTANT, ça parle. Rendu, affichage → mineur, ça s’enregistre sans crier. Confondre les deux, c’est noyer le signal sous le bruit, et une alerte qui crie tout le temps est une alerte qu’on ne regarde plus. CE QUE JE N’AI PAS FAIT : deviner la cause d’une erreur, ni prétendre la réparer. L’écran montre ce qui s’est réellement passé. Une explication inventée serait pire qu’un silence. ET UNE MISE EN GARDE QUE JE TE DOIS : un écran Santé VIDE n’est PAS une preuve que tout va bien — c’est une absence d’incident enregistré, ce qui n’est pas la même chose. LA RÈGLE FIGÉE : une protection qu’on ne peut pas VOIR marcher doit être considérée comme ABSENTE jusqu’à preuve du contraire. Reste à faire : chantier B (valider le contenu à l’import), C (sortir les sauvegardes de la boîte qu’elles protègent), D (durcir import et QR). Suite : 88 → 89 suites, 1437 → 1475 assertions vertes.';
 
 // ============================================================
@@ -1258,7 +1258,7 @@ const VALIDE_SCHEMAS = {
               lignes:'tableau', paiements:'tableau', remiseGlobale:'nombreFini', remiseGlobaleEur:'nombreFini',
               fraisLivraison:'nombreFini', distanceKm:'nombreFini', tempsLivraisonMin:'nombreFini',
               persoMacarons:'nombreFini', dateEvenement:'chaine', heureLivraison:'chaine',
-              commandeMereId:'idRef' },
+              commandeMereId:'idRef', mereEnAttente:'booleen' },
     alertes: { montant:{ min:0 } }
   },
   orderItems: {
@@ -6085,12 +6085,25 @@ function parseRechercheMere(q){
 // Une commande peut-elle servir de MÈRE à la commande `idExclu` ?
 // Règle de Ben : elle reste éligible TANT QUE son reliquat n'est pas épuisé — c'est ce qui
 // permet de lui rattacher plusieurs filles successives. PURE.
+// [v1411] Une mère « paiement en avance » est VOLONTAIREMENT archivée (histo) pour ne pas
+// polluer le fil des commandes — elle doit malgré tout rester trouvable dans la recherche.
+// On distingue donc deux archivages : `mereEnAttente` (rangement voulu, reste éligible) et
+// l'archivage ordinaire des vieilles commandes de reprise (jamais proposé).
 function commandeMereEligible(o, orders, idExclu){
   if(!o || o.id==null) return false;
   if(idExclu!=null && +o.id===+idExclu) return false;   // pas elle-même
   if(o.commandeMereId!=null) return false;              // une fille ne peut pas être mère (pas de chaîne)
-  if(o.histo) return false;
-  return reliquatCommandeMere(o, orders).reste > 0.01;  // ← le cœur du correctif
+  if(o.histo && !o.mereEnAttente) return false;         // archive ordinaire ≠ mère rangée volontairement
+  return reliquatCommandeMere(o, orders).reste > 0.01;  // le cœur du correctif v1409
+}
+
+// [v1411] Les mères « paiement en avance » encore actives : rangées hors du fil des commandes,
+// mais qui attendent d'être servies. C'est la vue qui permet à Ben de les retrouver d'un coup
+// d'œil, avec ce qu'il reste à livrer sur chacune. Triées du reliquat le plus ancien. PURE.
+function commandesMeresEnAttente(orders){
+  return (orders||[])
+    .filter(o => o && o.mereEnAttente && reliquatCommandeMere(o, orders).reste > 0.01)
+    .sort((a,b)=> String(a.date||'').localeCompare(String(b.date||'')));
 }
 
 // Filtre les mères candidates selon la saisie libre. `clients` sert à retrouver le nom
@@ -18716,6 +18729,7 @@ async function renderCmd(){
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Commandes</h1><p id="cmdCount">${orders.length} commande(s)</p></div>
      <div class="flex" style="gap:8px"><button class="btn ghost sm" onclick="factEmetteurForm()" title="Coordonnées de facturation">🧾 Facturation</button><button class="btn ghost sm" onclick="togglePrivacyMode()" title="Masquer/afficher les données sensibles">${privacyModeEnabled()?'👁️ Afficher':'🙈 Mode discret'}</button>
+     <button class="btn ghost sm" onclick="cmdVoirMeresEnAttente()" title="Commandes payées en avance, rangées, qui attendent d'être servies">🔗 Paiements en avance</button>
      <button class="btn" onclick="cmdForm()">+ Nouvelle commande</button></div></div>
    <div class="panel" style="background:#fffdf8;border:1px solid #e8dcc0">
      <button class="btn ghost sm" style="width:100%;text-align:left" onclick="cmdPeriodToggle()">📊 Total macarons par parfum sur une période ▾</button>
@@ -19904,18 +19918,41 @@ async function cmdRenderMereBlock(id, mereIdActuel){
   // Vue FILLE (ou commande libre) : recherche intelligente + remontée du paiement de la mère.
   // [v1409] Plus de <select> avec tout l'historique : une barre de recherche « avril 2026
   // David Siempé ». Et une mère reste proposée TANT QUE son reliquat n'est pas épuisé.
+  const cmdCourante = id ? orders.find(o=>+o.id===+id) : null;
+  const dejaMere = !!(cmdCourante && cmdCourante.mereEnAttente);
   const mereActuelle = mereIdActuel ? orders.find(o=>+o.id===+mereIdActuel) : null;
   zone.innerHTML = `
-    <label>Rattacher cette commande à une commande mère <span style="color:#9a8a82;font-weight:400">— optionnel, pour un paiement déjà réglé ailleurs</span></label>
-    <input type="hidden" id="f_commandeMereId" value="${mereIdActuel||''}">
-    <input type="text" id="f_mereRech" placeholder="Rechercher : avril 2026 David Siempé…"
-           oninput="cmdChercherMere(${id||0})" autocomplete="off"
-           style="width:100%;margin-bottom:6px">
-    <div id="cmdMereResultats"></div>
-    <div id="cmdMereInfo"></div>
-    <div id="cmdMereAlerte"></div>`;
+    <label class="switch-row" style="margin-bottom:8px">
+      <input type="checkbox" id="f_mereEnAttente" data-initial="${dejaMere?'1':'0'}" ${dejaMere?'checked':''} onchange="cmdToggleMereEnAttente()">
+      🔗 Commande mère — paiement encaissé en avance
+      <span style="color:#9a8a82;font-weight:400">— sera rangée dans les archives dès l'enregistrement, et servira des sous-commandes au fil des retraits</span>
+    </label>
+    <div id="cmdMereRattachZone">
+      <label>Rattacher cette commande à une commande mère <span style="color:#9a8a82;font-weight:400">— optionnel, pour un paiement déjà réglé ailleurs</span></label>
+      <input type="hidden" id="f_commandeMereId" value="${mereIdActuel||''}">
+      <input type="text" id="f_mereRech" placeholder="Rechercher : avril 2026 David Siempé…"
+             oninput="cmdChercherMere(${id||0})" autocomplete="off"
+             style="width:100%;margin-bottom:6px">
+      <div id="cmdMereResultats"></div>
+      <div id="cmdMereInfo"></div>
+      <div id="cmdMereAlerte"></div>
+    </div>`;
+  cmdToggleMereEnAttente();
   if(mereActuelle) await cmdRenderInfoMere();
-  else cmdChercherMere(id||0);
+}
+
+// [v1411] Une commande ne peut pas être à la fois mère (paiement en avance) et fille
+// (rattachée à une autre) — ce serait une chaîne à deux niveaux, source de double comptage.
+// Cocher « commande mère » masque donc le bloc de rattachement, et vice-versa.
+function cmdToggleMereEnAttente(){
+  const chk = document.getElementById('f_mereEnAttente');
+  const zone = document.getElementById('cmdMereRattachZone');
+  if(!chk || !zone) return;
+  zone.style.display = chk.checked ? 'none' : '';
+  if(chk.checked){
+    const hid = document.getElementById('f_commandeMereId');
+    if(hid) hid.value = '';   // on ne peut pas être fille en même temps
+  }
 }
 
 // [v1409] Recherche des mères candidates et rendu de la liste (max 12 résultats — jamais
@@ -20004,6 +20041,47 @@ function cmdOnMereChange(){
     ? `<p style="color:#b3261e;font-size:.78rem;margin-top:6px;padding:8px;background:#fdf0ee;border-radius:8px">${alerte.message}</p>`
     : '';
   cmdRenderInfoMere();
+}
+
+// [v1411] Vue « Paiements en avance » : les commandes mères rangées hors du fil, qui attendent
+// encore d'être servies. Sans cet écran, une mère archivée deviendrait invisible — on ne saurait
+// plus ce qu'on doit à qui. Chaque ligne montre le reste à retirer, le vrai chiffre utile.
+async function cmdVoirMeresEnAttente(){
+  const [orders, clients] = await Promise.all([
+    db.orders.toArray().catch(()=>[]),
+    db.clients.toArray().catch(()=>[]),
+  ]);
+  const meres = commandesMeresEnAttente(orders);
+  const nomDe = cid => { const c=clients.find(x=>+x.id===+cid); return c?(c.nom||'—'):'—'; };
+
+  if(!meres.length){
+    openModal(`<h3>🔗 Paiements en avance</h3>
+      <p class="note">Aucune commande mère en attente.</p>
+      <p class="note" style="font-size:.8rem">Pour en créer une : ouvre une commande, coche « Commande mère — paiement encaissé en avance », enregistre. Elle sera rangée automatiquement et réapparaîtra ici tant qu'il restera des macarons à retirer.</p>
+      <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+    return;
+  }
+  const totalDu = money2(meres.reduce((s,m)=> s + reliquatCommandeMere(m, orders).reste, 0));
+  openModal(`<h3>🔗 Paiements en avance</h3>
+    <p class="note">${meres.length} commande${meres.length>1?'s':''} payée${meres.length>1?'s':''} d'avance, rangée${meres.length>1?'s':''} hors du fil, en attente d'être servie${meres.length>1?'s':''}.</p>
+    <div class="sum-box" style="margin-bottom:10px"><span>Reste à livrer au total</span><b>${euro(totalDu)}</b></div>
+    <div style="max-height:55vh;overflow:auto">
+      ${meres.map(m=>{
+        const r = reliquatCommandeMere(m, orders);
+        return `<div style="padding:10px 12px;margin-bottom:6px;border:1px solid #eadfd4;border-radius:10px;background:#fff">
+          <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline">
+            <b>${esc(nomDe(m.clientId))}</b><span style="color:#7a6a62;font-size:.82rem">${fmtDate(m.date)}</span>
+          </div>
+          <div style="font-size:.82rem;color:#5a4a52;margin:4px 0 6px">
+            #${m.id} · payé ${euro(r.montantTotal)} · déjà retiré ${euro(r.montantCouvertParFilles)}
+            ${r.nbFilles ? ` (${r.nbFilles} sous-commande${r.nbFilles>1?'s':''})` : ''}
+            · <b style="color:#b3261e">reste ${euro(r.reste)}</b>
+          </div>
+          <button class="btn ghost sm" onclick="closeModal();cmdView(${m.id})">Ouvrir</button>
+        </div>`;
+      }).join('')}
+    </div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
 }
 
 function cmdAddPayment(){
@@ -21984,6 +22062,19 @@ async function saveCmd(id){
     ...(document.getElementById('f_commandeMereId')
         ? { commandeMereId: val('f_commandeMereId') ? +val('f_commandeMereId') : null }
         : {}),
+    // [v1411] « Commande mère — paiement en avance » : elle est RANGÉE (histo) dès
+    // l'enregistrement pour ne pas encombrer le fil des commandes, tout en restant trouvable
+    // dans la recherche de mère (cf commandeMereEligible). Décocher la case la fait ressortir.
+    // GARDE-FOU : on ne remet histo:false QUE si la case était cochée à l'ouverture — sinon
+    // enregistrer une vieille commande archivée (reprise/migration) la ferait resurgir.
+    ...(function(){
+      const c = document.getElementById('f_mereEnAttente');
+      if(!c) return {};
+      if(c.checked) return { mereEnAttente: true, histo: true };
+      return c.dataset.initial === '1'
+        ? { mereEnAttente: false, histo: false }
+        : { mereEnAttente: false };
+    })(),
     prixManuel: !!_cmdPriceManual,   // mémorise un prix forcé à la main (respecté à la réouverture)
     // on neutralise les anciens champs mono-type
     type:'multi', taille:0, parfums:[], evQte:0, equip:0, tarif:'', bigItems:[]

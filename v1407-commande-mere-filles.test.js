@@ -264,5 +264,48 @@ G.money2 = n => Math.round((+n||0)*100)/100;
      '55 · dès la 1re lettre tapée, les résultats apparaissent');
 }
 
+// ── 8. MÈRE « PAIEMENT EN AVANCE » — rangée hors du fil (v1411) ────────────
+// Ben : « la commande mère doit pouvoir rejoindre les archives à partir du moment où elle est
+// enregistrée comme paiement en avance […] afin qu'elle puisse se ranger automatiquement ».
+// Conflit à traiter : commandeMereEligible excluait TOUTE commande archivée — la mère rangée
+// aurait disparu de la recherche, cassant tout le mécanisme.
+{
+  new Function('G', `with(G){ const reliquatCommandeMere=G.reliquatCommandeMere; ${extractFunction('commandesMeresEnAttente')}\n G.commandesMeresEnAttente = commandesMeresEnAttente; }`)(G);
+
+  const mereRangee = { id: 20, montant: 300, date: '2026-04-12', clientId: 9, mereEnAttente: true, histo: true };
+  const vieilleArchive = { id: 21, montant: 500, date: '2024-01-05', clientId: 9, histo: true };  // reprise/migration
+
+  ok(G.commandeMereEligible(mereRangee, [mereRangee], 99) === true,
+     '56 · CRITIQUE : une mère rangée volontairement (mereEnAttente) reste ÉLIGIBLE malgré histo');
+  ok(G.commandeMereEligible(vieilleArchive, [vieilleArchive], 99) === false,
+     '57 · une archive ORDINAIRE (reprise, sans mereEnAttente) n\'est jamais proposée');
+
+  // La vue « Paiements en avance »
+  const filleP = { id: 22, montant: 100, date: '2026-05-02', commandeMereId: 20 };
+  const listeAvecFille = [mereRangee, filleP, vieilleArchive];
+  const enAttente = G.commandesMeresEnAttente(listeAvecFille);
+  ok(enAttente.length === 1 && enAttente[0].id === 20,
+     '58 · la vue liste la mère rangée, et ignore l\'archive ordinaire');
+
+  // Une mère entièrement servie sort de la vue (plus rien à livrer)
+  const filleTotale = { id: 23, montant: 300, date: '2026-06-01', commandeMereId: 20 };
+  ok(G.commandesMeresEnAttente([mereRangee, filleTotale]).length === 0,
+     '59 · mère entièrement retirée → disparaît de la vue « Paiements en avance »');
+  ok(G.commandeMereEligible(mereRangee, [mereRangee, filleTotale], 99) === false,
+     '60 · … et n\'est plus proposée au rattachement non plus');
+
+  // Tri : la plus ancienne en premier (celle qui attend depuis le plus longtemps)
+  const m2 = { id: 24, montant: 200, date: '2026-01-10', mereEnAttente: true, histo: true };
+  const tri = G.commandesMeresEnAttente([mereRangee, m2]);
+  ok(tri[0].id === 24, '61 · vue triée : la commande qui attend depuis le plus longtemps en premier');
+
+  // Cohérence code : l'enregistrement doit poser histo ET mereEnAttente ensemble
+  const APP2 = require('fs').readFileSync(require('path').join(__dirname,'..','app.js'),'utf8');
+  ok(/mereEnAttente: true, histo: true/.test(APP2),
+     '62 · cocher la case range bien la commande (mereEnAttente + histo posés ensemble)');
+  ok(/dataset\.initial === '1'/.test(APP2),
+     '63 · garde-fou : décocher ne désarchive QUE si la case était cochée à l\'ouverture (protège les vieilles archives)');
+}
+
 console.log(`\n=== v1407 : ${nOk} OK, ${nKo} KO ===\n`);
 if(nKo>0) process.exit(1);
