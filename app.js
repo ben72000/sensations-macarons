@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1418';
+const APP_VERSION = 'v1420';
 const APP_MAJ = 'CHANTIER A — L’APP NE PEUT PLUS ÉCHOUER EN SILENCE. Le constat de l’audit était dur : 347 endroits du code attrapaient une erreur et l’enregistraient fidèlement… dans un carnet que TU NE POUVAIS PAS OUVRIR. Il fallait brancher l’iPhone sur un Mac. Autant dire jamais. ET LE CARNET ÉTAIT EFFACÉ À CHAQUE RECHARGEMENT. C’est le mécanisme EXACT qui a caché la panne Dexie pendant un mois : chaque écriture kv échouait, la validation ne démarrait jamais, et l’écran affichait « 0 refus, 0 suspects » — ce qui RESSEMBLAIT à une bonne nouvelle alors que ça voulait dire « le contrôle n’a jamais démarré ». CE QUI CHANGE. 1) UN ÉCRAN « Santé de l’app » (Sauvegarde & sécurité) : tu lis enfin ce qui a cassé, depuis ton téléphone, sans Mac. 2) LES INCIDENTS VIVENT EN BASE (nouvelle table errLog) : ils survivent à un rechargement, donc tu peux constater qu’une panne DURE — c’est précisément ce que l’ancien carnet en mémoire rendait impossible. 3) UN FILET GLOBAL : une erreur hors try/catch te donnait un écran figé sans trace ; elle est maintenant enregistrée et annoncée par une bannière discrète. 4) UNE PASTILLE SUR L’ACCUEIL quand des incidents IMPORTANTS s’accumulent. LE TRI QUE J’AI FIGÉ, et qui est le cœur du travail : un échec d’AFFICHAGE et un échec d’ÉCRITURE EN BASE ne se valent pas. Base, sauvegarde, import, validation, compta → IMPORTANT, ça parle. Rendu, affichage → mineur, ça s’enregistre sans crier. Confondre les deux, c’est noyer le signal sous le bruit, et une alerte qui crie tout le temps est une alerte qu’on ne regarde plus. CE QUE JE N’AI PAS FAIT : deviner la cause d’une erreur, ni prétendre la réparer. L’écran montre ce qui s’est réellement passé. Une explication inventée serait pire qu’un silence. ET UNE MISE EN GARDE QUE JE TE DOIS : un écran Santé VIDE n’est PAS une preuve que tout va bien — c’est une absence d’incident enregistré, ce qui n’est pas la même chose. LA RÈGLE FIGÉE : une protection qu’on ne peut pas VOIR marcher doit être considérée comme ABSENTE jusqu’à preuve du contraire. Reste à faire : chantier B (valider le contenu à l’import), C (sortir les sauvegardes de la boîte qu’elles protègent), D (durcir import et QR). Suite : 88 → 89 suites, 1437 → 1475 assertions vertes.';
 
 // ============================================================
@@ -7625,22 +7625,83 @@ async function caDuMois(mk){
 // l'un ni l'autre ne filtre par mois ni par catégorie. Le détail (detailGoods/detailService)
 // existait DÉJÀ dans computeMonthlyBilan, mais rien ne l'affichait. Cet écran corrige ça : liste
 // triée par date, du plus récent au plus ancien, chaque ligne ouvre sa commande d'origine.
+// [v1419] PILE DE RETOUR ENTRE MODALES. Ben : « j'aimerais avoir un bouton retour sur chaque
+// page permettant de naviguer facilement en arrière jusqu'à la page d'origine ». Les modales de
+// l'app se remplacent l'une l'autre sans mémoire : en ouvrant une commande depuis le détail du
+// bilan URSSAF, on perdait le chemin parcouru. Cette pile mémorise COMMENT revenir en arrière,
+// écran par écran. Générique : réutilisable partout où une modale en ouvre une autre.
+let _retourPile = [];
+function retourPush(label, fn){ if(typeof fn==='function') _retourPile.push({label, fn}); }
+function retourGo(){
+  const d = _retourPile.pop();
+  if(!d) { closeModal(); return; }
+  closeModal();
+  setTimeout(()=>{ try{ d.fn(); }catch(e){ swallow(e,'retourGo'); } }, 0);
+}
+function retourReset(){ _retourPile = []; }
+// Bouton « ← Retour à … » à poser en TÊTE d'une modale ; vide si aucun chemin mémorisé.
+function retourBoutonHtml(){
+  if(!_retourPile.length) return '';
+  const d = _retourPile[_retourPile.length-1];
+  return `<button class="btn ghost sm" onclick="retourGo()" style="margin-bottom:8px">← Retour à ${esc(d.label)}</button>`;
+}
+
+// [v1420] Ouvre le détail d'une catégorie DEPUIS le bilan, en mémorisant le retour vers le
+// Bilan du mois & URSSAF. Sans ce maillon, la pile de retour était vide à ce niveau : le détail
+// n'affichait AUCUN bouton retour, et la chaîne demandée par Ben (fiche commande → détail
+// catégorie → bilan) s'arrêtait à mi-chemin.
+function comptaOuvrirCategorie(ym, categorie){
+  retourPush('Bilan du mois & URSSAF', ()=>comptaRetourBilan());
+  comptaCategorieDetail(ym, categorie);
+}
+
+// Ramène à l'écran Comptabilité et fait défiler jusqu'au bloc du bilan mensuel, pour que le
+// retour atterrisse exactement là d'où Ben est parti — pas en haut d'une longue page.
+function comptaRetourBilan(){
+  if(typeof renderCompta==='function') renderCompta();
+  setTimeout(()=>{
+    try{
+      const el=[...document.querySelectorAll('#main .panel h2, #main .panel h3')]
+        .find(h=>/Bilan du mois/.test(h.textContent||''));
+      if(!el) return;
+      el.scrollIntoView({behavior:'smooth', block:'start'});
+      const p=el.closest('.panel'); if(!p) return;
+      p.style.transition='box-shadow .3s';
+      p.style.boxShadow='0 0 0 2px var(--caramel)';
+      setTimeout(()=>{ p.style.boxShadow=''; }, 1400);
+    }catch(e){ swallow(e,'comptaRetourBilan'); }
+  }, 60);
+}
+
 async function comptaCategorieDetail(ym, categorie){
   const B = await computeMonthlyBilan(ym);
   const lignes = (categorie==='service' ? B.detailService : B.detailGoods).slice()
     .sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
   const titre = categorie==='service' ? '🧑‍🍳 Prestation de service' : '🛍️ Vente de marchandise';
   const total = categorie==='service' ? B.service : B.goods;
-  const rows = lignes.length ? lignes.map(l=>
-    `<div class="sum-box" style="${l.oid?'cursor:pointer':''}" ${l.oid?`onclick="closeModal();cmdView(${l.oid})"`:''}>
-       <span>${l.date?fmtDate(l.date)+' · ':''}${esc(l.label)}</span>
-       <b style="color:${l.montant<0?'#b3261e':'inherit'}">${euro(l.montant)}</b></div>`).join('')
+  const rows = lignes.length ? lignes.map(l=>{
+    // [v1419] Nom du client mis en avant ; le n° de commande passe en second, discret.
+    const nom = l.client ? esc(l.client) : esc(l.label);
+    const ref = (l.oid!=null && l.client) ? ` <span style="color:#9a8a82;font-weight:400">· #${l.oid}</span>` : '';
+    return `<div class="sum-box" style="${l.oid?'cursor:pointer':''}" ${l.oid?`onclick="comptaOuvrirCommande(${l.oid},'${esc(ym)}','${esc(categorie)}')"`:''}>
+       <span>${l.date?`<span style="color:#9a8a82">${fmtDate(l.date)}</span> · `:''}<b>${nom}</b>${ref}</span>
+       <b style="color:${l.montant<0?'#b3261e':'inherit'}">${euro(l.montant)}</b></div>`;
+  }).join('')
     : '<p class="note">Aucune ligne dans cette catégorie ce mois-ci.</p>';
-  openModal(`<h3>${titre} — ${esc(monthLabel(ym))}</h3>
+  openModal(`${retourBoutonHtml()}<h3>${titre} — ${esc(monthLabel(ym))}</h3>
     <p class="note">Détail des encaissements de cette catégorie, triés du plus récent au plus ancien. Touche une ligne pour ouvrir la commande.</p>
     ${rows}
     <div class="sum-box" style="border-top:2px solid var(--bordeaux);margin-top:10px"><span><b>Total</b></span><b style="color:var(--bordeaux)">${euro(total)}</b></div>
-    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+    <div class="modal-actions"><button class="btn ghost" onclick="retourReset();closeModal()">Fermer</button></div>`);
+}
+
+// [v1419] Ouvre une commande DEPUIS le détail du bilan, en mémorisant le chemin de retour :
+// la fiche commande affichera « ← Retour à Vente de marchandise — juillet 2026 ».
+function comptaOuvrirCommande(oid, ym, categorie){
+  const nomCat = categorie==='service' ? 'Prestation de service' : 'Vente de marchandise';
+  retourPush(`${nomCat} — ${monthLabel(ym)}`, ()=>comptaCategorieDetail(ym, categorie));
+  closeModal();
+  setTimeout(()=>cmdView(oid), 0);
 }
 
 async function caMonthDetail(mk){
@@ -19712,7 +19773,7 @@ async function cmdView(id){
   const _ordersTous = await db.orders.toArray().catch(()=>[]);
   const _fillesDeCetteCmd = commandesFillesDe(o.id, _ordersTous);
   const _reliquatSiMere = _fillesDeCetteCmd.length ? reliquatCommandeMere(o, _ordersTous) : null;
-  openModal(`<h3>Détail commande</h3>
+  openModal(`${retourBoutonHtml()}<h3>Détail commande</h3>
     <p style="margin-bottom:10px"><b>${cl?`<span class="link-name" onclick="closeModal();clientForm(${cl.id})">${esc(cl.nom)}</span>`:'—'}</b> · ${fmtDate(o.date)}${o.heureLivraison?' · '+esc(o.heureLivraison):''}</p>
     ${(function(){
       // Encart paiement EN HAUT, bien visible : statut + date(s) et moyen(s) au premier coup d'œil.
@@ -24729,6 +24790,13 @@ async function computeMonthlyBilan(ym){
   const s=getSettings();
   const orders = await db.orders.toArray();
   const markets = await (db.markets?db.markets.toArray():Promise.resolve([])).catch(()=>[]);
+  // [v1419] Le nom du client dans le détail : demandé par Ben. Sans lui, les lignes n'affichaient
+  // qu'un « commande #123 » anonyme, illisible pour vérifier une déclaration URSSAF.
+  const _clientsBilan = await (db.clients?db.clients.toArray():Promise.resolve([])).catch(()=>[]);
+  const _nomClientDe = cid => {
+    const c = _clientsBilan.find(x=>+x.id===+cid);
+    return c ? (c.nom||'') : '';
+  };
   let goods=0, service=0;            // encaissé du mois, ventilé (reprises exclues, cf. A11-fix)
   const detailGoods=[], detailService=[];
   // [A11-display] On CUMULE aussi le montant encaissé du mois issu des REPRISES d'historique,
@@ -24767,8 +24835,12 @@ async function computeMonthlyBilan(ym){
     const cl=o.histoLabel||'';
     // [v1412] date + oid ajoutés : sans eux, le détail affiché au clic ne pouvait ni se trier
     // chronologiquement ni ouvrir la commande d'origine — cf retour de Ben sur ce point.
-    if(gPart>0) detailGoods.push({label:(cl||('commande #'+o.id)), montant:gPart, date:dateEncMois, oid:o.id});
-    if(sPart>0) detailService.push({label:(cl||('prestation #'+o.id)), montant:sPart, date:dateEncMois, oid:o.id});
+    // [v1419] `client` exposé à part : l'affichage le montre en tête de ligne, et il reste
+    // disponible sans re-résoudre le clientId côté écran.
+    const _nomCl = _nomClientDe(o.clientId);
+    const _libelle = cl || (_nomCl ? _nomCl : '') || ('commande #'+o.id);
+    if(gPart>0) detailGoods.push({label:_libelle, client:_nomCl, montant:gPart, date:dateEncMois, oid:o.id});
+    if(sPart>0) detailService.push({label:_libelle, client:_nomCl, montant:sPart, date:dateEncMois, oid:o.id});
   });
   // Marchés clôturés du mois = vente de marchandise.
   markets.forEach(mk=>{
@@ -30510,8 +30582,8 @@ async function renderCompta(){
        <span>↩︎ dont <b>reprises</b> : ${B.reprisesCount} <span style="color:#9a8a82">— hors URSSAF, déjà déclaré</span></span>
        <b style="white-space:nowrap;color:#6a4a8a">${euro(B.reprisesEnc)}</b></div>
      <div class="sum-box" style="background:#faf7fc;border:1px solid #e6dcf2"><span style="color:#6a5a62">📊 Activité globale du mois</span><b style="color:#52252f">${euro(B.caActiviteTotale)}</b></div>`:''}
-     <div class="sum-box lnk" onclick="comptaCategorieDetail('${_comptaMonth}','goods')"><span>🛍️ Vente de marchandise</span><b>${euro(B.goods)} <span style="color:#9a8a82;font-weight:400">(${fmtPct(B.goods,B.caTotal)}%)</span></b>${NAV_GO}</div>
-     <div class="sum-box lnk" onclick="comptaCategorieDetail('${_comptaMonth}','service')"><span>🧑‍🍳 Prestation de service</span><b>${euro(B.service)} <span style="color:#9a8a82;font-weight:400">(${fmtPct(B.service,B.caTotal)}%)</span></b>${NAV_GO}</div>
+     <div class="sum-box lnk" onclick="comptaOuvrirCategorie('${_comptaMonth}','goods')"><span>🛍️ Vente de marchandise</span><b>${euro(B.goods)} <span style="color:#9a8a82;font-weight:400">(${fmtPct(B.goods,B.caTotal)}%)</span></b>${NAV_GO}</div>
+     <div class="sum-box lnk" onclick="comptaOuvrirCategorie('${_comptaMonth}','service')"><span>🧑‍🍳 Prestation de service</span><b>${euro(B.service)} <span style="color:#9a8a82;font-weight:400">(${fmtPct(B.service,B.caTotal)}%)</span></b>${NAV_GO}</div>
      <h3 style="font-size:.95rem;margin:14px 0 6px">Cotisations URSSAF estimées</h3>
      <div class="sum-box"><span>Marchandise · ${B.tauxGoods}%</span><b>${euro(B.cotisGoods)}</b></div>
      <div class="sum-box"><span>Service · ${B.tauxService}%</span><b>${euro(B.cotisService)}</b></div>
