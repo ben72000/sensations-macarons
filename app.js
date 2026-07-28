@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1414';
+const APP_VERSION = 'v1415';
 const APP_MAJ = 'CHANTIER A — L’APP NE PEUT PLUS ÉCHOUER EN SILENCE. Le constat de l’audit était dur : 347 endroits du code attrapaient une erreur et l’enregistraient fidèlement… dans un carnet que TU NE POUVAIS PAS OUVRIR. Il fallait brancher l’iPhone sur un Mac. Autant dire jamais. ET LE CARNET ÉTAIT EFFACÉ À CHAQUE RECHARGEMENT. C’est le mécanisme EXACT qui a caché la panne Dexie pendant un mois : chaque écriture kv échouait, la validation ne démarrait jamais, et l’écran affichait « 0 refus, 0 suspects » — ce qui RESSEMBLAIT à une bonne nouvelle alors que ça voulait dire « le contrôle n’a jamais démarré ». CE QUI CHANGE. 1) UN ÉCRAN « Santé de l’app » (Sauvegarde & sécurité) : tu lis enfin ce qui a cassé, depuis ton téléphone, sans Mac. 2) LES INCIDENTS VIVENT EN BASE (nouvelle table errLog) : ils survivent à un rechargement, donc tu peux constater qu’une panne DURE — c’est précisément ce que l’ancien carnet en mémoire rendait impossible. 3) UN FILET GLOBAL : une erreur hors try/catch te donnait un écran figé sans trace ; elle est maintenant enregistrée et annoncée par une bannière discrète. 4) UNE PASTILLE SUR L’ACCUEIL quand des incidents IMPORTANTS s’accumulent. LE TRI QUE J’AI FIGÉ, et qui est le cœur du travail : un échec d’AFFICHAGE et un échec d’ÉCRITURE EN BASE ne se valent pas. Base, sauvegarde, import, validation, compta → IMPORTANT, ça parle. Rendu, affichage → mineur, ça s’enregistre sans crier. Confondre les deux, c’est noyer le signal sous le bruit, et une alerte qui crie tout le temps est une alerte qu’on ne regarde plus. CE QUE JE N’AI PAS FAIT : deviner la cause d’une erreur, ni prétendre la réparer. L’écran montre ce qui s’est réellement passé. Une explication inventée serait pire qu’un silence. ET UNE MISE EN GARDE QUE JE TE DOIS : un écran Santé VIDE n’est PAS une preuve que tout va bien — c’est une absence d’incident enregistré, ce qui n’est pas la même chose. LA RÈGLE FIGÉE : une protection qu’on ne peut pas VOIR marcher doit être considérée comme ABSENTE jusqu’à preuve du contraire. Reste à faire : chantier B (valider le contenu à l’import), C (sortir les sauvegardes de la boîte qu’elles protègent), D (durcir import et QR). Suite : 88 → 89 suites, 1437 → 1475 assertions vertes.';
 
 // ============================================================
@@ -17457,6 +17457,19 @@ function construireFilTracabilite(prod, moves, orders, clients){
     const c = (clients||[]).find(x=>+x.id===+o.clientId);
     return c ? (c.nom||'') : '';
   };
+  // [v1415] FUSIONS DE BOÎTES. La boîte absorbée est SUPPRIMÉE de `productions` (db.productions
+  // .delete) : aucun lien vers sa fiche n'est possible, ce serait un lien mort. Mais ses
+  // MOUVEMENTS DE STOCK survivent (ils portent son productionId), et `fusionHisto` garde son
+  // numéro de lot et sa quantité. On reconstitue donc son histoire ICI, attribuée à son lot
+  // d'origine, pour que la traçabilité de CHAQUE contenant reste lisible après fusion.
+  const fusions = Array.isArray(prod.fusionHisto) ? prod.fusionHisto : [];
+  const lotAbsorbeParId = {};
+  fusions.forEach(f=>{ if(f && f.deId!=null) lotAbsorbeParId[+f.deId] = f.deLot || ('#'+f.deId); });
+  const _iso = t => {
+    if(!t) return '';
+    if(typeof t === 'number') return new Date(t).toISOString();   // fusionHisto.ts = Date.now()
+    return String(t);
+  };
 
   // 1) CRÉATION — datée sur la fin de fabrication (ou la 1re entrée de parcours).
   const hist = Array.isArray(prod.histEmplacement) ? prod.histEmplacement : [];
@@ -17478,24 +17491,45 @@ function construireFilTracabilite(prod, moves, orders, clients){
                  texte:`rangé${h.lieu?'':''}`, liens:[]});
   });
 
-  // 3) PRÉLÈVEMENTS ET AJUSTEMENTS — chaque sortie de stock, avec sa commande si connue.
+  // 3) FUSIONS — une étape par boîte absorbée, avec son lot et sa quantité.
+  fusions.forEach(f=>{
+    if(!f) return;
+    const lot = f.deLot || ('#'+f.deId);
+    etapes.push({ts:_iso(f.ts), type:'fusion', qteAbsorbee:round3(+f.qte||0), lotAbsorbe:lot,
+      texte:`fusion : boîte ${lot} (${qty(round3(+f.qte||0))} pièce(s)) absorbée dans celle-ci`,
+      liens:[]});
+  });
+
+  // 4) PRÉLÈVEMENTS ET AJUSTEMENTS — chaque sortie de stock, avec sa commande si connue.
+  // Un mouvement portant l'id d'une boîte ABSORBÉE est attribué à SON lot, pas à celui-ci :
+  // c'est ce qui rend lisible « ce qui avait déjà été prélevé sur chaque contenant » après fusion.
   (moves||[]).filter(m=>m && (+m.sens)<0).forEach(m=>{
     const nom = m.orderId!=null ? nomClient(m.orderId) : '';
     const dest = m.orderId!=null
       ? `destinées à la commande #${m.orderId}${nom?' '+nom:''}`
       : (m.note ? String(m.note) : (m.type||'sortie'));
-    etapes.push({ts:m.ts, type:'prelevement', qte:round3(+m.qte||0),
-      texte:`prélèvement de ${qty(round3(+m.qte||0))} pièce(s) ${dest}`,
+    const lotSource = (m.productionId!=null && lotAbsorbeParId[+m.productionId]) || '';
+    const prefixe = lotSource ? `sur la boîte ${lotSource} — ` : '';
+    etapes.push({ts:m.ts, type:'prelevement', qte:round3(+m.qte||0), lotSource,
+      texte:`${prefixe}prélèvement de ${qty(round3(+m.qte||0))} pièce(s) ${dest}`,
       liens: m.orderId!=null ? [{kind:'order', id:m.orderId, label:'commande #'+m.orderId}] : []});
   });
 
-  // Reconstitution du reste à chaque étape : on part de la quantité initiale (restante actuelle
-  // + tout ce qui est sorti) et on déroule le fil dans l'ordre chronologique.
+  // Reconstitution du reste à chaque étape. Trois règles :
+  //   • un prélèvement SUR CETTE boîte la diminue ;
+  //   • une fusion l'AUGMENTE de la quantité absorbée ;
+  //   • un prélèvement sur une boîte ABSORBÉE (donc AVANT la fusion) n'a jamais touché celle-ci :
+  //     il est affiché pour mémoire, sans compteur (resteApres = null) — afficher un reste ici
+  //     laisserait croire à un mouvement sur la boîte courante, ce qui serait faux.
   etapes.sort((a,b)=>String(a.ts||'').localeCompare(String(b.ts||'')));
-  const sorti = etapes.filter(e=>e.type==='prelevement').reduce((s,e)=>s+(+e.qte||0),0);
-  let reste = round3((+prod.qteRestante||0) + sorti);
+  const sortiPropre = etapes.filter(e=>e.type==='prelevement' && !e.lotSource)
+                            .reduce((s,e)=>s+(+e.qte||0),0);
+  const absorbe = etapes.filter(e=>e.type==='fusion').reduce((s,e)=>s+(+e.qteAbsorbee||0),0);
+  let reste = round3((+prod.qteRestante||0) + sortiPropre - absorbe);
   etapes.forEach(e=>{
+    if(e.type==='prelevement' && e.lotSource){ e.resteApres = null; return; }   // boîte absorbée
     if(e.type==='prelevement') reste = round3(reste - (+e.qte||0));
+    if(e.type==='fusion')      reste = round3(reste + (+e.qteAbsorbee||0));
     e.resteApres = reste;
   });
 
@@ -17555,7 +17589,13 @@ async function traceProd(prodId){
   _tracePush('prod', prodId, _prodNom);
   // [v1414] Sources du FIL DE TRAÇABILITÉ : sorties de stock de CETTE production + commandes
   // et clients pour nommer les destinataires des prélèvements.
-  const _movesProd = await db.stockMoves.filter(m=>+m.productionId===+prodId).toArray().catch(()=>[]);
+  // [v1415] On inclut aussi les mouvements des boîtes ABSORBÉES par fusion : leur ligne
+  // `productions` a été supprimée, mais leurs mouvements survivent et racontent ce qui avait
+  // été prélevé sur chaque contenant avant qu'ils ne soient réunis.
+  const _idsFusion = (Array.isArray(prod.fusionHisto)?prod.fusionHisto:[])
+    .map(f=>f && f.deId).filter(v=>v!=null).map(Number);
+  const _idsTrace = [prodId].concat(_idsFusion);
+  const _movesProd = await db.stockMoves.filter(m=>_idsTrace.indexOf(+m.productionId)>=0).toArray().catch(()=>[]);
   const _ordersTrace = await db.orders.toArray().catch(()=>[]);
   const _clientsTrace = await db.clients.toArray().catch(()=>[]);
   const _fil = construireFilTracabilite(prod, _movesProd, _ordersTrace, _clientsTrace);
@@ -17642,14 +17682,22 @@ async function traceProd(prodId){
     <span style="color:#9a8a82;font-size:.85rem">Théorique : ${qty((prod.qteTheorique!=null)?prod.qteTheorique:prod.qteProduite)} · Réel : ${qty((prod.qteReelle!=null)?prod.qteReelle:prod.qteProduite)}${prod.ecart?` · écart ${(+prod.ecart>0?'+':'')}${qty(prod.ecart)}`:''} · Restant : ${qty(prod.qteRestante)}</span></p>
     ${_fil.length?`<div style="margin-top:12px"><h3 style="font-size:1rem;margin:0 0 8px">🕘 Fil de traçabilité <span style="font-weight:400;font-size:.78rem;color:#9a8a82">— du plus récent au plus ancien</span></h3>
       ${_fil.map(e=>{
-        const ico = e.type==='prelevement' ? '📤' : (e.type==='creation' ? '✨' : empIcon(e.lieu));
+        const ico = e.type==='prelevement' ? '📤' : (e.type==='creation' ? '✨' : (e.type==='fusion' ? '🔗' : empIcon(e.lieu)));
         const lieuTxt = e.type==='emplacement' ? `${esc(empNom(e.lieu))} (${empLettre(e.lieu)})${e.motif?` · ${esc(e.motif)}`:''}` : '';
         const corps = e.type==='emplacement' ? `rangé en ${lieuTxt}` : esc(e.texte);
         const liens = (e.liens||[]).map(l=>
           `<span onclick="traceGo('${l.kind}',${l.id})" style="color:var(--caramel,#AA7C39);cursor:pointer;font-weight:600;text-decoration:underline">${esc(l.label)}</span>`).join(' · ');
-        return `<div style="padding:8px 10px;margin-bottom:5px;border-left:3px solid ${e.type==='prelevement'?'#b3261e':(e.type==='creation'?'#3f7d52':'#c9b89f')};background:#fdfaf6;border-radius:0 8px 8px 0">
-          <div style="font-size:.78rem;color:#9a8a82">${fmtDateTime(e.ts)}</div>
-          <div style="font-size:.86rem;color:#3a2a32"><b>${esc(prod.lotProduction||('#'+prod.id))}</b> · <b>${qty(e.resteApres)}</b> pièce(s) restantes — ${corps}</div>
+        const couleur = e.type==='prelevement' ? '#b3261e' : (e.type==='creation' ? '#3f7d52' : (e.type==='fusion' ? '#6a4a8a' : '#c9b89f'));
+        // Le lot affiché en tête de ligne : celui de la boîte ABSORBÉE pour ses mouvements
+        // d'avant-fusion, sinon celui de la boîte courante.
+        const lotLigne = e.lotSource || prod.lotProduction || ('#'+prod.id);
+        // Pas de compteur pour un mouvement qui n'a pas touché cette boîte (avant fusion).
+        const resteTxt = (e.resteApres==null)
+          ? '<span style="color:#9a8a82;font-style:italic">avant fusion</span>'
+          : `<b>${qty(e.resteApres)}</b> pièce(s) restantes`;
+        return `<div style="padding:8px 10px;margin-bottom:5px;border-left:3px solid ${couleur};background:${e.type==='fusion'?'#f7f2fb':'#fdfaf6'};border-radius:0 8px 8px 0${e.lotSource?';margin-left:14px':''}">
+          <div style="font-size:.78rem;color:#9a8a82">${ico} ${fmtDateTime(e.ts)}</div>
+          <div style="font-size:.86rem;color:#3a2a32"><b>${esc(lotLigne)}</b> · ${resteTxt} — ${corps}</div>
           ${liens?`<div style="font-size:.8rem;margin-top:3px">${liens}</div>`:''}
         </div>`;
       }).join('')}
