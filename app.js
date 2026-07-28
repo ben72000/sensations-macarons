@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1412';
+const APP_VERSION = 'v1414';
 const APP_MAJ = 'CHANTIER A — L’APP NE PEUT PLUS ÉCHOUER EN SILENCE. Le constat de l’audit était dur : 347 endroits du code attrapaient une erreur et l’enregistraient fidèlement… dans un carnet que TU NE POUVAIS PAS OUVRIR. Il fallait brancher l’iPhone sur un Mac. Autant dire jamais. ET LE CARNET ÉTAIT EFFACÉ À CHAQUE RECHARGEMENT. C’est le mécanisme EXACT qui a caché la panne Dexie pendant un mois : chaque écriture kv échouait, la validation ne démarrait jamais, et l’écran affichait « 0 refus, 0 suspects » — ce qui RESSEMBLAIT à une bonne nouvelle alors que ça voulait dire « le contrôle n’a jamais démarré ». CE QUI CHANGE. 1) UN ÉCRAN « Santé de l’app » (Sauvegarde & sécurité) : tu lis enfin ce qui a cassé, depuis ton téléphone, sans Mac. 2) LES INCIDENTS VIVENT EN BASE (nouvelle table errLog) : ils survivent à un rechargement, donc tu peux constater qu’une panne DURE — c’est précisément ce que l’ancien carnet en mémoire rendait impossible. 3) UN FILET GLOBAL : une erreur hors try/catch te donnait un écran figé sans trace ; elle est maintenant enregistrée et annoncée par une bannière discrète. 4) UNE PASTILLE SUR L’ACCUEIL quand des incidents IMPORTANTS s’accumulent. LE TRI QUE J’AI FIGÉ, et qui est le cœur du travail : un échec d’AFFICHAGE et un échec d’ÉCRITURE EN BASE ne se valent pas. Base, sauvegarde, import, validation, compta → IMPORTANT, ça parle. Rendu, affichage → mineur, ça s’enregistre sans crier. Confondre les deux, c’est noyer le signal sous le bruit, et une alerte qui crie tout le temps est une alerte qu’on ne regarde plus. CE QUE JE N’AI PAS FAIT : deviner la cause d’une erreur, ni prétendre la réparer. L’écran montre ce qui s’est réellement passé. Une explication inventée serait pire qu’un silence. ET UNE MISE EN GARDE QUE JE TE DOIS : un écran Santé VIDE n’est PAS une preuve que tout va bien — c’est une absence d’incident enregistré, ce qui n’est pas la même chose. LA RÈGLE FIGÉE : une protection qu’on ne peut pas VOIR marcher doit être considérée comme ABSENTE jusqu’à preuve du contraire. Reste à faire : chantier B (valider le contenu à l’import), C (sortir les sauvegardes de la boîte qu’elles protègent), D (durcir import et QR). Suite : 88 → 89 suites, 1437 → 1475 assertions vertes.';
 
 // ============================================================
@@ -5270,7 +5270,39 @@ function coqueColorProfile(prod, recById){
   if(!colors.length) return null;
   return { colors, gf: !!(rec && rec.grandFormat) };
 }
-// Deux lots de coques sont-ils MUTUALISABLES pour une couleur donnée ? (même couleur présente
+// [v1413] BICOLORE : la recette porte DEUX couleurs de coques DIFFÉRENTES (praliné =
+// marron foncé + blanc). Deux fois la même couleur = monochrome. C'est cette information,
+// déjà présente dans la recette depuis la v1249, qui pilote l'apparition du 2e sélecteur
+// de coques à l'assemblage. PURE.
+function recEstBicolore(rec){
+  const c = recCoqueColors(rec);
+  return c.length===2 && c[0]!==c[1];
+}
+
+// Lots de coques utilisables pour UNE couleur précise, à taille égale (std ≠ grand format).
+// Sert à alimenter le 2e sélecteur : quand on monte un praliné avec un lot de coques
+// « chocolat au lait » (marron foncé), il faut pouvoir prendre le blanc dans un lot
+// « vanille ». PURE — ne lit que ses arguments.
+function coquesPourCouleur(lots, couleur, recById, profilCible){
+  if(!couleur) return [];
+  return (lots||[]).filter(x=>{
+    const ps = coqueColorProfile(x, recById);
+    if(!ps) return false;
+    if(profilCible && !!ps.gf !== !!profilCible.gf) return false;   // std et GF jamais mélangés
+    return ps.colors.indexOf(couleur)>=0;
+  });
+}
+
+// Répartition des coques entre UN ou DEUX lots, pour `qteAsm` macarons.
+// • un seul lot  → il fournit les 2 coques de chaque macaron (2 × qteAsm)
+// • deux lots    → 1 coque de chaque couleur par macaron (qteAsm de chaque lot)
+// PURE. Renvoie { lot1, lot2 } en nombre de COQUES (pas de macarons).
+function repartitionCoques(qteAsm, deuxLots){
+  const n = Math.max(0, +qteAsm||0);
+  return deuxLots ? { lot1:n, lot2:n } : { lot1:n*COQUES_PAR_MACARON, lot2:0 };
+}
+
+
 // dans les deux empreintes ET même taille). Utilisé pour proposer un dépannage à l'assemblage.
 function coquesMutualisables(profilCible, profilSource, couleurVoulue){
   if(!profilCible || !profilSource) return false;
@@ -14228,8 +14260,51 @@ async function prodAssembleForm(id, opts){
     }
   }
 
-  const maxThisMac = comp==='coques' ? Math.floor(round3(+p.qteRestante)/COQUES_PAR_MACARON) : round3(+p.qteRestante);
-  const uniteThis = comp==='coques' ? `${qty(p.qteRestante)} coques (≈ ${maxThisMac} macarons)` : `${qty(p.qteRestante)} macarons`;
+  // [v1413] SECOND LOT DE COQUES — pour les macarons BICOLORES (praliné, chocolat passion…).
+  // Un lot dédié bicolore contient déjà les deux couleurs (30 blanches + 30 marron) : un seul
+  // sélecteur suffit. Mais quand on dépanne avec DEUX lots monochromes d'autres parfums
+  // (vanille = blanc, chocolat au lait = marron foncé), il faut pouvoir désigner les deux.
+  // Le champ est proposé D'OFFICE si la recette montée est bicolore, et reste disponible
+  // (replié) sinon — utile pour les mélanges libres en dégustation.
+  const _recCible = _recById[+p.recipeId] || null;
+  const _bicolore = recEstBicolore(_recCible);
+  const _coulCible = recCoqueColors(_recCible);
+  // Tous les lots de coques en stock, terminés (base des deux sélecteurs de coques).
+  const _lotsCoques = all.filter(x=>prodComposant(x)==='coques' && round3(+x.qteRestante)>0
+                                    && (x.prodStatut||'termine')==='termine');
+  let coques2Html = '';
+  {
+    // Couleur attendue pour le 2e lot : la SECONDE de la recette (la 1re étant servie par le
+    // lot de départ ou par le 1er sélecteur). Sans recette bicolore, on n'impose aucune couleur.
+    const _coul2 = _bicolore ? _coulCible[1] : '';
+    const _lots2 = _bicolore
+      ? coquesPourCouleur(_lotsCoques, _coul2, _recById, _profilCible)
+      : _lotsCoques;
+    const _opts2 = _lots2.map(c=>{
+      const capMac = Math.floor(round3(+c.qteRestante)/1);   // 1 coque/macaron quand 2 lots
+      return `<option value="${c.id}">${esc(recName(c))} — ${esc(c.lotProduction||('#'+c.id))} · ${qty(c.qteRestante)} coques (≈ ${capMac} mac.)</option>`;
+    }).join('');
+    const _labelCoul = _bicolore
+      ? `${coqueCouleurPastille(_coul2)}${esc(coqueCouleurLabel(_coul2))}`
+      : 'autre couleur';
+    const _aide = _bicolore
+      ? `<b>${esc(recName(p))}</b> est un macaron <b>bicolore</b> (${_coulCible.map(k=>coqueCouleurPastille(k)+esc(coqueCouleurLabel(k))).join(' + ')}). Si ton lot de coques ne contient qu'<b>une</b> couleur, désigne ici le lot qui fournit l'autre. Chaque macaron prendra alors <b>1 coque de chaque lot</b>.`
+      : `Facultatif — pour un mélange de couleurs (dégustation). Chaque macaron prendra <b>1 coque de chaque lot</b> au lieu de 2 du même.`;
+    coques2Html = _lots2.length ? `
+      <div class="field" style="margin-top:6px;${_bicolore?'border:2px solid #e5d8c8;border-radius:12px;padding:10px;background:#fdfaf6':''}">
+        <label>🎨 2ᵉ lot de coques — ${_labelCoul} ${_bicolore?'':'<span style="color:#9a8a82;font-weight:400">(facultatif)</span>'}</label>
+        <select id="f_asmCoques2">
+          <option value="">— Aucun : les 2 coques viennent du même lot —</option>
+          ${_opts2}
+        </select>
+        <p class="note" style="margin-top:4px">${_aide}</p>
+      </div>` : (_bicolore ? `
+      <div class="banner" style="background:#fdf3f2;border-color:#e5b4ae;margin-top:6px"><div>
+        ⚠ <b>${esc(recName(p))}</b> est bicolore (${_coulCible.map(k=>esc(coqueCouleurLabel(k))).join(' + ')}) mais aucun lot de coques ${esc(coqueCouleurLabel(_coul2))} n'est disponible. Assemble avec un seul lot, ou produis les coques manquantes.
+      </div></div>` : '');
+  }
+
+  const maxThisMac = comp==='coques' ? Math.floor(round3(+p.qteRestante)/COQUES_PAR_MACARON) : round3(+p.qteRestante);  const uniteThis = comp==='coques' ? `${qty(p.qteRestante)} coques (≈ ${maxThisMac} macarons)` : `${qty(p.qteRestante)} macarons`;
   // Mot de garniture réel pour les libellés : crémeux seulement si TOUS les candidats sont des
   // crémeux ; sinon « ganache » (cas Madeleine GF = ganache montée). Purement cosmétique.
   const _garnMot = (want==='ganache' && cands.length && cands.every(c=>c.garnitureType==='cremeux')) ? 'crémeux' : 'ganache';
@@ -14243,6 +14318,7 @@ async function prodAssembleForm(id, opts){
    <div class="sum-box"><span>${comp==='coques'?'🟤 Coques':garnIcon(p)+' '+(garnLabel(p)==='crémeux'?'Crémeux':'Ganache')} (ce lot)</span><b>${esc(p.lotProduction||('#'+p.id))} · ${uniteThis}</b></div>
    <div class="field"><label>${want==='ganache'?(mode3?'🟠 Crémeux à associer':'🍫 Ganache à associer'):'🟤 Coques à associer'}</label>
      <select id="f_asmOther">${optsCand}</select></div>
+   ${coques2Html}
    ${compSelectorsHtml}
    <label class="switch-row"><input type="checkbox" id="f_asmDeg"${opts.deg?' checked':''} onchange="prodAsmDegSwitch(this.checked)"> 🥄 Assemblage dégustation (offert, non vendable)</label>
    <div class="field"><label>Quantité de <b>macarons</b> à assembler</label>
@@ -14262,6 +14338,9 @@ function prodAsmDegSwitch(on){
 }
 async function prodAssembleSave(thisId){
   const otherId=+val('f_asmOther');
+  // [v1413] 2e lot de coques (bicolore ou mélange dégustation). 0 = les 2 coques viennent
+  // du même lot, comportement historique inchangé.
+  const coques2Id=+val('f_asmCoques2')||0;
   let qteAsm=+val('f_asmQte')||0;
   const deg=document.getElementById('f_asmDeg')?.checked;
   const dest=(document.querySelector('input[name="f_asmDest"]:checked')||{}).value||'frigo';
@@ -14299,10 +14378,19 @@ async function prodAssembleSave(thisId){
         throw new Error(`${_lbl} : termine sa production avant d'assembler.`);
       }
       // qteAsm = nombre de MACARONS. Capacité : coques/2 (2 coques/macaron) et garniture (déjà en macarons).
-      const capCoques = Math.floor(round3(+coques.qteRestante)/COQUES_PAR_MACARON);
+      // [v1413] Avec un SECOND lot de coques, chaque macaron prend 1 coque de chaque lot :
+      // la capacité devient le MINIMUM des deux lots (pris coque pour coque), pas leur somme.
+      const _coques2 = coques2Id ? await db.productions.get(coques2Id) : null;
+      if(coques2Id && !_coques2) throw new Error('Second lot de coques introuvable.');
+      if(_coques2 && +_coques2.id === +coques.id) throw new Error('Le second lot de coques doit être différent du premier.');
+      if(_coques2 && prodComposant(_coques2)!=='coques') throw new Error('Le second lot sélectionné n\'est pas un lot de coques.');
+      const _rep = repartitionCoques(1, !!_coques2);   // coques consommées pour 1 macaron
+      const capCoques = _coques2
+        ? Math.min(Math.floor(round3(+coques.qteRestante)/_rep.lot1), Math.floor(round3(+_coques2.qteRestante)/_rep.lot2))
+        : Math.floor(round3(+coques.qteRestante)/COQUES_PAR_MACARON);
       const capGanache = round3(+ganache.qteRestante);
       const dispo = Math.min(capCoques, capGanache);
-      if(qteAsm>dispo+1e-9) throw new Error(`Max assemblable : ${qty(dispo)} macaron(s) — limité par ${capCoques<=capGanache?'les coques ('+qty(coques.qteRestante)+' coques)':'la garniture ('+qty(ganache.qteRestante)+' macarons)'}.`);
+      if(qteAsm>dispo+1e-9) throw new Error(`Max assemblable : ${qty(dispo)} macaron(s) — limité par ${capCoques<=capGanache?'les coques':'la garniture ('+qty(ganache.qteRestante)+' macarons)'}.`);
       // [ÉTAPE 3] DÉCOMPTE DES COMPOSANTS SUPPLÉMENTAIRES (chantache) — choisis explicitement.
       // Le lot est celui sélectionné dans le formulaire ; on vérifie statut terminé + quantité,
       // sinon on BLOQUE tout (transaction annulée). Les 3 éléments d'un GF sont obligatoires.
@@ -14339,7 +14427,8 @@ async function prodAssembleSave(thisId){
         }
         _compConsos.push({componentId:cid, nom:nomComp, prelevs:[{prodId:lotChoisi.id, lot:lotChoisi.lotProduction||('#'+lotChoisi.id), qte:besoinComp}]});
       }
-      const coquesUtilisees = qteAsm*COQUES_PAR_MACARON;
+      const _repFin = repartitionCoques(qteAsm, !!_coques2);
+      const coquesUtilisees = _repFin.lot1;
       const nowIso=new Date().toISOString();
       // [HEURE DE FABRICATION] L'assemblé est « fini » quand ses composants le sont : on ancre la DLC et
       // l'étiquette sur la fin la plus tardive des composants (coques/ganache), pas sur l'heure du clic.
@@ -14365,6 +14454,8 @@ async function prodAssembleSave(thisId){
       const lotAsm = lotAvecEmplacement((lotBase||genLotCode(3))+suff, dest);
       // décrémente les composants selon le ratio : 2 coques + 1 garniture par macaron
       await db.productions.update(coques.id, {qteRestante: subQty(coques.qteRestante, coquesUtilisees)});
+      // [v1413] Second lot de coques : même décrément, à hauteur de sa part (1 coque/macaron).
+      if(_coques2) await db.productions.update(_coques2.id, {qteRestante: subQty(_coques2.qteRestante, _repFin.lot2)});
       await db.productions.update(ganache.id, {qteRestante: subQty(ganache.qteRestante, qteAsm)});
       // [ÉTAPE 3] décrémente les composants supplémentaires (chantache) choisis explicitement
       const _assembleFromComp = [];
@@ -14401,6 +14492,7 @@ async function prodAssembleSave(thisId){
         emplacement:dest, emplacementMaj:nowIso, venuDuCongelateur:isFreezer(dest),
         histEmplacement:[{lieu:dest, ts:nowIso, motif}],
         assembleFrom:[{id:coques.id, lot:coques.lotProduction, composant:'coques', qte:coquesUtilisees, parfum:(window._prodRecName?window._prodRecName(coques.recipeId):'')},
+                      ...(_coques2?[{id:_coques2.id, lot:_coques2.lotProduction, composant:'coques', qte:_repFin.lot2, parfum:(window._prodRecName?window._prodRecName(_coques2.recipeId):'')}]:[]),
                       {id:ganache.id, lot:ganache.lotProduction, composant:'ganache', qte:qteAsm, parfum:(window._prodRecName?window._prodRecName(ganache.recipeId):'')},
                       ..._assembleFromComp]
       });
@@ -14410,6 +14502,8 @@ async function prodAssembleSave(thisId){
         _stockMoves:[
           { parfumNom:(window._prodRecName?window._prodRecName(coques.recipeId):(_rec?_rec.produitNom:'')),
             composant:'coques', sens:-1, qte:coquesUtilisees, type:'assemblage', productionId:coques.id },
+          ...(_coques2?[{ parfumNom:(window._prodRecName?window._prodRecName(_coques2.recipeId):''),
+            composant:'coques', sens:-1, qte:_repFin.lot2, type:'assemblage', productionId:_coques2.id }]:[]),
           { parfumNom:(window._prodRecName?window._prodRecName(ganache.recipeId):(_rec?_rec.produitNom:'')),
             composant:'ganache', sens:-1, qte:qteAsm, type:'assemblage', productionId:ganache.id },
           ..._compStockMoves,
@@ -17339,6 +17433,76 @@ function traceOpen(kind, id){
 }
 
 // Navigue vers une fiche (empile, sans réinitialiser).
+// [v1414] FIL DE TRAÇABILITÉ D'UNE BOÎTE / D'UN LOT — vue chronologique unifiée.
+// Demande de Ben : scanner une étiquette et voir, du PLUS RÉCENT au plus ancien, tout ce qui est
+// arrivé à cette boîte précise — sa création (à partir de quels lots), ses changements
+// d'emplacement datés, et chaque prélèvement avec la commande destinataire. Les trois sources
+// existaient déjà mais VIVAIENT SÉPARÉMENT : assembleFrom (origine), histEmplacement (parcours),
+// stockMoves (décréments). Cette fonction les FUSIONNE en un seul fil daté.
+//
+// Chaque étape porte `resteApres` : la quantité restante APRÈS cet événement, reconstituée en
+// remontant les décréments (on ne stocke pas d'instantané de stock par mouvement).
+// PURE : ne lit que ses arguments, ne touche jamais la base.
+//   prod   : la production (boîte ou lot)
+//   moves  : stockMoves de CETTE production (filtrés par l'appelant)
+//   orders : commandes (pour nommer la destination d'un prélèvement)
+//   clients: clients (pour afficher le nom plutôt qu'un id)
+// Renvoie [{ts, type, texte, resteApres, liens:[{kind,id,label}]}] trié DESC (récent d'abord).
+function construireFilTracabilite(prod, moves, orders, clients){
+  if(!prod) return [];
+  const etapes = [];
+  const nomClient = oid => {
+    const o = (orders||[]).find(x=>+x.id===+oid);
+    if(!o) return '';
+    const c = (clients||[]).find(x=>+x.id===+o.clientId);
+    return c ? (c.nom||'') : '';
+  };
+
+  // 1) CRÉATION — datée sur la fin de fabrication (ou la 1re entrée de parcours).
+  const hist = Array.isArray(prod.histEmplacement) ? prod.histEmplacement : [];
+  const tsCreation = prod.prodTermineTs || prod.prodTimestamp || (hist[0] && hist[0].ts) || prod.date || '';
+  const src = Array.isArray(prod.assembleFrom) ? prod.assembleFrom : [];
+  const liensSrc = src.filter(s=>s && s.id!=null)
+    .map(s=>({kind:'prod', id:s.id, label:s.lot||('#'+s.id)}));
+  const texteCreation = src.length
+    ? 'créé à partir de l\'assemblage ' + src.map(s=>`du lot ${s.lot||('#'+s.id)}`).join(' et ')
+    : 'lot créé en production';
+  if(tsCreation) etapes.push({ts:tsCreation, type:'creation', texte:texteCreation, liens:liensSrc});
+
+  // 2) PARCOURS DE CONSERVATION — un événement par changement d'emplacement.
+  hist.forEach((h,i)=>{
+    if(!h || !h.ts) return;
+    // La 1re entrée coïncide avec la création : on ne la double pas, on l'enrichit du lieu.
+    if(i===0 && tsCreation && h.ts===tsCreation) return;
+    etapes.push({ts:h.ts, type:'emplacement', lieu:h.lieu||'', motif:h.motif||'',
+                 texte:`rangé${h.lieu?'':''}`, liens:[]});
+  });
+
+  // 3) PRÉLÈVEMENTS ET AJUSTEMENTS — chaque sortie de stock, avec sa commande si connue.
+  (moves||[]).filter(m=>m && (+m.sens)<0).forEach(m=>{
+    const nom = m.orderId!=null ? nomClient(m.orderId) : '';
+    const dest = m.orderId!=null
+      ? `destinées à la commande #${m.orderId}${nom?' '+nom:''}`
+      : (m.note ? String(m.note) : (m.type||'sortie'));
+    etapes.push({ts:m.ts, type:'prelevement', qte:round3(+m.qte||0),
+      texte:`prélèvement de ${qty(round3(+m.qte||0))} pièce(s) ${dest}`,
+      liens: m.orderId!=null ? [{kind:'order', id:m.orderId, label:'commande #'+m.orderId}] : []});
+  });
+
+  // Reconstitution du reste à chaque étape : on part de la quantité initiale (restante actuelle
+  // + tout ce qui est sorti) et on déroule le fil dans l'ordre chronologique.
+  etapes.sort((a,b)=>String(a.ts||'').localeCompare(String(b.ts||'')));
+  const sorti = etapes.filter(e=>e.type==='prelevement').reduce((s,e)=>s+(+e.qte||0),0);
+  let reste = round3((+prod.qteRestante||0) + sorti);
+  etapes.forEach(e=>{
+    if(e.type==='prelevement') reste = round3(reste - (+e.qte||0));
+    e.resteApres = reste;
+  });
+
+  // Le plus récent en tête (demande explicite de Ben).
+  return etapes.reverse();
+}
+
 function traceGo(kind, id){
   _traceNavInterne = true;
   if(kind==='prod') return traceProd(id);
@@ -17389,6 +17553,12 @@ async function traceProd(prodId){
   const recipe = prod.recipeId!=null ? await db.recipes.get(prod.recipeId).catch(()=>null) : null;
   const _prodNom = recipe ? recipe.produitNom : (prod.libre ? (prod.produitLibre||'(libre)') : '(recette non enregistrée)');
   _tracePush('prod', prodId, _prodNom);
+  // [v1414] Sources du FIL DE TRAÇABILITÉ : sorties de stock de CETTE production + commandes
+  // et clients pour nommer les destinataires des prélèvements.
+  const _movesProd = await db.stockMoves.filter(m=>+m.productionId===+prodId).toArray().catch(()=>[]);
+  const _ordersTrace = await db.orders.toArray().catch(()=>[]);
+  const _clientsTrace = await db.clients.toArray().catch(()=>[]);
+  const _fil = construireFilTracabilite(prod, _movesProd, _ordersTrace, _clientsTrace);
   const consoAll = await db.prodConsumption.where('productionId').equals(prodId).toArray().catch(()=>[]);
   // Lignes ACTIVES (vraies consommations) vs NEUTRALISÉES (remplacées / réaffectées) :
   // ces dernières ne sont PAS de vraies consos, on ne les compte pas et on ne met pas
@@ -17470,7 +17640,20 @@ async function traceProd(prodId){
     <span style="color:#9a8a82;font-size:.85rem">Emplacement : ${empTagHtml(prod.emplacement)}${prodComposant(prod)!=='complet'?` · <span class="tag" style="background:${prodComposant(prod)==='assemble'?'#3f7d52':prodComposant(prod)==='degustation'?'#caa23b':'#8a6d3b'};color:#fff">${prodComposant(prod)==='coques'?'🟤 Coques':prodComposant(prod)==='ganache'?'🍫 Ganache':prodComposant(prod)==='degustation'?'🥄 Dégustation (offert)':'✓ Assemblé'}</span>`:''}${prod.parentProdId?' · <span class="tag" style="background:#ece2d4;color:#6b5a52">partie d\'une production</span>':''}</span><br>
     <span style="color:#9a8a82;font-size:.85rem">Statut : <b>${prodStatut(prod)==='termine'?'✓ Terminée':'▶ Démarrée'}</b>${(prod.prodDebutTs||prod.prodTimestamp)?` · démarrée le ${fmtDateTime(prod.prodDebutTs||prod.prodTimestamp)}`:''}${prod.prodTermineTs?` · terminée le ${fmtDateTime(prod.prodTermineTs)}`:''}${_dur?` · <b>durée ${_dur}</b>`:''}${(function(){const d=(typeof prodDlcEffective==='function')?prodDlcEffective(prod):prod.dlcProduit;return d?` · DLC ${fmtDate(d)}`:(prodStatut(prod)!=='termine'?' · DLC non lancée (prod en cours)':'');})()}</span><br>
     <span style="color:#9a8a82;font-size:.85rem">Théorique : ${qty((prod.qteTheorique!=null)?prod.qteTheorique:prod.qteProduite)} · Réel : ${qty((prod.qteReelle!=null)?prod.qteReelle:prod.qteProduite)}${prod.ecart?` · écart ${(+prod.ecart>0?'+':'')}${qty(prod.ecart)}`:''} · Restant : ${qty(prod.qteRestante)}</span></p>
-    ${(prod.histEmplacement&&prod.histEmplacement.length>1)?`<div class="sum-box" style="flex-direction:column;align-items:flex-start"><span style="font-weight:600">Parcours de conservation</span>${prod.histEmplacement.map(h=>`<span style="font-size:.8rem;color:#6b5a52">${empIcon(h.lieu)} ${esc(empNom(h.lieu))} (${empLettre(h.lieu)}) — ${fmtDateTime(h.ts)}${h.motif?` · ${esc(h.motif)}`:''}</span>`).join('')}</div>`:''}
+    ${_fil.length?`<div style="margin-top:12px"><h3 style="font-size:1rem;margin:0 0 8px">🕘 Fil de traçabilité <span style="font-weight:400;font-size:.78rem;color:#9a8a82">— du plus récent au plus ancien</span></h3>
+      ${_fil.map(e=>{
+        const ico = e.type==='prelevement' ? '📤' : (e.type==='creation' ? '✨' : empIcon(e.lieu));
+        const lieuTxt = e.type==='emplacement' ? `${esc(empNom(e.lieu))} (${empLettre(e.lieu)})${e.motif?` · ${esc(e.motif)}`:''}` : '';
+        const corps = e.type==='emplacement' ? `rangé en ${lieuTxt}` : esc(e.texte);
+        const liens = (e.liens||[]).map(l=>
+          `<span onclick="traceGo('${l.kind}',${l.id})" style="color:var(--caramel,#AA7C39);cursor:pointer;font-weight:600;text-decoration:underline">${esc(l.label)}</span>`).join(' · ');
+        return `<div style="padding:8px 10px;margin-bottom:5px;border-left:3px solid ${e.type==='prelevement'?'#b3261e':(e.type==='creation'?'#3f7d52':'#c9b89f')};background:#fdfaf6;border-radius:0 8px 8px 0">
+          <div style="font-size:.78rem;color:#9a8a82">${fmtDateTime(e.ts)}</div>
+          <div style="font-size:.86rem;color:#3a2a32"><b>${esc(prod.lotProduction||('#'+prod.id))}</b> · <b>${qty(e.resteApres)}</b> pièce(s) restantes — ${corps}</div>
+          ${liens?`<div style="font-size:.8rem;margin-top:3px">${liens}</div>`:''}
+        </div>`;
+      }).join('')}
+    </div>`:''}
     <h3 style="font-size:1rem;margin:16px 0 8px">⬅ Matières consommées (origine)</h3>
     ${lines.length?lines.join(''):(prodComposant(prod)==='assemble'?'<p class="note">Macaron assemblé : matières tracées via les sous-lots ci-dessous.</p>':'<p class="note">Aucune consommation enregistrée.</p>')}
     ${histoBlock}
