@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1415';
+const APP_VERSION = 'v1416';
 const APP_MAJ = 'CHANTIER A — L’APP NE PEUT PLUS ÉCHOUER EN SILENCE. Le constat de l’audit était dur : 347 endroits du code attrapaient une erreur et l’enregistraient fidèlement… dans un carnet que TU NE POUVAIS PAS OUVRIR. Il fallait brancher l’iPhone sur un Mac. Autant dire jamais. ET LE CARNET ÉTAIT EFFACÉ À CHAQUE RECHARGEMENT. C’est le mécanisme EXACT qui a caché la panne Dexie pendant un mois : chaque écriture kv échouait, la validation ne démarrait jamais, et l’écran affichait « 0 refus, 0 suspects » — ce qui RESSEMBLAIT à une bonne nouvelle alors que ça voulait dire « le contrôle n’a jamais démarré ». CE QUI CHANGE. 1) UN ÉCRAN « Santé de l’app » (Sauvegarde & sécurité) : tu lis enfin ce qui a cassé, depuis ton téléphone, sans Mac. 2) LES INCIDENTS VIVENT EN BASE (nouvelle table errLog) : ils survivent à un rechargement, donc tu peux constater qu’une panne DURE — c’est précisément ce que l’ancien carnet en mémoire rendait impossible. 3) UN FILET GLOBAL : une erreur hors try/catch te donnait un écran figé sans trace ; elle est maintenant enregistrée et annoncée par une bannière discrète. 4) UNE PASTILLE SUR L’ACCUEIL quand des incidents IMPORTANTS s’accumulent. LE TRI QUE J’AI FIGÉ, et qui est le cœur du travail : un échec d’AFFICHAGE et un échec d’ÉCRITURE EN BASE ne se valent pas. Base, sauvegarde, import, validation, compta → IMPORTANT, ça parle. Rendu, affichage → mineur, ça s’enregistre sans crier. Confondre les deux, c’est noyer le signal sous le bruit, et une alerte qui crie tout le temps est une alerte qu’on ne regarde plus. CE QUE JE N’AI PAS FAIT : deviner la cause d’une erreur, ni prétendre la réparer. L’écran montre ce qui s’est réellement passé. Une explication inventée serait pire qu’un silence. ET UNE MISE EN GARDE QUE JE TE DOIS : un écran Santé VIDE n’est PAS une preuve que tout va bien — c’est une absence d’incident enregistré, ce qui n’est pas la même chose. LA RÈGLE FIGÉE : une protection qu’on ne peut pas VOIR marcher doit être considérée comme ABSENTE jusqu’à preuve du contraire. Reste à faire : chantier B (valider le contenu à l’import), C (sortir les sauvegardes de la boîte qu’elles protègent), D (durcir import et QR). Suite : 88 → 89 suites, 1437 → 1475 assertions vertes.';
 
 // ============================================================
@@ -1314,7 +1314,8 @@ const VALIDE_SCHEMAS = {
   },
   productions: {
     requisCreation: [],                                   // plusieurs chemins de création : on ne fige que les types
-    champs: { recipeId:'idRef', date:'dateJ', qte:'nombreFini', dlc:'chaine' }
+    // [v1416] fusionneeDans : id de la boîte qui a absorbé celle-ci (archivage de fusion).
+    champs: { recipeId:'idRef', date:'dateJ', qte:'nombreFini', dlc:'chaine', fusionneeDans:'idRef' }
   },
   prodConsumption: {
     requisCreation: ['productionId','materialLotId'],
@@ -5734,6 +5735,12 @@ function prodEstRangee(p){
   return false;
 }
 // Un lot est-il un PRODUIT FINI vendable ? (exclut les sous-lots coques/ganache non assemblés)
+// [v1416] Une boîte ABSORBÉE par une fusion reste en base (traçabilité complète) mais ne doit
+// plus apparaître dans le stock vivant : son contenu a été transféré dans la boîte gardée.
+// La masquer partout où l'on liste des lots évite de compter deux fois les mêmes macarons.
+// PURE.
+function prodEstFusionnee(p){ return !!(p && p.fusionneeDans!=null); }
+
 function prodVendable(p){ const c=prodComposant(p); return c==='complet' || c==='assemble'; }
 // [KPI STOCK] POTENTIEL DE MACARONS EN STOCK = déjà FINIS + ce qu'on peut encore ASSEMBLER.
 //   • finis        : productions vendables (complet/assemble), qteRestante.
@@ -11988,7 +11995,10 @@ async function renderProductions(){
       window._viewFocus = null;   // consommé une seule fois
     }
   }catch(e){swallow(e,'renderProductions')}
-  const prods = await db.productions.orderBy('date').reverse().toArray();
+  // [v1416] Les boîtes ABSORBÉES par une fusion sont archivées (pas supprimées) pour garder
+  // toute la traçabilité : on les MASQUE ici, sinon elles apparaîtraient en double du contenu
+  // déjà transféré dans la boîte gardée.
+  const prods = (await db.productions.orderBy('date').reverse().toArray()).filter(p=>!prodEstFusionnee(p));
   const recipes = await db.recipes.toArray();
   window._allRecipesCache = recipes;   // cache global pour prodNomComplet (appelants sans recipes en portée)
   // Précalcul : productions rattachées à une commande PRÊTE (Terminée) ou LIVRÉE → à masquer.
@@ -17492,13 +17502,26 @@ function construireFilTracabilite(prod, moves, orders, clients){
   });
 
   // 3) FUSIONS — une étape par boîte absorbée, avec son lot et sa quantité.
+  // [v1416] La boîte absorbée est désormais ARCHIVÉE (plus supprimée) : sa fiche existe encore,
+  // on peut donc pointer dessus. C'est ce qui permet de remonter TOUTE sa traçabilité propre
+  // (son origine, son parcours) et pas seulement les mouvements qu'on réattribue ici.
   fusions.forEach(f=>{
     if(!f) return;
     const lot = f.deLot || ('#'+f.deId);
     etapes.push({ts:_iso(f.ts), type:'fusion', qteAbsorbee:round3(+f.qte||0), lotAbsorbe:lot,
       texte:`fusion : boîte ${lot} (${qty(round3(+f.qte||0))} pièce(s)) absorbée dans celle-ci`,
-      liens:[]});
+      liens: f.deId!=null ? [{kind:'prod', id:f.deId, label:'voir la boîte '+lot}] : []});
   });
+
+  // [v1416] Vue depuis la boîte ABSORBÉE : elle doit dire clairement où son contenu est parti,
+  // avec un lien vers la boîte qui l'a reçue. Sans ça, on tomberait sur une fiche à zéro pièce
+  // sans explication.
+  if(prod.fusionneeDans!=null){
+    const lotCible = prod.fusionneeVersLot || ('#'+prod.fusionneeDans);
+    etapes.push({ts:_iso(prod.fusionneeTs), type:'fusion-sortante',
+      texte:`cette boîte a été fusionnée dans la boîte ${lotCible} — son contenu y a été transféré`,
+      liens:[{kind:'prod', id:prod.fusionneeDans, label:'voir la boîte '+lotCible}]});
+  }
 
   // 4) PRÉLÈVEMENTS ET AJUSTEMENTS — chaque sortie de stock, avec sa commande si connue.
   // Un mouvement portant l'id d'une boîte ABSORBÉE est attribué à SON lot, pas à celui-ci :
@@ -17680,14 +17703,18 @@ async function traceProd(prodId){
     <span style="color:#9a8a82;font-size:.85rem">Emplacement : ${empTagHtml(prod.emplacement)}${prodComposant(prod)!=='complet'?` · <span class="tag" style="background:${prodComposant(prod)==='assemble'?'#3f7d52':prodComposant(prod)==='degustation'?'#caa23b':'#8a6d3b'};color:#fff">${prodComposant(prod)==='coques'?'🟤 Coques':prodComposant(prod)==='ganache'?'🍫 Ganache':prodComposant(prod)==='degustation'?'🥄 Dégustation (offert)':'✓ Assemblé'}</span>`:''}${prod.parentProdId?' · <span class="tag" style="background:#ece2d4;color:#6b5a52">partie d\'une production</span>':''}</span><br>
     <span style="color:#9a8a82;font-size:.85rem">Statut : <b>${prodStatut(prod)==='termine'?'✓ Terminée':'▶ Démarrée'}</b>${(prod.prodDebutTs||prod.prodTimestamp)?` · démarrée le ${fmtDateTime(prod.prodDebutTs||prod.prodTimestamp)}`:''}${prod.prodTermineTs?` · terminée le ${fmtDateTime(prod.prodTermineTs)}`:''}${_dur?` · <b>durée ${_dur}</b>`:''}${(function(){const d=(typeof prodDlcEffective==='function')?prodDlcEffective(prod):prod.dlcProduit;return d?` · DLC ${fmtDate(d)}`:(prodStatut(prod)!=='termine'?' · DLC non lancée (prod en cours)':'');})()}</span><br>
     <span style="color:#9a8a82;font-size:.85rem">Théorique : ${qty((prod.qteTheorique!=null)?prod.qteTheorique:prod.qteProduite)} · Réel : ${qty((prod.qteReelle!=null)?prod.qteReelle:prod.qteProduite)}${prod.ecart?` · écart ${(+prod.ecart>0?'+':'')}${qty(prod.ecart)}`:''} · Restant : ${qty(prod.qteRestante)}</span></p>
+    ${prod.fusionneeDans!=null?`<div class="banner" style="background:#f7f2fb;border-color:#c9b0e0;margin-bottom:10px"><div>
+      🔗 <b>Boîte archivée — fusionnée</b><br>
+      <span style="font-size:.85rem">Son contenu a été transféré dans la boîte <span onclick="traceGo('prod',${prod.fusionneeDans})" style="color:var(--caramel,#AA7C39);cursor:pointer;font-weight:700;text-decoration:underline">${esc(prod.fusionneeVersLot||('#'+prod.fusionneeDans))}</span>${prod.fusionneeTs?` le ${fmtDateTime(new Date(prod.fusionneeTs).toISOString())}`:''}. Elle est conservée pour la traçabilité et masquée du stock.</span>
+    </div></div>`:''}
     ${_fil.length?`<div style="margin-top:12px"><h3 style="font-size:1rem;margin:0 0 8px">🕘 Fil de traçabilité <span style="font-weight:400;font-size:.78rem;color:#9a8a82">— du plus récent au plus ancien</span></h3>
       ${_fil.map(e=>{
-        const ico = e.type==='prelevement' ? '📤' : (e.type==='creation' ? '✨' : (e.type==='fusion' ? '🔗' : empIcon(e.lieu)));
+        const ico = e.type==='prelevement' ? '📤' : (e.type==='creation' ? '✨' : ((e.type==='fusion'||e.type==='fusion-sortante') ? '🔗' : empIcon(e.lieu)));
         const lieuTxt = e.type==='emplacement' ? `${esc(empNom(e.lieu))} (${empLettre(e.lieu)})${e.motif?` · ${esc(e.motif)}`:''}` : '';
         const corps = e.type==='emplacement' ? `rangé en ${lieuTxt}` : esc(e.texte);
         const liens = (e.liens||[]).map(l=>
           `<span onclick="traceGo('${l.kind}',${l.id})" style="color:var(--caramel,#AA7C39);cursor:pointer;font-weight:600;text-decoration:underline">${esc(l.label)}</span>`).join(' · ');
-        const couleur = e.type==='prelevement' ? '#b3261e' : (e.type==='creation' ? '#3f7d52' : (e.type==='fusion' ? '#6a4a8a' : '#c9b89f'));
+        const couleur = e.type==='prelevement' ? '#b3261e' : (e.type==='creation' ? '#3f7d52' : ((e.type==='fusion'||e.type==='fusion-sortante') ? '#6a4a8a' : '#c9b89f'));
         // Le lot affiché en tête de ligne : celui de la boîte ABSORBÉE pour ses mouvements
         // d'avant-fusion, sinon celui de la boîte courante.
         const lotLigne = e.lotSource || prod.lotProduction || ('#'+prod.id);
@@ -50539,7 +50566,18 @@ async function fusionnerBoites(idA, idB){
   try{
     await db.transaction('rw', db.productions, async () => {
       await db.productions.update(idA, calc.patch);
-      await db.productions.delete(idB);
+      // [v1416] La boîte absorbée est ARCHIVÉE, pas supprimée (demande de Ben : « archivée et
+      // masquée et non supprimée afin de pouvoir remonter la totalité de la traçabilité »).
+      // Avant, `db.productions.delete(idB)` détruisait sa fiche : son parcours de conservation
+      // et son origine disparaissaient, et aucun lien cliquable vers elle n'était possible.
+      // Elle garde donc sa ligne, avec stock à ZÉRO (son contenu vit désormais dans idA) et un
+      // marqueur `fusionneeDans` qui la masque partout où l'on liste le stock vivant.
+      await db.productions.update(idB, {
+        qteRestante: 0,
+        fusionneeDans: idA,
+        fusionneeTs: Date.now(),
+        fusionneeVersLot: A.lotProduction || ('#'+idA),
+      });
     });
   }catch(e){ console.error('fusionnerBoites', e); toast('Échec de la fusion'); return { ok:false }; }
   try{

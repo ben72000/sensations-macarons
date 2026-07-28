@@ -201,5 +201,56 @@ const f = fil(prod, moves, orders, clients);
      '35 · à la création : 18 pièces — la quantité absorbée n\'est PAS comptée avant la fusion');
 }
 
+// ── 8. ARCHIVAGE DE LA BOÎTE ABSORBÉE (v1416) ─────────────────────────────
+// Ben : « la boîte absorbée dans la fusion doit être archivée et masquée et non supprimée
+// afin de pouvoir remonter la totalité de la traçabilité ». Avant, fusionnerBoites faisait
+// `db.productions.delete(idB)` : la fiche disparaissait, donc son parcours et son origine
+// aussi, et aucun lien cliquable n'était possible.
+{
+  const APPsrc = require('fs').readFileSync(require('path').join(__dirname,'..','app.js'),'utf8');
+
+  ok(!/await db\.productions\.delete\(idB\)/.test(APPsrc),
+     '36 · la boîte absorbée n\'est PLUS supprimée de la base');
+  ok(/fusionneeDans: idA/.test(APPsrc),
+     '37 · elle est marquée comme fusionnée dans la boîte gardée (archivage)');
+  ok(/qteRestante: 0,\s*\n\s*fusionneeDans: idA/.test(APPsrc),
+     '38 · son stock est mis à ZÉRO (son contenu vit désormais dans la boîte gardée)');
+  ok(/function prodEstFusionnee\(p\)\{ return !!\(p && p\.fusionneeDans!=null\); \}/.test(APPsrc),
+     '39 · un prédicat pur identifie les boîtes fusionnées');
+  ok(/\.filter\(p=>!prodEstFusionnee\(p\)\)/.test(APPsrc),
+     '40 · elles sont MASQUÉES de la liste des productions (pas de double comptage)');
+
+  // Le lien vers la boîte absorbée est maintenant possible — plus de lien mort.
+  const prodG = {
+    id: 701, lotProduction:'X-B1', qteRestante: 10, prodTermineTs:'2026-06-20T08:00:00.000Z',
+    fusionHisto:[{deId:702, deLot:'X-B2', qte:4, ts: Date.parse('2026-06-21T10:00:00.000Z')}],
+  };
+  const fg = fil(prodG, [], [], []);
+  const etF = fg.find(e=>e.type==='fusion');
+  ok(etF.liens.length===1 && etF.liens[0].kind==='prod' && etF.liens[0].id===702,
+     '41 · l\'étape de fusion pointe désormais vers la FICHE de la boîte absorbée (plus de lien mort)');
+  ok(/voir la boîte X-B2/.test(etF.liens[0].label),
+     '42 · le lien est libellé avec le lot de la boîte absorbée');
+
+  // Vue DEPUIS la boîte absorbée : elle dit où son contenu est parti.
+  const prodAbs = {
+    id: 702, lotProduction:'X-B2', qteRestante: 0, prodTermineTs:'2026-06-19T09:00:00.000Z',
+    fusionneeDans: 701, fusionneeVersLot:'X-B1', fusionneeTs: Date.parse('2026-06-21T10:00:00.000Z'),
+    histEmplacement:[{lieu:'B', ts:'2026-06-19T09:00:00.000Z', motif:'rangement'}],
+    assembleFrom:[{id:600, lot:'ORIG-CO', composant:'coques', qte:20}],
+  };
+  const fa = fil(prodAbs, [], [], []);
+  const etS = fa.find(e=>e.type==='fusion-sortante');
+  ok(!!etS, '43 · la boîte absorbée porte une étape « fusionnée vers… » dans son propre fil');
+  ok(/fusionnée dans la boîte X-B1/.test(etS.texte),
+     '44 · elle nomme la boîte réceptrice');
+  ok(etS.liens.length===1 && etS.liens[0].id===701,
+     '45 · avec un lien cliquable vers elle (navigation dans les deux sens)');
+  ok(fa.some(e=>e.type==='creation' && /ORIG-CO/.test(e.texte)),
+     '46 · CRITIQUE : son ORIGINE reste consultable — c\'est tout l\'intérêt de l\'archiver plutôt que de la supprimer');
+  ok(fa[0].type==='fusion-sortante',
+     '47 · la fusion, plus récente, est en tête de son fil');
+}
+
 console.log(`\n=== v1414 : ${nOk} OK, ${nKo} KO ===\n`);
 if(nKo>0) process.exit(1);
