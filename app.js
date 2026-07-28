@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1417';
+const APP_VERSION = 'v1418';
 const APP_MAJ = 'CHANTIER A — L’APP NE PEUT PLUS ÉCHOUER EN SILENCE. Le constat de l’audit était dur : 347 endroits du code attrapaient une erreur et l’enregistraient fidèlement… dans un carnet que TU NE POUVAIS PAS OUVRIR. Il fallait brancher l’iPhone sur un Mac. Autant dire jamais. ET LE CARNET ÉTAIT EFFACÉ À CHAQUE RECHARGEMENT. C’est le mécanisme EXACT qui a caché la panne Dexie pendant un mois : chaque écriture kv échouait, la validation ne démarrait jamais, et l’écran affichait « 0 refus, 0 suspects » — ce qui RESSEMBLAIT à une bonne nouvelle alors que ça voulait dire « le contrôle n’a jamais démarré ». CE QUI CHANGE. 1) UN ÉCRAN « Santé de l’app » (Sauvegarde & sécurité) : tu lis enfin ce qui a cassé, depuis ton téléphone, sans Mac. 2) LES INCIDENTS VIVENT EN BASE (nouvelle table errLog) : ils survivent à un rechargement, donc tu peux constater qu’une panne DURE — c’est précisément ce que l’ancien carnet en mémoire rendait impossible. 3) UN FILET GLOBAL : une erreur hors try/catch te donnait un écran figé sans trace ; elle est maintenant enregistrée et annoncée par une bannière discrète. 4) UNE PASTILLE SUR L’ACCUEIL quand des incidents IMPORTANTS s’accumulent. LE TRI QUE J’AI FIGÉ, et qui est le cœur du travail : un échec d’AFFICHAGE et un échec d’ÉCRITURE EN BASE ne se valent pas. Base, sauvegarde, import, validation, compta → IMPORTANT, ça parle. Rendu, affichage → mineur, ça s’enregistre sans crier. Confondre les deux, c’est noyer le signal sous le bruit, et une alerte qui crie tout le temps est une alerte qu’on ne regarde plus. CE QUE JE N’AI PAS FAIT : deviner la cause d’une erreur, ni prétendre la réparer. L’écran montre ce qui s’est réellement passé. Une explication inventée serait pire qu’un silence. ET UNE MISE EN GARDE QUE JE TE DOIS : un écran Santé VIDE n’est PAS une preuve que tout va bien — c’est une absence d’incident enregistré, ce qui n’est pas la même chose. LA RÈGLE FIGÉE : une protection qu’on ne peut pas VOIR marcher doit être considérée comme ABSENTE jusqu’à preuve du contraire. Reste à faire : chantier B (valider le contenu à l’import), C (sortir les sauvegardes de la boîte qu’elles protègent), D (durcir import et QR). Suite : 88 → 89 suites, 1437 → 1475 assertions vertes.';
 
 // ============================================================
@@ -7698,9 +7698,21 @@ async function dlcActions(prodId){
       <button class="btn" style="background:#3f7d52;color:#fff" onclick="closeModal();setEmplacement(${prodId})">📍 Ranger / changer d'emplacement</button>
       ${prodEstRangee(p)
         ? `<button class="btn ghost" onclick="closeModal({fromPop:true});traceProd(${prodId})" title="Ce lot est rangé (congélateur) : son détail s'ouvre directement.">🔎 Voir le détail du lot</button>`
-        : `<button class="btn ghost" onclick="closeModal({fromPop:true});goView('productions')">📋 Voir dans Productions</button>`}
+        : `<button class="btn ghost" onclick="closeModal({fromPop:true});voirLotDansProductions(${prodId})">📋 Voir dans Productions</button>`}
     </div>
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+}
+
+// [v1418] Ouvre l'écran Productions EN POINTANT le lot concerné : filtre pré-rempli sur son
+// numéro de lot, puis défilement + surbrillance de sa carte. Avant, « Voir dans Productions »
+// faisait un simple goView('productions') et déposait Ben dans la liste entière, à lui de
+// retrouver son lot — exactement ce qu'il a signalé.
+async function voirLotDansProductions(prodId){
+  const p = await db.productions.get(prodId).catch(()=>null);
+  if(!p){ toast('Lot introuvable'); goView('productions'); return; }
+  window._viewFocus = { view:'productions', type:'lot',
+                        val: p.lotProduction || ('#'+p.id), prodId: p.id };
+  goView('productions');
 }
 
 async function renderDash(){
@@ -11994,6 +12006,15 @@ async function renderProductions(){
       prodnSearch = String(f.val);
       window._viewFocus = null;   // consommé une seule fois
     }
+    // [v1418] Focus sur UN LOT précis (arrivée depuis les DLC de l'accueil : « Voir dans
+    // Productions » ne doit pas déposer Ben dans la liste entière, mais POINTER le lot
+    // concerné). On pré-filtre sur son n° de lot, et on garde son id pour le mettre en
+    // évidence après le rendu (cf _prodPointerLot).
+    if(f && f.view==='productions' && f.type==='lot' && f.val){
+      prodnSearch = String(f.val);
+      window._prodLotAPointer = f.prodId!=null ? +f.prodId : null;
+      window._viewFocus = null;
+    }
   }catch(e){swallow(e,'renderProductions')}
   // [v1416] Les boîtes ABSORBÉES par une fusion sont archivées (pas supprimées) pour garder
   // toute la traçabilité : on les MASQUE ici, sinon elles apparaîtraient en double du contenu
@@ -12244,8 +12265,31 @@ async function renderProductions(){
    })()}
    </div>`;
   prodbatFilter(prodnSearch);
+  // [v1418] Si on arrive avec un lot à pointer, on le fait défiler à l'écran et on le met en
+  // évidence brièvement — après le filtre, pour que sa carte soit bien dans le DOM.
+  _prodPointerLot();
   // Cockpit chrono flottant : bulle + rafraîchissement live tant qu'on est sur cet écran.
   if(typeof chronoFloatStart==='function') chronoFloatStart();}
+
+// [v1418] Fait défiler jusqu'à la carte du lot ciblé et la met en surbrillance quelques
+// secondes. Consomme la cible (un seul pointage par navigation). Sans effet si aucun lot
+// n'est ciblé ou si sa carte n'est pas dans le DOM (lot filtré, replié…).
+function _prodPointerLot(){
+  const id = window._prodLotAPointer;
+  if(id==null) return;
+  window._prodLotAPointer = null;
+  setTimeout(()=>{
+    try{
+      const el = document.getElementById('prodcard-'+id);
+      if(!el) return;
+      el.scrollIntoView({behavior:'smooth', block:'center'});
+      const avant = el.style.boxShadow;
+      el.style.transition = 'box-shadow .3s';
+      el.style.boxShadow = '0 0 0 3px var(--caramel,#AA7C39)';
+      setTimeout(()=>{ el.style.boxShadow = avant || ''; }, 2200);
+    }catch(e){ swallow(e,'_prodPointerLot'); }
+  }, 60);
+}
 // Déclare une production "rangée" (la sort de la vue Production). Geste délibéré, réversible.
 async function prodDeranger(id){
   // « Retour en production » : le lot repart à l'état « à ranger ». C'est une correction de saisie
@@ -12455,7 +12499,9 @@ function _prodbatRowInner(row){
   const _parfumDot = `<span style="display:inline-block;width:13px;height:13px;border-radius:50%;background:${_parfumCol};margin-right:6px;vertical-align:middle;border:1.5px solid rgba(0,0,0,.12)"></span>`;
   const _parfumLabel = _parfumNom ? `<div class="prod-parfum" style="font-weight:700;font-size:.95rem;display:flex;align-items:center;margin-bottom:3px">${_parfumDot}<span>${esc(_parfumNom)}</span></div>` : '';
   const _famDot = _isFam ? `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${lotFamilyColor(_famBase)};margin-right:5px;vertical-align:middle" title="Sous-lot du même batch"></span>` : '';
-  return `<div class="${rowCls} prod-card${liveBar?' prod-card-live':''}" style="${_bandStyle}${_stateBg}">
+  // [v1418] id stable sur la carte : permet de POINTER une production précise (scroll +
+  // surbrillance) quand on arrive depuis les DLC de l'accueil.
+  return `<div id="prodcard-${p.id}" class="${rowCls} prod-card${liveBar?' prod-card-live':''}" style="${_bandStyle}${_stateBg}">
      ${liveBar}
      <div class="prod-card-body">
      ${_parfumLabel}
