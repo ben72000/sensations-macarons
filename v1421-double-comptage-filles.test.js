@@ -223,10 +223,22 @@ function scenario(){
 }
 
 // ── CAS 13 : la mère sort du fil des commandes, sans quitter la comptabilité ──
+// ⚠️ CETTE ASSERTION A ÉTÉ RÉÉCRITE EN v1425, et il faut dire pourquoi : elle gelait
+// l'exclusion À LA SOURCE, dans renderCmd, juste avant la construction de `_cmdCache`.
+// Or ce cache alimente la recherche, les tags et le filtre jour — la mère devenait
+// introuvable (retour de Ben). Le test figeait donc un bug. Le masquage se fait
+// désormais à l'AFFICHAGE : hors des groupes opérationnels de cmdFilter, mais dans le
+// cache et dans un repli dédié. Un test qui verrouille le mauvais comportement est pire
+// qu'une absence de test : il donne l'assurance de ne pas régresser vers le correct.
 {
-  const src = extractFunction('renderCmd');
-  vrai(/filter\(o=>!o\.histo && o\.mereEnAttente!==true\)/.test(src),
-     'CAS13 · renderCmd masque les mères rangées (et toujours les reprises)');
+  const rc = extractFunction('renderCmd');
+  eq(/filter\(o=>!o\.histo && o\.mereEnAttente!==true\)/.test(rc), false,
+     'CAS13 · plus d\'exclusion à la source (elle rendait la mère introuvable)');
+  const cf = extractFunction('cmdFilter');
+  vrai(/estMereRangee\(o\)\)\{\s*meresRangees\.push\(r\);\s*return;\s*\}/.test(cf),
+     'CAS13 · le fil opérationnel écarte les mères rangées à l\'affichage');
+  vrai(/Commandes mères rangées/.test(cf),
+     'CAS13 · … et les regroupe dans un repli qui reste atteignable');
 }
 
 // ── CAS 14 : la migration existe ET est câblée au démarrage ──────────────────

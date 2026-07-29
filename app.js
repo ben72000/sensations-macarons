@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1424';
+const APP_VERSION = 'v1426';
 const APP_MAJ = 'CHANTIER A — L’APP NE PEUT PLUS ÉCHOUER EN SILENCE. Le constat de l’audit était dur : 347 endroits du code attrapaient une erreur et l’enregistraient fidèlement… dans un carnet que TU NE POUVAIS PAS OUVRIR. Il fallait brancher l’iPhone sur un Mac. Autant dire jamais. ET LE CARNET ÉTAIT EFFACÉ À CHAQUE RECHARGEMENT. C’est le mécanisme EXACT qui a caché la panne Dexie pendant un mois : chaque écriture kv échouait, la validation ne démarrait jamais, et l’écran affichait « 0 refus, 0 suspects » — ce qui RESSEMBLAIT à une bonne nouvelle alors que ça voulait dire « le contrôle n’a jamais démarré ». CE QUI CHANGE. 1) UN ÉCRAN « Santé de l’app » (Sauvegarde & sécurité) : tu lis enfin ce qui a cassé, depuis ton téléphone, sans Mac. 2) LES INCIDENTS VIVENT EN BASE (nouvelle table errLog) : ils survivent à un rechargement, donc tu peux constater qu’une panne DURE — c’est précisément ce que l’ancien carnet en mémoire rendait impossible. 3) UN FILET GLOBAL : une erreur hors try/catch te donnait un écran figé sans trace ; elle est maintenant enregistrée et annoncée par une bannière discrète. 4) UNE PASTILLE SUR L’ACCUEIL quand des incidents IMPORTANTS s’accumulent. LE TRI QUE J’AI FIGÉ, et qui est le cœur du travail : un échec d’AFFICHAGE et un échec d’ÉCRITURE EN BASE ne se valent pas. Base, sauvegarde, import, validation, compta → IMPORTANT, ça parle. Rendu, affichage → mineur, ça s’enregistre sans crier. Confondre les deux, c’est noyer le signal sous le bruit, et une alerte qui crie tout le temps est une alerte qu’on ne regarde plus. CE QUE JE N’AI PAS FAIT : deviner la cause d’une erreur, ni prétendre la réparer. L’écran montre ce qui s’est réellement passé. Une explication inventée serait pire qu’un silence. ET UNE MISE EN GARDE QUE JE TE DOIS : un écran Santé VIDE n’est PAS une preuve que tout va bien — c’est une absence d’incident enregistré, ce qui n’est pas la même chose. LA RÈGLE FIGÉE : une protection qu’on ne peut pas VOIR marcher doit être considérée comme ABSENTE jusqu’à preuve du contraire. Reste à faire : chantier B (valider le contenu à l’import), C (sortir les sauvegardes de la boîte qu’elles protègent), D (durcir import et QR). Suite : 88 → 89 suites, 1437 → 1475 assertions vertes.';
 
 // ============================================================
@@ -6199,6 +6199,12 @@ function commandeMereEligible(o, orders, idExclu){
 // [v1411] Les mères « paiement en avance » encore actives : rangées hors du fil des commandes,
 // mais qui attendent d'être servies. C'est la vue qui permet à Ben de les retrouver d'un coup
 // d'œil, avec ce qu'il reste à livrer sur chacune. Triées du reliquat le plus ancien. PURE.
+// [v1425] PURE — « cette commande est-elle une MÈRE RANGÉE ? » Un seul point de vérité pour les
+// trois endroits qui ont besoin de la question : le tri d'affichage du fil, le repli qui la rend
+// retrouvable, et l'exemption de traçabilité. La v1421 avait répondu à cette question en trois
+// endroits différents, dont un — le filtre du cache — qui rendait la commande introuvable.
+function estMereRangee(o){ return !!o && o.mereEnAttente===true; }
+
 function commandesMeresEnAttente(orders){
   return (orders||[])
     .filter(o => o && o.mereEnAttente && reliquatCommandeMere(o, orders).reste > 0.01)
@@ -14393,10 +14399,24 @@ async function prodAssembleForm(id, opts){
   let cands=all.filter(x=>prodComposant(x)===want && round3(+x.qteRestante)>0
                           && (x.prodStatut||'termine')==='termine'
                           && (!mode3 || x.composantCatalogue!==true));
+  // [v1426] MÉLANGE DE PARFUMS INTERDIT SUR CE CHEMIN — demande de Ben pour l'entrée depuis
+  // « Stock par parfum » : « une coque prévue initialement pour faire des macarons vanille ne
+  // pourra pas servir à faire des macarons praliné ». On ne retire pas la mutualisation par
+  // couleur de l'app : elle reste entière depuis l'écran Production, où Ben la pilote en
+  // connaissance de cause. Ici, on consulte UN parfum : lui proposer les coques d'un autre serait
+  // lui faire quitter le sujet qu'il regarde, et fabriquer un lot non vendable sans l'avoir voulu.
+  // `sansMelange` filtre AVANT la mutualisation : aucune règle de couleur ne peut la rouvrir.
+  if(opts.sansMelange){
+    cands = cands.filter(x=>+x.recipeId===+p.recipeId);
+    if(!cands.length){
+      toast(`Aucun sous-lot ${want==='ganache'?'garniture':'coques'} du même parfum. Passe par Production pour mélanger les couleurs.`);
+      return;
+    }
+  }
   // [v1249] MUTUALISATION PAR COULEUR — quand on cherche des COQUES : on garde, en plus des coques
   // du parfum monté, celles d'AUTRES parfums de MÊME couleur + MÊME taille (proposition de dépannage).
   // Les coques d'une couleur incompatible sont retirées (elles ne pourraient pas servir ce macaron).
-  if(want==='coques' && _profilCible && _profilCible.colors.length){
+  if(!opts.sansMelange && want==='coques' && _profilCible && _profilCible.colors.length){
     cands = cands.filter(x=>{
       if(x.recipeId===p.recipeId) return true;                    // même parfum : toujours proposé
       const ps = coqueColorProfile(x, _recById);
@@ -14463,8 +14483,12 @@ async function prodAssembleForm(id, opts){
   const _bicolore = recEstBicolore(_recCible);
   const _coulCible = recCoqueColors(_recCible);
   // Tous les lots de coques en stock, terminés (base des deux sélecteurs de coques).
+  // [v1426] Sur le chemin sans mélange, le 2e lot est lui aussi restreint au parfum monté. Un lot
+  // bicolore dédié contient déjà ses deux couleurs, donc le cas normal reste servi ; ce qui
+  // disparaît, c'est le dépannage avec les coques d'un autre parfum.
   const _lotsCoques = all.filter(x=>prodComposant(x)==='coques' && round3(+x.qteRestante)>0
-                                    && (x.prodStatut||'termine')==='termine');
+                                    && (x.prodStatut||'termine')==='termine'
+                                    && (!opts.sansMelange || +x.recipeId===+p.recipeId));
   let coques2Html = '';
   {
     // Couleur attendue pour le 2e lot : la SECONDE de la recette (la 1re étant servie par le
@@ -14505,10 +14529,14 @@ async function prodAssembleForm(id, opts){
   const _garnIco = _garnMot==='crémeux' ? '🟠' : '🍫';
   const titreParts = mode3
     ? `1 grand format = <b>2 coques + 1 ${_garnMot} + 1 dose de ${esc((_refs[0]&&compById[+_refs[0].componentId]&&compById[+_refs[0].componentId].nom)||'composant')}</b>. Les <b>3 éléments</b> sont obligatoires : choisis-les ci-dessous (assemblage bloqué si l'un manque).`
-    : `1 macaron = <b>2 coques + 1 ganache</b>. Assemblage <b>normal</b> : coques + ganache du même parfum/lot (vendable). Assemblage <b>dégustation</b> : sans correspondance couleur/parfum (offert, non vendable).`;
+    : (opts.sansMelange
+        ? `1 macaron = <b>2 coques + 1 ganache</b>, <b>du même parfum</b>. La case « dégustation » reste disponible (macarons offerts, non vendables) — mais même en dégustation, ce chemin ne mélange pas les parfums.`
+        : `1 macaron = <b>2 coques + 1 ganache</b>. Assemblage <b>normal</b> : coques + ganache du même parfum/lot (vendable). Assemblage <b>dégustation</b> : sans correspondance couleur/parfum (offert, non vendable).`);
   openModal(`<h3>🔗 Assembler ${esc(recName(p))}${mode3?' <span class="tag" style="background:#8a6d3b;color:#fff;font-size:.62rem">grand format</span>':''}</h3>
    <p class="note">${titreParts}</p>
    <div class="sum-box"><span>${comp==='coques'?'🟤 Coques':garnIcon(p)+' '+(garnLabel(p)==='crémeux'?'Crémeux':'Ganache')} (ce lot)</span><b>${esc(p.lotProduction||('#'+p.id))} · ${uniteThis}</b></div>
+   ${opts.sansMelange?`<div class="banner" style="background:#eef5ef;border-color:#bcd8c3"><div>🔒 <b>Un seul parfum</b> — depuis le stock par parfum, seuls les sous-lots de <b>${esc(recName(p))}</b> sont proposés. Pour mélanger les couleurs entre parfums, passe par l'écran <b>Production</b>.</div></div>`:''}
+   <input type="hidden" id="f_asmSansMelange" value="${opts.sansMelange?1:0}">
    <div class="field"><label>${want==='ganache'?(mode3?'🟠 Crémeux à associer':'🍫 Ganache à associer'):'🟤 Coques à associer'}</label>
      <select id="f_asmOther">${optsCand}</select></div>
    ${coques2Html}
@@ -14531,6 +14559,12 @@ function prodAsmDegSwitch(on){
 }
 async function prodAssembleSave(thisId){
   const otherId=+val('f_asmOther');
+  // [v1426] Chemin « sans mélange » (entrée depuis Stock par parfum) : la restriction ne peut pas
+  // rester cosmétique. Un formulaire qui n'OFFRE pas une option mais l'ACCEPTE quand même n'est pas
+  // une règle, c'est une décoration — et le premier lot non vendable fabriqué par accident le
+  // prouverait. On revalide donc à l'enregistrement, dans la transaction, où l'on relit les vrais
+  // sous-lots en base plutôt que ce que le DOM prétend.
+  const _sansMelange = (val('f_asmSansMelange')||'0')==='1';
   // [v1413] 2e lot de coques (bicolore ou mélange dégustation). 0 = les 2 coques viennent
   // du même lot, comportement historique inchangé.
   const coques2Id=+val('f_asmCoques2')||0;
@@ -14577,6 +14611,15 @@ async function prodAssembleSave(thisId){
       if(coques2Id && !_coques2) throw new Error('Second lot de coques introuvable.');
       if(_coques2 && +_coques2.id === +coques.id) throw new Error('Le second lot de coques doit être différent du premier.');
       if(_coques2 && prodComposant(_coques2)!=='coques') throw new Error('Le second lot sélectionné n\'est pas un lot de coques.');
+      // [v1426] La garde du chemin sans mélange, appliquée aux VRAIS lots relus en base.
+      if(_sansMelange){
+        if(+coques.recipeId !== +ganache.recipeId){
+          throw new Error('Ce chemin n\'assemble qu\'un seul parfum : les coques et la garniture doivent venir du même parfum. Passe par l\'écran Production pour mélanger.');
+        }
+        if(_coques2 && +_coques2.recipeId !== +coques.recipeId){
+          throw new Error('Ce chemin n\'assemble qu\'un seul parfum : le second lot de coques doit être du même parfum. Passe par l\'écran Production pour mélanger.');
+        }
+      }
       const _rep = repartitionCoques(1, !!_coques2);   // coques consommées pour 1 macaron
       const capCoques = _coques2
         ? Math.min(Math.floor(round3(+coques.qteRestante)/_rep.lot1), Math.floor(round3(+_coques2.qteRestante)/_rep.lot2))
@@ -19142,11 +19185,12 @@ async function renderCmd(){
   }catch(e){swallow(e,'renderCmd')}
   // Les commandes "historiques" (reprise/migration) ne s'affichent pas ici :
   // elles comptent dans le CA mais ne sont pas opérationnelles.
-  // [v1421] Les commandes MÈRES rangées non plus : demande explicite de Ben — « une commande
-  // définie comme commande mère ne doit pas rester dans la vue commande ». Elles restent
-  // accessibles par « 🔗 Paiements en avance » et par la recherche de mère, et elles comptent
-  // toujours normalement dans le CA (c'est `mereEnAttente` qui range, plus `histo` — cf. v1421).
-  const orders = (await db.orders.toArray()).filter(o=>!o.histo && o.mereEnAttente!==true).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  // [v1425] LES MÈRES RANGÉES RESTENT DANS LE CACHE. La v1421 les excluait ICI, à la source — donc
+  // aussi de la RECHERCHE, des tags et du filtre jour, qui se nourrissent tous de `_cmdCache`.
+  // Résultat : une mère devenait introuvable autrement qu'en passant par une de ses filles. Ranger
+  // n'est pas effacer. Le tri se fait maintenant à l'AFFICHAGE (cmdFilter) : hors du fil
+  // opérationnel, mais dans un repli « Commandes mères rangées » et atteignable par recherche.
+  const orders = (await db.orders.toArray()).filter(o=>!o.histo).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
   const clients = await db.clients.toArray();
   const clById = Object.fromEntries(clients.map(c=>[c.id,c]));
   _cmdClNameMap = Object.fromEntries(clients.map(c=>[c.id, c.nom||'—']));
@@ -19560,9 +19604,14 @@ function cmdFilter(q){  cmdSearch=q||'';
   //  - enCours : pas encore livrée (opérationnel) → cartes complètes
   //  - aEncaisser : livrée AVEC un solde réellement dû (montant>0 et non soldé) → section distincte
   //  - terminees : livrée et soldée, OU sans montant dû (0 €) → repli simple ("archivées")
-  const enCours=[], aEncaisser=[], terminees=[];
+  const enCours=[], aEncaisser=[], terminees=[], meresRangees=[];
   shown.forEach(r=>{
     const o=r.o;
+    // [v1425] Une MÈRE RANGÉE ne rejoint aucun des trois groupes opérationnels : elle n'est ni à
+    // préparer (ses filles le sont), ni à encaisser (son argent est rentré), ni « terminée » (il
+    // reste peut-être des macarons à retirer). La ranger dans « Terminées » aurait été le mensonge
+    // le plus commode. Elle a son propre repli, toujours présent, toujours atteignable.
+    if(estMereRangee(o)){ meresRangees.push(r); return; }
     const livree = normStatus(o.statut)==='Livrée';
     const reste = (typeof orderBalance==='function') ? orderBalance(o) : ((+o.montant)||0);
     const aDuRestant = (+o.montant)>0 && reste>0.01;   // un vrai montant reste à encaisser
@@ -19675,6 +19724,41 @@ function cmdFilter(q){  cmdSearch=q||'';
       <summary style="cursor:pointer;padding:11px 13px;font-weight:600;color:#6a5a52;background:var(--creme-2)">
         ✓ Terminées <span style="font-weight:400;color:#9a8a82">(${terminees.length})</span></summary>
       <div>${terminees.map(r=>_cmdRowMini(r,{distinctif:false})).join('')}</div>
+    </details>`;
+  }
+  // 4) [v1425] COMMANDES MÈRES RANGÉES — repli toujours présent dans la vue commande.
+  //    Ben : « la commande mère doit être archivée […] tout en restant accessible à tout moment ».
+  //    Rangée ≠ introuvable. Le repli s'OUVRE automatiquement dès qu'un filtre est actif : si Ben
+  //    tape un nom de client, il ne doit pas avoir à deviner que le résultat se cache derrière un
+  //    triangle fermé. Le chiffre montré est celui qui compte ici : ce qu'il RESTE à retirer.
+  if(meresRangees.length){
+    const _tousOrders = (_cmdCache||[]).map(e=>e.o);
+    const _rel = o => (typeof reliquatCommandeMere==='function')
+      ? reliquatCommandeMere(o, _tousOrders)
+      : { reste:0, nbFilles:0, entierementRetiree:false };
+    const resteTotal = money2(meresRangees.reduce((s,r)=> s + _rel(r.o).reste, 0));
+    const lignes = meresRangees.map(r=>{
+      const o=r.o, rel=_rel(o);
+      const nom = privacyModeEnabled()?'•••':(_cmdClNameMap[o.clientId] || o.histoLabel || '—');
+      const etat = rel.entierementRetiree
+        ? `<span style="color:#3f7d52;font-weight:600;font-size:.78rem;white-space:nowrap">✓ tout retiré</span>`
+        : `<span style="color:#b5701a;font-weight:600;font-size:.78rem;white-space:nowrap">reste ${euro(rel.reste)} à retirer</span>`;
+      return `<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--hair)">
+        <span style="flex:1;min-width:0;display:flex;flex-direction:column">
+          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.9rem">${esc(nom)}</span>
+          <span style="color:#8a7a72;font-size:.74rem;white-space:nowrap">${fmtDate(o.date)} · ${rel.nbFilles} retrait${rel.nbFilles>1?'s':''}</span>
+        </span>
+        ${etat}
+        <b style="font-size:.9rem;white-space:nowrap">${privacyModeEnabled()?'•••':euro(o.montant)}</b>
+        <button class="cmd-pill detail" style="flex:none" onclick="cmdView(${o.id})" title="Voir le détail">👁</button>
+        <button class="cmd-pill detail" style="flex:none" onclick="cmdForm(${o.id})" title="Modifier">✏️</button>
+      </div>`;
+    }).join('');
+    html += `<details ${grouper?'':'open'} style="margin:8px 0 4px;border:1px solid #cfc4dd;border-radius:12px;overflow:hidden;background:#faf8fd">
+      <summary style="cursor:pointer;padding:11px 13px;font-weight:600;color:#5b3a78;background:#f1ebf7">
+        🧺 Commandes mères rangées <span style="font-weight:400;color:#7a6a8a">(${meresRangees.length})${resteTotal>0.01?` · <b style="color:#b5701a">reste ${euro(resteTotal)} à retirer</b>`:''}</span></summary>
+      <div>${lignes}</div>
+      <div style="padding:9px 12px;font-size:.76rem;color:#7a6a8a">Paiement encaissé en avance : la traçabilité est portée par chaque retrait, pas par cette commande.</div>
     </details>`;
   }
   if(rows.length>LIMIT) html += `<div class="note" style="text-align:center">… ${rows.length-LIMIT} autre(s) résultat(s). Affinez la recherche.</div>`;
@@ -26907,8 +26991,25 @@ async function stockParfumDetail(nom){
       <div class="pv2-grip">›</div>
     </div>`;
   };
+  // [v1426] ASSEMBLER DEPUIS CET ÉCRAN — demande de Ben : « réaliser les assemblages à partir de
+  // cet écran sans créer de nouvelle fonctionnalité, simplement en reprenant tel quel le chemin
+  // déjà existant ». On ne réécrit donc RIEN : le bouton appelle `prodAssembleForm`, exactement
+  // celle qu'utilise l'écran Production, avec la seule option `sansMelange` (un parfum et un seul).
+  // Un lot non terminé ne reçoit pas de bouton mais une raison : un bouton qui échoue au clic
+  // apprend moins qu'une phrase qui dit pourquoi il n'est pas là.
+  const _ligneComposantAssemblable = p => {
+    const pret = prodStatut(p)==='termine' && round3(+p.qteRestante||0)>0;
+    const quoi = prodComposant(p)==='coques' ? 'de la garniture' : 'des coques';
+    const action = pret
+      ? `<button class="btn gold sm" onclick="event.stopPropagation();closeModal();prodAssembleForm(${p.id},{sansMelange:true})" title="Assembler ce sous-lot avec ${esc(quoi)} du même parfum">🔗 Assembler</button>
+         <span style="font-size:.72rem;color:#9a8a82">avec ${esc(quoi)} de ${esc(nom)}</span>`
+      : `<span style="font-size:.74rem;color:#9a8a82">⏳ Production non terminée — à terminer avant d'assembler.</span>`;
+    return `<div style="margin-bottom:8px">${_ligneBatchEpure(p)}
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 10px 0">${action}</div>
+    </div>`;
+  };
   const rows = prods.map(_ligneBatchEpure).join('') || '<p class="note">Aucun macaron fini en stock pour ce parfum.</p>';
-  const rowsComp = composants.map(_ligneBatchEpure).join('');
+  const rowsComp = composants.map(_ligneComposantAssemblable).join('');
   const rowsDeg = degustations.map(_ligneBatchEpure).join('');
   const total=prods.reduce((s,p)=>addQty(s,p.qteRestante),0);
   const totalComp=composants.reduce((s,p)=>addQty(s,p.qteRestante),0);
