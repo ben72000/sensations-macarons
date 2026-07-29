@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1420';
+const APP_VERSION = 'v1421';
 const APP_MAJ = 'CHANTIER A — L’APP NE PEUT PLUS ÉCHOUER EN SILENCE. Le constat de l’audit était dur : 347 endroits du code attrapaient une erreur et l’enregistraient fidèlement… dans un carnet que TU NE POUVAIS PAS OUVRIR. Il fallait brancher l’iPhone sur un Mac. Autant dire jamais. ET LE CARNET ÉTAIT EFFACÉ À CHAQUE RECHARGEMENT. C’est le mécanisme EXACT qui a caché la panne Dexie pendant un mois : chaque écriture kv échouait, la validation ne démarrait jamais, et l’écran affichait « 0 refus, 0 suspects » — ce qui RESSEMBLAIT à une bonne nouvelle alors que ça voulait dire « le contrôle n’a jamais démarré ». CE QUI CHANGE. 1) UN ÉCRAN « Santé de l’app » (Sauvegarde & sécurité) : tu lis enfin ce qui a cassé, depuis ton téléphone, sans Mac. 2) LES INCIDENTS VIVENT EN BASE (nouvelle table errLog) : ils survivent à un rechargement, donc tu peux constater qu’une panne DURE — c’est précisément ce que l’ancien carnet en mémoire rendait impossible. 3) UN FILET GLOBAL : une erreur hors try/catch te donnait un écran figé sans trace ; elle est maintenant enregistrée et annoncée par une bannière discrète. 4) UNE PASTILLE SUR L’ACCUEIL quand des incidents IMPORTANTS s’accumulent. LE TRI QUE J’AI FIGÉ, et qui est le cœur du travail : un échec d’AFFICHAGE et un échec d’ÉCRITURE EN BASE ne se valent pas. Base, sauvegarde, import, validation, compta → IMPORTANT, ça parle. Rendu, affichage → mineur, ça s’enregistre sans crier. Confondre les deux, c’est noyer le signal sous le bruit, et une alerte qui crie tout le temps est une alerte qu’on ne regarde plus. CE QUE JE N’AI PAS FAIT : deviner la cause d’une erreur, ni prétendre la réparer. L’écran montre ce qui s’est réellement passé. Une explication inventée serait pire qu’un silence. ET UNE MISE EN GARDE QUE JE TE DOIS : un écran Santé VIDE n’est PAS une preuve que tout va bien — c’est une absence d’incident enregistré, ce qui n’est pas la même chose. LA RÈGLE FIGÉE : une protection qu’on ne peut pas VOIR marcher doit être considérée comme ABSENTE jusqu’à preuve du contraire. Reste à faire : chantier B (valider le contenu à l’import), C (sortir les sauvegardes de la boîte qu’elles protègent), D (durcir import et QR). Suite : 88 → 89 suites, 1437 → 1475 assertions vertes.';
 
 // ============================================================
@@ -5903,6 +5903,42 @@ async function migrateCoqueColors(){
   }
   if(n>0){ try{ if(typeof diagPublish==='function') diagPublish('coque_colors','Coques · couleurs', {prefill:n}); }catch(e){swallow(e,'migrateCoqueColors')}}
 }
+// ════════════════════════════════════════════════════════════════════════════════════════
+// [v1421] MIGRATION — DÉLESTER `histo` DES COMMANDES MÈRES RANGÉES PAR LA v1411.
+// La v1411 rangeait une mère en lui posant `histo:true`. Or `histo` signifie « reprise
+// d'historique » : ~30 lecteurs s'en servent pour EXCLURE la commande du chiffre d'affaires
+// (caEncaisseParMois, estReprise → bilan mensuel, computeAccounting…). Chaque mère rangée avait
+// donc son encaissement RÉEL sorti de la base URSSAF, pendant que ses filles en fabriquaient un
+// faux au mois du retrait. Deux erreurs qui se compensaient à peu près en total — et jamais au
+// bon mois, ni sur la bonne ligne.
+// On lève le drapeau sur ces commandes-là UNIQUEMENT (mereEnAttente ET histo), et on journalise
+// chaque correction : un chiffre qui bouge tout seul sans trace, c'est un chiffre qu'on ne peut
+// plus auditer (leçon v1342).
+async function migrateMereHistoV1421(){
+  try{
+    const orders = await db.orders.toArray();
+    const cibles = orders.filter(o => o && o.mereEnAttente===true && o.histo===true);
+    if(!cibles.length) return 0;
+    let n=0;
+    for(const o of cibles){
+      try{
+        await db.orders.update(o.id, { histo:false });
+        n++;
+        try{
+          await db.auditLog.add({ ts:Date.now(), tbl:'orders', op:'migration-v1421', cle:String(o.id),
+            resume:'Commande mère #'+o.id+' : histo levé (rangement ≠ reprise d\'historique) — son encaissement de '
+                   +(money2(+o.montant||0))+' € réintègre le CA déclarable',
+            ecran:'', v:(typeof APP_VERSION!=='undefined'?APP_VERSION:'') });
+        }catch(e){ swallow(e,'migrateMereHistoV1421 audit'); }
+      }catch(e){ swallow(e,'migrateMereHistoV1421 update'); }
+    }
+    if(n){
+      console.log('migrateMereHistoV1421: '+n+' commande(s) mère(s) réintégrée(s) au CA');
+      try{ if(typeof diagPublish==='function') diagPublish('mere_histo_v1421','Commandes mères · CA réintégré', {corrigees:n}); }catch(e){ swallow(e,'migrateMereHistoV1421 diag'); }
+    }
+    return n;
+  }catch(e){ console.error('migrateMereHistoV1421', e); return 0; }
+}
 async function migrateDlcCongelateur(){  try{
     const prods = await db.productions.toArray();
     let n=0;
@@ -6033,6 +6069,30 @@ const ymKey = d => monthKey(d);   // délègue à monthKey (robuste aux dates IS
 // Centralise un pattern qui était dupliqué à ~9 endroits (cohérence comptable garantie).
 function paiementsDe(o){
   if(!o) return [];
+  // ════════════════════════════════════════════════════════════════════════════
+  // [v1421] LE DOUBLE COMPTAGE DES COMMANDES FILLES — correction à la racine.
+  //
+  // CE QUE BEN A VU : en comptabilité, au clic sur un mois, les commandes filles apparaissaient
+  // AVEC UN MONTANT ASSOCIÉ — de l'argent encaissé des mois plus tôt (sur la mère), recompté au
+  // mois du retrait.
+  //
+  // LA CHAÎNE, ET C'EST MA PROPRE CASCADE DE v1407 :
+  //   1. orderPayStatus renvoie 'Payé' pour une fille (elle EST réglée, via la mère) ;
+  //   2. syncPaymentFields PERSISTE donc `paiement:'Payé'` sur la fille en base ;
+  //   3. la fille n'a AUCUN registre paiements[] (règle d'or : son argent vit sur la mère) ;
+  //   4. → on tombait ici dans le repli « commande legacy payée » et on FABRIQUAIT un paiement
+  //      fantôme du MONTANT TOTAL de la fille, daté au jour du retrait.
+  //
+  // Le patch v1407 sur caEncaisseParMois (ignorer les filles pour le reste-à-encaisser) ne
+  // traitait qu'UN symptôme : le fantôme passait par tous les autres consommateurs (bilan
+  // URSSAF, caMoisEncaisse, caDuMois, détail par catégorie, tableau de bord…).
+  //
+  // Correction : la fille sort AVANT toute autre branche — avant même le registre, pour qu'un
+  // registre parasite (import, saisie manuelle antérieure au rattachement) ne puisse pas la
+  // faire réapparaître dans le CA. UN SEUL POINT DE VÉRITÉ : tous les consommateurs assainis
+  // d'un coup. Le contrôle « cette commande avait déjà des paiements » n'est pas perdu pour
+  // autant : alerteRattachementFille juge le registre BRUT avant rattachement (cf. son appel).
+  if(o.commandeMereId!=null) return [];
   if(Array.isArray(o.paiements) && o.paiements.length){
     // [AUDIT-2026-07 · A10] Le moyen hérité o.reglement n'est appliqué à un paiement sans moyen
     // propre QUE si la commande n'a qu'UN seul paiement. Sinon (acompte + solde de moyens
@@ -6192,8 +6252,21 @@ function alerteRattachementFille(fille){
   };
 }
 
-// ============================================================================
-//  [v1336] LE CA DES MARCHÉS AVAIT DISPARU — et le fond de caisse était compté comme du CA.
+// [v1421] PRÉDICAT PARTAGÉ — « cette commande est-elle une VENTE à agréger ? »
+// Une commande FILLE porte le même contenu et le même montant qu'une part de sa mère : elle
+// trace un RETRAIT, pas une vente supplémentaire. La compter dans les agrégats revient à vendre
+// deux fois les mêmes macarons — en euros ET en pièces (CA, panier moyen, marges, tendances,
+// livre des recettes). L'argent et le contenu vivent sur la MÈRE, une seule fois ; la fille ne
+// porte que la traçabilité de son retrait.
+// À ne pas confondre avec orderPaid/orderBalance, qui répondent à une AUTRE question : « cette
+// commande est-elle soldée ? » — et là, oui, la fille l'est (via sa mère). Deux questions
+// distinctes, deux fonctions distinctes : les confondre est précisément ce qui a produit le bug.
+// PURE.
+function estVenteAgregable(o){
+  return !!o && o.paiement==='Payé' && o.commandeMereId==null;
+}
+
+
 // ----------------------------------------------------------------------------
 //  Benjamin : le copilote annonce 552 € pour juin, sa compta 1068 € — MÊME MOIS, MÊME PÉRIODE.
 //  Or la v1331 devait précisément éliminer ce genre d'écart. Ma correction était donc INCOMPLÈTE.
@@ -10902,6 +10975,16 @@ async function docConvertToOrder(id){
 async function cmdToDevis(id){
   const o=await db.orders.get(id);
   if(!o){ toast('Commande introuvable'); return; }
+  // [v1421] Une commande FILLE n'a plus de paiement propre (cf. paiementsDe) : le garde-fou
+  // ci-dessous ne la retenait donc plus, alors qu'elle était bloquée avant — par un paiement
+  // FANTÔME, pour la mauvaise raison. On la bloque désormais explicitement et pour la bonne :
+  // la repasser en devis casserait le reliquat de sa mère (l'argent, lui, resterait encaissé).
+  if(o.commandeMereId!=null){
+    openModal(`<h3>⛔ Conversion impossible</h3>
+      <div class="banner" style="background:#f6e3e0;border-color:#b3261e;color:#7a2a20">⚠ <div>Cette commande est <b>rattachée à la commande mère #${esc(String(o.commandeMereId))}</b> : elle trace un retrait sur un paiement déjà encaissé.<br>Détache-la d'abord de sa commande mère (bouton « Modifier »), puis réessaie.</div></div>
+      <div class="modal-actions"><button class="btn gold" onclick="closeModal()">Compris</button></div>`);
+    return;
+  }
   // Sécurité : aucun paiement autorisé.
   const paies=paiementsDe(o);
   if(paies.length){
@@ -10946,6 +11029,7 @@ async function cmdToDevisConfirm(id){
   try{
     const o=await db.orders.get(id);
     if(!o){ toast('Commande introuvable'); return; }
+    if(o.commandeMereId!=null){ toast('Commande rattachée à une mère — conversion annulée'); closeModal(); return; }  // [v1421]
     if(paiementsDe(o).length){ toast('Paiement présent — conversion annulée'); closeModal(); return; }
     const itemsLies = await db.orderItems.where('orderId').equals(id).toArray().catch(()=>[]);
     const totBatch = itemsLies.reduce((s,it)=>s+(+it.qte||0),0);
@@ -18684,6 +18768,10 @@ async function ensureOrderDecremented(orderId){
   if(!o) return false;
   // Les commandes « historiques » (migration) n'exigent ni production ni picking.
   if(o.histo===true) return true;
+  // [v1421] Idem pour une commande MÈRE rangée (paiement en avance, retraits échelonnés) : la
+  // traçabilité est portée par ses commandes filles, chacune au jour de son retrait. Exiger en
+  // plus une couverture de lots sur la mère reviendrait à demander DEUX fois la même preuve.
+  if(o.mereEnAttente===true) return true;
 
   // Nombre TOTAL de macarons de la commande, indépendamment du détail des parfums
   // (coffret → taille, événement → evQte, vrac/don → parfums, grand format → items).
@@ -19062,7 +19150,11 @@ async function renderCmd(){
   }catch(e){swallow(e,'renderCmd')}
   // Les commandes "historiques" (reprise/migration) ne s'affichent pas ici :
   // elles comptent dans le CA mais ne sont pas opérationnelles.
-  const orders = (await db.orders.toArray()).filter(o=>!o.histo).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  // [v1421] Les commandes MÈRES rangées non plus : demande explicite de Ben — « une commande
+  // définie comme commande mère ne doit pas rester dans la vue commande ». Elles restent
+  // accessibles par « 🔗 Paiements en avance » et par la recherche de mère, et elles comptent
+  // toujours normalement dans le CA (c'est `mereEnAttente` qui range, plus `histo` — cf. v1421).
+  const orders = (await db.orders.toArray()).filter(o=>!o.histo && o.mereEnAttente!==true).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
   const clients = await db.clients.toArray();
   const clById = Object.fromEntries(clients.map(c=>[c.id,c]));
   _cmdClNameMap = Object.fromEntries(clients.map(c=>[c.id, c.nom||'—']));
@@ -22456,10 +22548,22 @@ async function saveCmd(id){
     // dans la recherche de mère (cf commandeMereEligible). Décocher la case la fait ressortir.
     // GARDE-FOU : on ne remet histo:false QUE si la case était cochée à l'ouverture — sinon
     // enregistrer une vieille commande archivée (reprise/migration) la ferait resurgir.
+    // [v1421] ⚠️ ON N'ÉCRIT PLUS `histo:true` ICI. C'était l'erreur de la v1411 : `histo` ne veut
+    // pas dire « rangée », il veut dire REPRISE D'HISTORIQUE (CA d'avant l'app, déjà déclaré).
+    // ~30 lecteurs s'en servent pour EXCLURE la commande du chiffre d'affaires : caEncaisseParMois
+    // (`if(o.histo) return;`), estReprise → computeMonthlyBilan (qui la classait en « reprise »,
+    // hors base URSSAF), computeAccounting, le net dans la poche… Ranger une mère la faisait donc
+    // DISPARAÎTRE du CA réel, pendant que ses filles en fabriquaient un faux. L'argent était au
+    // mauvais endroit des deux côtés à la fois.
+    // Désormais `mereEnAttente` est le SEUL marqueur de rangement : la mère sort du fil des
+    // commandes (renderCmd) et n'exige aucune traçabilité, mais elle reste une vente ordinaire
+    // pour toute la comptabilité — comptée UNE fois, au mois de son encaissement réel.
     ...(function(){
       const c = document.getElementById('f_mereEnAttente');
       if(!c) return {};
-      if(c.checked) return { mereEnAttente: true, histo: true };
+      if(c.checked) return { mereEnAttente: true };
+      // Décochée : on lève le rangement, et on efface l'ancien `histo:true` posé par la v1411
+      // (uniquement si la case était cochée à l'ouverture — jamais sur une vraie reprise).
       return c.dataset.initial === '1'
         ? { mereEnAttente: false, histo: false }
         : { mereEnAttente: false };
@@ -22539,13 +22643,32 @@ async function saveCmd(id){
   // « Livrée » ici, on n'autorise le passage que si la couverture de traçabilité est complète.
   // On écrit d'abord la commande en « Terminée » (pour que les besoins/liens soient lisibles
   // en base), puis on tente le passage en « Livrée » via ensureOrderDecremented.
-  const _wantLivree = (o.statut==='Livrée') && (o.histo!==true);
+  // [v1421] Une commande MÈRE rangée ne réclame JAMAIS de traçabilité : ce sont ses filles qui la
+  // portent, retrait par retrait. Sans cette exemption, la mère ouvrirait « Lier des batchs » pour
+  // la totalité de la commande alors qu'aucun lot ne lui sera jamais rattaché en propre.
+  const _wantLivree = (o.statut==='Livrée') && (o.histo!==true) && (o.mereEnAttente!==true);
   if(_wantLivree) o.statut = 'Terminée';
   if(id) await db.orders.update(id,o); else oid=await db.orders.add(withSync(o,'app'));
   if(_wantLivree){
     const ok = await ensureOrderDecremented(oid);
     if(ok){ await db.orders.update(oid, {statut:'Livrée'}); }
     // si !ok : la commande reste « Terminée » et ensureOrderDecremented a ouvert « Lier des batchs ».
+  }
+  // [v1421] ARCHIVAGE AUTOMATIQUE DE LA MÈRE — demande de Ben : « une commande, lorsqu'elle est
+  // définie comme commande mère, ne doit pas rester dans la vue commande ». Jusqu'ici le rangement
+  // dépendait de la case v1411 : une mère créée en rattachant simplement une fille (le geste
+  // naturel, sans passer par la case) restait dans le fil et réclamait sa traçabilité.
+  // Désormais, enregistrer une fille range sa mère, quel que soit le chemin. On ne repasse jamais
+  // dessus si elle est déjà rangée (on n'écrase pas un choix de Ben qui l'aurait ressortie).
+  let _mereRangee = 0;
+  if(o.commandeMereId!=null){
+    try{
+      const _mere = await db.orders.get(+o.commandeMereId);
+      if(_mere && _mere.mereEnAttente!==true){
+        await db.orders.update(+_mere.id, {mereEnAttente:true});
+        _mereRangee = +_mere.id;
+      }
+    }catch(e){ swallow(e,'archivage auto commande mère'); }   // jamais bloquer l'enregistrement pour ça
   }
   // [v1377] Devis accepté lié à cette commande : le marquer « périmé » si le contenu ne correspond
   // plus (lignes ou montant), ou lever le drapeau s'il correspond de nouveau (ex : après régénération).
@@ -22570,7 +22693,11 @@ async function saveCmd(id){
   // [v1382] La commande vient d'être écrite : si Ben a chiffré ou corrigé le trajet, le carnet
   // doit l'apprendre TOUT DE SUITE. Sans ça, il proposerait encore l'ancienne médiane.
   if(typeof _trajetInvalideCache==='function') _trajetInvalideCache();
-  closeModal(); renderCmd(); toast('Commande enregistrée ✓');
+  // [v1421] Le rangement de la mère est une décision de l'app : on le DIT. Une action invisible
+  // sur les commandes de Ben, c'est une action qu'il découvrira trop tard, en cherchant sa mère
+  // dans un fil où elle n'est plus.
+  closeModal(); renderCmd();
+  toast(_mereRangee ? ('Commande enregistrée ✓ · commande mère #'+_mereRangee+' rangée') : 'Commande enregistrée ✓');
   // Vérification prévisionnelle immédiate : la commande crée-t-elle un risque sous 8 jours ?
   // [v1087] protégé : une erreur de prévisionnel ne doit JAMAIS faire croire que l'enregistrement a échoué.
   try{ await checkForecastForOrder(oid); }catch(e){ console.error('checkForecastForOrder', e); }
@@ -23017,6 +23144,12 @@ async function livreDesRecettes(depuis, jusqu){
 
   (orders || []).forEach(o => {
     if(!o) return;
+    // [v1421] COMMANDE FILLE : la recette a DÉJÀ été inscrite au livre, à la ligne de sa mère, au
+    // jour de l'encaissement réel. La réinscrire au jour du retrait ajouterait une recette qui
+    // n'existe pas — le livre gonflerait au-delà des déclarations, et l'écart sauterait aux yeux
+    // d'un contrôleur. Ce n'est PAS une exclusion comptable au sens de la v1361 (rien n'est
+    // dissimulé : la recette EST au livre, une seule fois, à sa vraie date) — c'est un anti-doublon.
+    if(o.commandeMereId != null) return;
 
     // ════════════════════════════════════════════════════════════════════════
     // [v1361] BEN A RAISON, ET MON ERREUR ÉTAIT GRAVE.
@@ -28243,7 +28376,7 @@ async function computeStrategic(){
   // Marges globales (somme des marges par commande payée)
   let margeBrute=0, margeNette=0, caPaye=0;
   let sumCoutMat=0, sumCoutEmb=0, sumCharges=0;   // composantes pour le détail explicatif
-  const paid = orders.filter(o=>o.paiement==='Payé');
+  const paid = orders.filter(o=>estVenteAgregable(o));   // [v1421] filles exclues : leur CA est déjà porté par la mère
   paid.forEach(o=>{ const m=computeOrderMargins(o,recipes,recipeItems,lots);
     margeBrute=money2(margeBrute+m.margeBrute); margeNette=money2(margeNette+m.margeNette); caPaye=money2(caPaye+m.ca);
     sumCoutMat=money2(sumCoutMat+m.coutMat); sumCoutEmb=money2(sumCoutEmb+m.coutEmb); sumCharges=money2(sumCharges+m.chargesSociales); });
@@ -28422,7 +28555,7 @@ function generateInsights(S){
 function computeStats(orders, clients, toLines){
   // Filtre STRICT : commandes payées uniquement (validées). Les annulées sont
   // supprimées de la base, donc absentes. Aucune correction n'est agrégée.
-  const valides = (orders||[]).filter(o=>o && o.paiement==='Payé');
+  const valides = (orders||[]).filter(o=>estVenteAgregable(o));   // [v1421] filles exclues (double comptage CA + pièces)
   const clientName = id => (clients.find(c=>c.id===id)||{}).nom || '—';
 
   const global = {
@@ -28526,7 +28659,7 @@ function _monthsRange(keys){
 // Retourne {hausses:[], baisses:[], stables:[], periode:{...}}
 function analyzeTrends(orders, opts){
   opts=opts||{}; const windowDays=opts.windowDays||30;
-  const valides=(orders||[]).filter(o=>o&&o.paiement==='Payé'&&o.date);
+  const valides=(orders||[]).filter(o=>estVenteAgregable(o)&&o.date);   // [v1421] filles exclues
   const now = opts.ref ? new Date(opts.ref) : new Date();
   const dayMs=86400000;
   const recentStart=new Date(now-windowDays*dayMs);
@@ -28561,7 +28694,7 @@ function analyzeTrends(orders, opts){
 // ---- ANALYSE CLIENT ----
 // Régularité, valeur, préférences. R = computeStats(...)
 function analyzeClients(R, orders){
-  const valides=(orders||[]).filter(o=>o&&o.paiement==='Payé'&&o.date);
+  const valides=(orders||[]).filter(o=>estVenteAgregable(o)&&o.date);   // [v1421] filles exclues
   // dates de commande par client (pour intervalle moyen entre commandes)
   const datesByClient={};
   for(const o of valides){ (datesByClient[o.clientId||0] ||= []).push(o.date); }
@@ -45387,7 +45520,8 @@ async function aiQueryRentabilite(params){
       db.orders.toArray(), db.recipes.toArray(), db.recipeItems.toArray(), db.materialLots.toArray(), db.clients.toArray()
     ]);
     const clName=(id)=>{ const c=clients.find(x=>x.id===id); return c?c.nom:'Client'; };
-    const paid = orders.filter(o=> !o.histo && (+o.montant>0) && (typeof orderPaid==='function') && orderPaid(o)+1e-9 >= (+o.montant));
+    // [v1421] `commandeMereId==null` : une fille dupliquerait le CA et la marge de sa mère sur le même client.
+    const paid = orders.filter(o=> !o.histo && o.commandeMereId==null && (+o.montant>0) && (typeof orderPaid==='function') && orderPaid(o)+1e-9 >= (+o.montant));
     if(!paid.length) return aiSay(`<p class="note">Aucune commande payée pour calculer la rentabilité par client.</p>`);
     const byClient={};
     paid.forEach(o=>{ const m=computeOrderMargins(o,recipes,recipeItems,lots); const k=o.clientId||0;
@@ -47095,7 +47229,8 @@ async function aiQueryPanierMoyen(params){
   const orders=await db.orders.toArray();
   let _pmYm = null, _pmLbl = '';
   if(/^\d{4}-\d{2}$/.test(params.periode||'')){ _pmYm = params.periode; _pmLbl = ' — ' + monthLabel(_pmYm); }
-  const valides=orders.filter(o=>!o.histo && (+o.montant||0)>0
+  // [v1421] Filles exclues : un retrait n'est pas une commande de plus, il écraserait le panier moyen vers le bas.
+  const valides=orders.filter(o=>!o.histo && o.commandeMereId==null && (+o.montant||0)>0
                                  && (!_pmYm || (o.date||'').slice(0,7) === _pmYm));
   if(_pmYm && !valides.length){
     return aiSay(`${aiHero('—', `Panier moyen${_pmLbl}`)}${aiSynth(`Aucune commande passée en ${esc(monthLabel(_pmYm))}. Le mois existe, il est simplement vide.`, {icon:'📭'})}`);
@@ -52639,6 +52774,10 @@ async function diagBilanMois(){
     const orders=await db.orders.toArray();
     orders.forEach(o=>{
       const total=money2(+o.montant||0); if(total<=0) return;
+      // [v1421] Une commande FILLE ne facture ni n'encaisse rien en propre (son argent est sur la
+      // mère) : la laisser ici gonflerait le « facturé du mois » du diagnostic et la ferait
+      // signaler « Payé sans date » à tort. Même exclusion que computeMonthlyBilan.
+      if(o.commandeMereId!=null) return;
       const dateMois = monthKey(o.date)===ym;   // commande datée du mois ?
       // encaissé ce mois — MÊME source que computeMonthlyBilan : paiementsDe (registre + repli legacy).
       let encMois=0; paiementsDe(o).forEach(p=>{ if(monthKey(p.date)===ym) encMois=money2(encMois+money2(p.montant)); });
@@ -70622,6 +70761,7 @@ function startClock(){
     try{ await seedEmballages(); }catch(e){ console.error('seedEmballages',e); }
     try{ await migrateDlcCongelateur(); }catch(e){ console.error('migrateDlcCongelateur',e); }
     try{ await migrateCoqueColors(); }catch(e){ console.error('migrateCoqueColors',e); }
+    try{ await migrateMereHistoV1421(); }catch(e){ console.error('migrateMereHistoV1421',e); }
     try{ const r=await rdSeedSiVide();
       let nIdees=0,nTests=0; try{nIdees=await db.rdIdees.count();}catch(e){swallow(e,'startClock')}; try{nTests=await db.rdTests.count();}catch(e){swallow(e,'startClock')}
       diagPublish('rd_seed','R&D · module', {...r, idees:nIdees, tests:nTests});
