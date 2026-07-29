@@ -134,7 +134,8 @@ const SUITES = [
   'v1418-pointer-lot-productions.test.js', // v1418 · « Voir dans Productions » depuis les DLC pointe le lot concerné
   'v1420-retour-bilan-urssaf.test.js',     // v1420 · chaîne de retour bilan URSSAF ↔ détail catégorie ↔ fiche commande + nom du client
   'v1421-double-comptage-filles.test.js',  // v1421 · une commande fille ne porte aucun encaissement (fin du paiement fantôme) + « ranger » n'est pas « reprise d'historique »
-  'v1422-dlc-vue-boites.test.js'           // v1422 · toucher une alerte DLC ouvre la vue d'ensemble des boîtes du lot (emplacement, déplacement, fusion)
+  'v1422-dlc-vue-boites.test.js',          // v1422 · toucher une alerte DLC ouvre la vue d'ensemble des boîtes du lot (emplacement, déplacement, fusion)
+  'v1424-reste-a-encaisser-semaine.test.js' // v1424 · l'en-tête de semaine « À venir » affiche le reste à encaisser MÊME sans acompte (le total ne dit pas ce qui n'est pas rentré)
 ];
 
 let allOk = true;

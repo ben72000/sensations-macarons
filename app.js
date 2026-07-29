@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1423';
+const APP_VERSION = 'v1424';
 const APP_MAJ = 'CHANTIER A — L’APP NE PEUT PLUS ÉCHOUER EN SILENCE. Le constat de l’audit était dur : 347 endroits du code attrapaient une erreur et l’enregistraient fidèlement… dans un carnet que TU NE POUVAIS PAS OUVRIR. Il fallait brancher l’iPhone sur un Mac. Autant dire jamais. ET LE CARNET ÉTAIT EFFACÉ À CHAQUE RECHARGEMENT. C’est le mécanisme EXACT qui a caché la panne Dexie pendant un mois : chaque écriture kv échouait, la validation ne démarrait jamais, et l’écran affichait « 0 refus, 0 suspects » — ce qui RESSEMBLAIT à une bonne nouvelle alors que ça voulait dire « le contrôle n’a jamais démarré ». CE QUI CHANGE. 1) UN ÉCRAN « Santé de l’app » (Sauvegarde & sécurité) : tu lis enfin ce qui a cassé, depuis ton téléphone, sans Mac. 2) LES INCIDENTS VIVENT EN BASE (nouvelle table errLog) : ils survivent à un rechargement, donc tu peux constater qu’une panne DURE — c’est précisément ce que l’ancien carnet en mémoire rendait impossible. 3) UN FILET GLOBAL : une erreur hors try/catch te donnait un écran figé sans trace ; elle est maintenant enregistrée et annoncée par une bannière discrète. 4) UNE PASTILLE SUR L’ACCUEIL quand des incidents IMPORTANTS s’accumulent. LE TRI QUE J’AI FIGÉ, et qui est le cœur du travail : un échec d’AFFICHAGE et un échec d’ÉCRITURE EN BASE ne se valent pas. Base, sauvegarde, import, validation, compta → IMPORTANT, ça parle. Rendu, affichage → mineur, ça s’enregistre sans crier. Confondre les deux, c’est noyer le signal sous le bruit, et une alerte qui crie tout le temps est une alerte qu’on ne regarde plus. CE QUE JE N’AI PAS FAIT : deviner la cause d’une erreur, ni prétendre la réparer. L’écran montre ce qui s’est réellement passé. Une explication inventée serait pire qu’un silence. ET UNE MISE EN GARDE QUE JE TE DOIS : un écran Santé VIDE n’est PAS une preuve que tout va bien — c’est une absence d’incident enregistré, ce qui n’est pas la même chose. LA RÈGLE FIGÉE : une protection qu’on ne peut pas VOIR marcher doit être considérée comme ABSENTE jusqu’à preuve du contraire. Reste à faire : chantier B (valider le contenu à l’import), C (sortir les sauvegardes de la boîte qu’elles protègent), D (durcir import et QR). Suite : 88 → 89 suites, 1437 → 1475 assertions vertes.';
 
 // ============================================================
@@ -19618,8 +19618,16 @@ function cmdFilter(q){  cmdSearch=q||'';
     const corps=semaines.map(wk=>{
       const lot=parSem[wk].slice().sort((a,b)=>(a.o.date||'').localeCompare(b.o.date||''));  // dates croissantes
       // [v1340] La semaine affiche le total ET, s'il y a eu des acomptes, ce qu'il RESTE à percevoir.
+      // [v1424] CORRIGÉ — Ben : « une commande à venir qui n'a aucun acompte doit afficher la somme
+      // totale […] et juste à droite en rouge le montant restant à encaisser ». La v1340 ne montrait
+      // le reste QUE si un acompte existait, en le jugeant redondant avec le total. Il ne l'est pas :
+      // « 100 € » dit ce que vaut la semaine, « reste 100 € » dit ce qui n'est pas encore rentré —
+      // et c'est le second chiffre qui pilote la trésorerie. Une semaine entièrement réglée d'avance
+      // affiche « soldé » en vert plutôt qu'un « reste 0,00 € » en rouge, qui alertait pour rien.
       const T=cmdTotauxLot(lot);
-      const _resteSem = T.encaisse>0 ? ` · <b style="color:#b3261e">reste ${euro(T.reste)}</b>` : '';
+      const _resteSem = (T.reste > 0.01)
+        ? ` · <b style="color:#b3261e">reste ${euro(T.reste)}</b>`
+        : (T.encaisse > 0 ? ` · <b style="color:#3f7d52">soldé</b>` : '');
       const enTete=`<div style="padding:8px 12px;background:var(--creme-2);border-bottom:1px solid var(--hair);font-size:.76rem;font-weight:600;color:#6a5a52;display:flex;justify-content:space-between;gap:8px">
         <span>${esc(_libSemaine(wk))}</span><span style="font-weight:500;color:#9a8a82">${lot.length} · ${euro(T.total)}${_resteSem}</span></div>`;
       return enTete + lot.map(r=>_cmdRowMini(r,{distinctif:false})).join('');
@@ -19635,9 +19643,15 @@ function cmdFilter(q){  cmdSearch=q||'';
          </div>
          ${AV.tropPercu>0?`<div style="padding:7px 13px;background:#fff6e5;border-bottom:1px solid #e5d3b3;font-size:.75rem;color:#6a5a52">⚠️ ${euro(AV.tropPercu)} de trop-perçu sur ces commandes. Il n'est PAS déduit du reste dû : un trop-perçu ne paie pas la commande d'à côté.</div>`:''}`
       : '';
+    // [v1424] Même règle qu'en tête de semaine : le reste s'affiche même sans acompte. Laisser
+    // l'en-tête du bloc muet pendant que chaque semaine annonce son reste serait un demi-correctif —
+    // deux lignes du même panneau qui ne répondent pas à la même question.
+    const _resteAVenir = (AV.reste > 0.01)
+      ? ` · <b style="color:#b3261e">reste ${euro(AV.reste)}</b>`
+      : (AV.encaisse > 0 ? ` · <b style="color:#3f7d52">soldé</b>` : '');
     html += `<details open style="margin:12px 0 4px;border:1px solid #c9d6e8;border-radius:12px;overflow:hidden;background:#f7fafd">
       <summary style="cursor:pointer;padding:11px 13px;font-weight:700;color:#3b6ea5;background:#eaf1f9">
-        📅 À venir <span style="font-weight:500">(${aVenir.length}) · ${euro(AV.total)}${AV.encaisse>0?` · <b style="color:#b3261e">reste ${euro(AV.reste)}</b>`:''}</span></summary>
+        📅 À venir <span style="font-weight:500">(${aVenir.length}) · ${euro(AV.total)}${_resteAVenir}</span></summary>
       ${_bandeau}
       <div>${corps}</div>
     </details>`;
