@@ -132,7 +132,9 @@ const SUITES = [
   'v1414-fil-tracabilite.test.js',         // v1414 · fil de traçabilité unifié d'une boîte (+ fusion v1415, archivage v1416)
   'v1417-vue-boites-lot.test.js',          // v1417 · vue d'ensemble des boîtes d'un lot au clic sur « Ranger »
   'v1418-pointer-lot-productions.test.js', // v1418 · « Voir dans Productions » depuis les DLC pointe le lot concerné
-  'v1420-retour-bilan-urssaf.test.js'      // v1420 · chaîne de retour bilan URSSAF ↔ détail catégorie ↔ fiche commande + nom du client
+  'v1420-retour-bilan-urssaf.test.js',     // v1420 · chaîne de retour bilan URSSAF ↔ détail catégorie ↔ fiche commande + nom du client
+  'v1421-double-comptage-filles.test.js',  // v1421 · une commande fille ne porte aucun encaissement (fin du paiement fantôme) + « ranger » n'est pas « reprise d'historique »
+  'v1422-dlc-vue-boites.test.js'           // v1422 · toucher une alerte DLC ouvre la vue d'ensemble des boîtes du lot (emplacement, déplacement, fusion)
 ];
 
 let allOk = true;
