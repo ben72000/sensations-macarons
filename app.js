@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1421';
+const APP_VERSION = 'v1422';
 const APP_MAJ = 'CHANTIER A — L’APP NE PEUT PLUS ÉCHOUER EN SILENCE. Le constat de l’audit était dur : 347 endroits du code attrapaient une erreur et l’enregistraient fidèlement… dans un carnet que TU NE POUVAIS PAS OUVRIR. Il fallait brancher l’iPhone sur un Mac. Autant dire jamais. ET LE CARNET ÉTAIT EFFACÉ À CHAQUE RECHARGEMENT. C’est le mécanisme EXACT qui a caché la panne Dexie pendant un mois : chaque écriture kv échouait, la validation ne démarrait jamais, et l’écran affichait « 0 refus, 0 suspects » — ce qui RESSEMBLAIT à une bonne nouvelle alors que ça voulait dire « le contrôle n’a jamais démarré ». CE QUI CHANGE. 1) UN ÉCRAN « Santé de l’app » (Sauvegarde & sécurité) : tu lis enfin ce qui a cassé, depuis ton téléphone, sans Mac. 2) LES INCIDENTS VIVENT EN BASE (nouvelle table errLog) : ils survivent à un rechargement, donc tu peux constater qu’une panne DURE — c’est précisément ce que l’ancien carnet en mémoire rendait impossible. 3) UN FILET GLOBAL : une erreur hors try/catch te donnait un écran figé sans trace ; elle est maintenant enregistrée et annoncée par une bannière discrète. 4) UNE PASTILLE SUR L’ACCUEIL quand des incidents IMPORTANTS s’accumulent. LE TRI QUE J’AI FIGÉ, et qui est le cœur du travail : un échec d’AFFICHAGE et un échec d’ÉCRITURE EN BASE ne se valent pas. Base, sauvegarde, import, validation, compta → IMPORTANT, ça parle. Rendu, affichage → mineur, ça s’enregistre sans crier. Confondre les deux, c’est noyer le signal sous le bruit, et une alerte qui crie tout le temps est une alerte qu’on ne regarde plus. CE QUE JE N’AI PAS FAIT : deviner la cause d’une erreur, ni prétendre la réparer. L’écran montre ce qui s’est réellement passé. Une explication inventée serait pire qu’un silence. ET UNE MISE EN GARDE QUE JE TE DOIS : un écran Santé VIDE n’est PAS une preuve que tout va bien — c’est une absence d’incident enregistré, ce qui n’est pas la même chose. LA RÈGLE FIGÉE : une protection qu’on ne peut pas VOIR marcher doit être considérée comme ABSENTE jusqu’à preuve du contraire. Reste à faire : chantier B (valider le contenu à l’import), C (sortir les sauvegardes de la boîte qu’elles protègent), D (durcir import et QR). Suite : 88 → 89 suites, 1437 → 1475 assertions vertes.';
 
 // ============================================================
@@ -7816,25 +7816,17 @@ async function caMonthDetail(mk){
 }
 // Menu d'actions sur un produit fini en DLC (proche ou dépassée), depuis l'accueil.
 // Intervention : déclarer la perte (cas le plus fréquent), ranger, ou voir dans Productions.
+// [v1422] TOUCHER UNE LIGNE DE DLC OUVRE DIRECTEMENT LES BOÎTES DU LOT.
+// Demande de Ben : « le fait de cliquer sur le lien du lot permet d'afficher toutes les boîtes
+// sur une vue d'ensemble avec leur emplacement ».
+// AVANT : un menu intermédiaire (perte / ranger / voir dans Productions) s'intercalait, et il
+// fallait choisir « Ranger » pour arriver aux boîtes — deux écrans pour voir où est son stock.
+// Le menu n'est pas supprimé, il est ABSORBÉ : ses trois actions vivent désormais DANS la vue
+// d'ensemble (perte et traçabilité par boîte, « Voir dans Productions » en pied d'écran), là où
+// elles ont un sens boîte par boîte. Redirection mince, comme setEmplacement → ouvrirRangement
+// (v1389) : tous les onclick existants continuent de marcher, il n'y a qu'un seul écran derrière.
 async function dlcActions(prodId){
-  const p = await db.productions.get(prodId).catch(()=>null);
-  if(!p){ toast('Lot introuvable'); return; }
-  const recipes = await db.recipes.toArray().catch(()=>[]);
-  const nom = (typeof prodNomComplet==='function') ? prodNomComplet(p, recipes) : '?';
-  const dlcEff = (typeof prodDlcEffective==='function') ? prodDlcEffective(p) : p.dlcProduit;
-  const j = (typeof daysTo==='function') ? daysTo(dlcEff) : null;
-  const etat = (j!=null && j<=0) ? '<b style="color:#b3261e">DLC dépassée</b>' : (j!=null?`DLC dans ${j} j`:'DLC');
-  const dispo = round3(+p.qteRestante||0);
-  openModal(`<h3>${esc(nom)}</h3>
-    <p class="note" style="margin-bottom:10px">Lot <b>${esc(p.lotProduction||('#'+p.id))}</b> · ${etat} · <b>${qty(dispo)}</b> pièce(s) en stock${p.emplacement?` · ${empIcon(p.emplacement)} ${empLettre(p.emplacement)}`:''}</p>
-    <div style="display:flex;flex-direction:column;gap:8px">
-      <button class="btn danger" onclick="closeModal();declareLossForm(${prodId})">⚠ Déclarer une perte (sortir du stock)</button>
-      <button class="btn" style="background:#3f7d52;color:#fff" onclick="closeModal();setEmplacement(${prodId})">📍 Ranger / changer d'emplacement</button>
-      ${prodEstRangee(p)
-        ? `<button class="btn ghost" onclick="closeModal({fromPop:true});traceProd(${prodId})" title="Ce lot est rangé (congélateur) : son détail s'ouvre directement.">🔎 Voir le détail du lot</button>`
-        : `<button class="btn ghost" onclick="closeModal({fromPop:true});voirLotDansProductions(${prodId})">📋 Voir dans Productions</button>`}
-    </div>
-    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+  return vueBoitesDuLot(prodId);
 }
 
 // [v1418] Ouvre l'écran Productions EN POINTANT le lot concerné : filtre pré-rempli sur son
@@ -49748,46 +49740,84 @@ async function vueBoitesDuLot(prodId){
     db.recipes.toArray().catch(()=>[]),
   ]);
   const famille = boitesDuLot(p, prods);
-  const rec = recipes.find(r=>+r.id===+p.recipeId);
-  const nom = rec ? rec.produitNom : (p.produitLibre||'(libre)');
+  // [v1422] Filet : un lot dont il ne reste rien (parent à 0, aucune boîte vivante) donnerait une
+  // famille VIDE, donc un écran sans une seule ligne — Ben ne saurait pas s'il a mal cliqué ou si
+  // le lot est épuisé. On affiche alors la ligne cliquée telle quelle : elle dit la vérité.
+  if(!famille.length) famille.push(p);
+  const nom = (typeof prodNomComplet==='function') ? prodNomComplet(p, recipes) : '(produit)';
   const parentId = (p.etiquetteDe!=null) ? +p.etiquetteDe : +p.id;
   const total = round3(famille.reduce((s,x)=>s+(+x.qteRestante||0),0));
+  // [v1422] Un lot JAMAIS mis en boîtes a une famille d'UNE ligne : le lot lui-même. On l'affiche
+  // quand même (Ben arrive ici depuis une alerte DLC, il doit voir où est son stock), mais sans le
+  // vocabulaire des boîtes — parler de « reste non mis en boîte » quand il n'y a pas de boîte
+  // décrirait une répartition qui n'existe pas.
+  const aDesBoites = famille.some(x=>+x.id!==parentId);
   // Répartition par emplacement, pour lire d'un coup d'œil où est le lot.
   const parEmp = {};
   famille.forEach(x=>{ const k=x.emplacement||'?'; parEmp[k]=(parEmp[k]||0)+1; });
   const repartition = Object.keys(parEmp).map(k=>`${parEmp[k]}×${empLettre(k)}`).join(' · ');
+  // Boîtes fusionnables : il faut au moins deux lignes-filles ayant encore du stock (le lot
+  // parent n'en est pas une — _fusionValide refuse une ligne sans etiquetteDe, et c'est voulu).
+  const fusionnables = famille.filter(x=>x.etiquetteDe!=null && round3(+x.qteRestante||0)>0);
 
   const lignes = famille.map(x=>{
     const estParent = (+x.id===parentId);
     const dlc = (typeof prodDlcEffective==='function') ? prodDlcEffective(x) : x.dlcProduit;
-    return `<div style="border:1px solid var(--hair,#e7ddd2);border-radius:11px;padding:10px;margin-bottom:7px;background:${estParent?'#fdf7ee':'#fff'}">
+    // [v1422] On vient des alertes DLC : le nombre de jours restants est L'INFORMATION qui a
+    // amené Ben ici. L'afficher sur chaque boîte évite d'avoir à repartir de l'accueil pour
+    // savoir LAQUELLE des boîtes est celle qui expire.
+    const j = (dlc && typeof daysTo==='function') ? daysTo(dlc) : null;
+    const badge = (j==null) ? ''
+      : (j<=0 ? ' · <b style="color:#b3261e">DLC dépassée</b>'
+              : ` · <b style="color:${j<=2?'#b3261e':'#8a6d3b'}">J−${j}</b>`);
+    const peutFusionner = (x.etiquetteDe!=null) && fusionnables.some(y=>+y.id!==+x.id);
+    return `<div style="border:1px solid var(--hair,#e7ddd2);border-radius:11px;padding:10px;margin-bottom:7px;background:${estParent&&aDesBoites?'#fdf7ee':'#fff'}">
       <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline">
         <b style="font-size:.9rem">${esc(x.lotProduction||('#'+x.id))}</b>
         <span style="font-size:.86rem"><b>${qty(x.qteRestante)}</b> pièce(s)</span>
       </div>
       <div style="font-size:.8rem;color:#7a6a62;margin:3px 0 7px">
         ${empIcon(x.emplacement)} ${esc(empNom(x.emplacement))} (${empLettre(x.emplacement)})
-        ${dlc?` · DLC ${fmtDate(dlc)}`:''}
-        ${estParent?' · <span style="color:#8a6d3b">reste non mis en boîte</span>':''}
+        ${dlc?` · DLC ${fmtDate(dlc)}`:''}${badge}
+        ${estParent&&aDesBoites?' · <span style="color:#8a6d3b">reste non mis en boîte</span>':''}
       </div>
-      <div style="display:flex;gap:5px;flex-wrap:wrap">
+      <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center">
         <select id="mv_${x.id}" style="padding:6px;border:1px solid var(--hair,#e7ddd2);border-radius:8px;font-size:.8rem">
           ${_etiqOptionsEmp(x.emplacement)}
         </select>
         <button class="btn ghost sm" onclick="boiteDeplacer(${x.id},${prodId})">↔ Déplacer</button>
-        <button class="btn ghost sm" onclick="closeModal();prodEtiquetteBoites(${x.id})">📦 Mettre en boîtes</button>
+        ${peutFusionner?`<button class="btn ghost sm" onclick="boiteFusionner(${x.id},${prodId})">🔀 Fusionner</button>`:''}
+        <button class="btn ghost sm" onclick="closeModal();prodEtiquetteBoites(${x.id})">📦 ${aDesBoites?'Re-répartir':'Mettre en boîtes'}</button>
         <button class="btn ghost sm" onclick="closeModal();traceProd(${x.id})">🕘 Traçabilité</button>
+        <button class="btn ghost sm" style="color:#b3261e" onclick="closeModal();declareLossForm(${x.id})">⚠ Perte</button>
       </div>
     </div>`;
   }).join('');
 
-  openModal(`<h3>📦 Boîtes du lot — ${esc(nom)}</h3>
-    <p class="note" style="margin-bottom:10px">
-      <b>${famille.length}</b> boîte(s) · <b>${qty(total)}</b> pièce(s) au total${repartition?` · ${esc(repartition)}`:''}.
-      Choisis un emplacement puis « Déplacer », ou agis boîte par boîte.
-    </p>
+  const entete = aDesBoites
+    ? `<b>${famille.length}</b> boîte(s) · <b>${qty(total)}</b> pièce(s) au total${repartition?` · ${esc(repartition)}`:''}.
+       Choisis un emplacement puis « Déplacer », ou agis boîte par boîte.`
+    : `<b>${qty(total)}</b> pièce(s) · ce lot n'a pas encore été mis en boîtes.
+       « Mettre en boîtes » le répartit ; les boîtes créées apparaîtront ensuite ici.`;
+
+  openModal(`<h3>📦 ${aDesBoites?'Boîtes du lot':'Lot'} — ${esc(nom)}</h3>
+    <p class="note" style="margin-bottom:10px">${entete}</p>
     ${lignes}
-    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+    <div class="modal-actions">
+      <button class="btn ghost" style="margin-right:auto" onclick="closeModal({fromPop:true});voirLotDansProductions(${prodId})">📋 Voir dans Productions</button>
+      <button class="btn ghost" onclick="closeModal()">Fermer</button>
+    </div>`);
+}
+
+// [v1422] Fusionner DEPUIS la vue d'ensemble. On ne réécrit pas de moteur : on entre dans le flux
+// de fusion existant (v1376) à son étape 2, qui liste les autres boîtes du même lot, valide par
+// _fusionValide et exécute par fusionnerBoites. On mémorise seulement PAR OÙ REVENIR, pour que
+// Ben retombe sur sa vue d'ensemble une fois la fusion faite au lieu d'un écran vide.
+// Le retour est PASSÉ DE MAIN EN MAIN (étape 2 → confirmation → exécution) plutôt que posé dans
+// une variable globale : un marqueur global survivrait à une annulation et rouvrirait plus tard
+// un écran sans rapport, au milieu d'une fusion lancée depuis un autre endroit.
+async function boiteFusionner(boiteId, retourId){
+  return fusionEtape2(boiteId, +retourId);
 }
 
 // Déplace UNE boîte vers l'emplacement choisi dans son menu, puis rafraîchit la vue d'ensemble.
@@ -50903,7 +50933,7 @@ function _fusionCalcul(a, b, round3){
 // Exécute la fusion. Valide → sauvegarde de sécurité → transaction (mise à jour de la gardée +
 // suppression de l'absorbée) → entrée d'audit dédiée. Les hooks v1372 journalisent déjà chaque
 // écriture ; l'entrée « fusion-boite » ajoute la LECTURE HUMAINE de l'événement.
-async function fusionnerBoites(idA, idB){
+async function fusionnerBoites(idA, idB, retourId){
   const A = await db.productions.get(idA).catch(() => null);
   const B = await db.productions.get(idB).catch(() => null);
   const v = _fusionValide(A, B);
@@ -50936,6 +50966,9 @@ async function fusionnerBoites(idA, idB){
   }catch(e){ swallow(e, 'audit fusion-boite'); }
   toast('Boîtes fusionnées ✓ · traçabilité conservée');
   if(typeof view !== 'undefined' && view === 'stockparfums' && typeof renderStockParfums === 'function') renderStockParfums();
+  // [v1422] Fusion lancée depuis la vue d'ensemble des boîtes : on y retourne, à jour. Sans ça,
+  // Ben perdait son écran juste après l'action et devait repartir de l'alerte DLC.
+  if(retourId!=null && typeof vueBoitesDuLot === 'function') vueBoitesDuLot(+retourId);
   return { ok:true, garde:idA };
 }
 
@@ -51023,14 +51056,15 @@ async function _fusionBoiteDepuisScan(code){
   return p;
 }
 // Après la 1ʳᵉ boîte : on montre les autres boîtes du MÊME lot (tap direct) + l'option de scanner.
-async function fusionEtape2(idA){
+async function fusionEtape2(idA, retourId){   // [v1422] retourId : d'où l'on vient, pour y revenir après la fusion
   const A = await db.productions.get(idA).catch(() => null);
   if(!A){ toast('Boîte introuvable'); return; }
   const recipes = await db.recipes.toArray().catch(() => []);
   const nom = (typeof prodNomComplet === 'function') ? prodNomComplet(A, recipes) : '';
   const autres = await _fusionBoitesDuLot(A.etiquetteDe, idA);
+  const _ret = (retourId!=null) ? +retourId : 'null';   // [v1422] jamais « undefined » dans un onclick
   const liste = autres.length
-    ? autres.map(p => `<label class="sum-box" style="cursor:pointer" onclick="fusionConfirme(${idA},${p.id})">
+    ? autres.map(p => `<label class="sum-box" style="cursor:pointer" onclick="fusionConfirme(${idA},${p.id},${_ret})">
         <span style="flex:1;font-size:.82rem">${_fusionLigneBoite(p)}</span><span>→</span></label>`).join('')
     : '<p class="note">Aucune autre boîte de ce lot n\'a de stock. Scanne une boîte du même lot.</p>';
   openModal(`<h3>🔀 2ᵉ boîte à fusionner</h3>
@@ -51039,19 +51073,19 @@ async function fusionEtape2(idA){
     ${liste}
     <div class="modal-actions">
       <button class="btn ghost" onclick="closeModal()">Annuler</button>
-      <button class="btn" onclick="fusionScanB(${idA})">📷 Scanner la 2ᵉ boîte</button>
+      <button class="btn" onclick="fusionScanB(${idA},${_ret})">📷 Scanner la 2ᵉ boîte</button>
     </div>`);
 }
-function fusionScanB(idA){
+function fusionScanB(idA, retourId){
   if(typeof openScanner !== 'function'){ toast('Scanner indisponible'); return; }
   openScanner(async (code) => {
     const b = await _fusionBoiteDepuisScan(code);
-    if(b) fusionConfirme(idA, b.id);
+    if(b) fusionConfirme(idA, b.id, retourId);
   });
 }
 
 // ── CONFIRMATION (commune aux deux modes) ────────────────────────────────────
-async function fusionConfirme(idA, idB){
+async function fusionConfirme(idA, idB, retourId){
   const A = await db.productions.get(idA).catch(() => null);
   const B = await db.productions.get(idB).catch(() => null);
   const v = _fusionValide(A, B);
@@ -51062,6 +51096,7 @@ async function fusionConfirme(idA, idB){
   const empDiff = (A.emplacement || '') !== (B.emplacement || '');
   const dlcDiff = (A.dlcProduit || '') !== (B.dlcProduit || '');
   const empGarde = (typeof empInfo === 'function' && A.emplacement) ? empInfo(A.emplacement) : null;
+  const _ret = (retourId!=null) ? +retourId : 'null';   // [v1422]
   openModal(`<h3>🔀 Confirmer la fusion</h3>
     <p class="note"><b>${esc(nom)}</b> — même lot, même parfum.</p>
     <div class="sum-box" style="align-items:flex-start"><span style="flex:1">Boîte A (gardée)<br><span style="font-size:.78rem;color:#9a8a82">${_fusionLigneBoite(A)}</span></span></div>
@@ -51072,7 +51107,7 @@ async function fusionConfirme(idA, idB){
     ${empDiff ? `<p class="note" style="color:#8a6d3b">Les deux boîtes sont à des emplacements différents : la boîte fusionnée reste à celui de la boîte A. Rapproche-les physiquement.</p>` : ''}
     <div class="modal-actions">
       <button class="btn ghost" onclick="closeModal()">Annuler</button>
-      <button class="btn gold" onclick="closeModal(); fusionnerBoites(${idA}, ${idB})">✓ Fusionner</button>
+      <button class="btn gold" onclick="closeModal(); fusionnerBoites(${idA}, ${idB}, ${_ret})">✓ Fusionner</button>
     </div>`);
 }
 
