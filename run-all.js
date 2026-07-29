@@ -137,7 +137,8 @@ const SUITES = [
   'v1422-dlc-vue-boites.test.js',          // v1422 · toucher une alerte DLC ouvre la vue d'ensemble des boîtes du lot (emplacement, déplacement, fusion)
   'v1424-reste-a-encaisser-semaine.test.js',// v1424 · l'en-tête de semaine « À venir » affiche le reste à encaisser MÊME sans acompte (le total ne dit pas ce qui n'est pas rentré)
   'v1425-mere-rangee-retrouvable.test.js',  // v1425 · une mère rangée sort du fil mais RESTE dans le cache (recherche/tags/jour) + repli dédié : ranger n'est pas effacer
-  'v1426-assemblage-stock-parfum.test.js'   // v1426 · assembler depuis « Stock par parfum » en réutilisant prodAssembleForm, avec interdiction du mélange de parfums SUR CE CHEMIN seulement
+  'v1426-assemblage-stock-parfum.test.js',  // v1426 · assembler depuis « Stock par parfum » en réutilisant prodAssembleForm, avec interdiction du mélange de parfums SUR CE CHEMIN seulement
+  'v1427-migration-chantache.test.js'       // v1427 · reprise du stock de chantache (composant catalogue) : même signature de lot que produireComposant, sans consommer de matières
 ];
 
 let allOk = true;

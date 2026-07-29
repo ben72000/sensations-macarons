@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1426';
+const APP_VERSION = 'v1427';
 const APP_MAJ = 'CHANTIER A — L’APP NE PEUT PLUS ÉCHOUER EN SILENCE. Le constat de l’audit était dur : 347 endroits du code attrapaient une erreur et l’enregistraient fidèlement… dans un carnet que TU NE POUVAIS PAS OUVRIR. Il fallait brancher l’iPhone sur un Mac. Autant dire jamais. ET LE CARNET ÉTAIT EFFACÉ À CHAQUE RECHARGEMENT. C’est le mécanisme EXACT qui a caché la panne Dexie pendant un mois : chaque écriture kv échouait, la validation ne démarrait jamais, et l’écran affichait « 0 refus, 0 suspects » — ce qui RESSEMBLAIT à une bonne nouvelle alors que ça voulait dire « le contrôle n’a jamais démarré ». CE QUI CHANGE. 1) UN ÉCRAN « Santé de l’app » (Sauvegarde & sécurité) : tu lis enfin ce qui a cassé, depuis ton téléphone, sans Mac. 2) LES INCIDENTS VIVENT EN BASE (nouvelle table errLog) : ils survivent à un rechargement, donc tu peux constater qu’une panne DURE — c’est précisément ce que l’ancien carnet en mémoire rendait impossible. 3) UN FILET GLOBAL : une erreur hors try/catch te donnait un écran figé sans trace ; elle est maintenant enregistrée et annoncée par une bannière discrète. 4) UNE PASTILLE SUR L’ACCUEIL quand des incidents IMPORTANTS s’accumulent. LE TRI QUE J’AI FIGÉ, et qui est le cœur du travail : un échec d’AFFICHAGE et un échec d’ÉCRITURE EN BASE ne se valent pas. Base, sauvegarde, import, validation, compta → IMPORTANT, ça parle. Rendu, affichage → mineur, ça s’enregistre sans crier. Confondre les deux, c’est noyer le signal sous le bruit, et une alerte qui crie tout le temps est une alerte qu’on ne regarde plus. CE QUE JE N’AI PAS FAIT : deviner la cause d’une erreur, ni prétendre la réparer. L’écran montre ce qui s’est réellement passé. Une explication inventée serait pire qu’un silence. ET UNE MISE EN GARDE QUE JE TE DOIS : un écran Santé VIDE n’est PAS une preuve que tout va bien — c’est une absence d’incident enregistré, ce qui n’est pas la même chose. LA RÈGLE FIGÉE : une protection qu’on ne peut pas VOIR marcher doit être considérée comme ABSENTE jusqu’à preuve du contraire. Reste à faire : chantier B (valider le contenu à l’import), C (sortir les sauvegardes de la boîte qu’elles protègent), D (durcir import et QR). Suite : 88 → 89 suites, 1437 → 1475 assertions vertes.';
 
 // ============================================================
@@ -53967,6 +53967,9 @@ async function renderMigration(){
     const u = emb ? (m.unite||'unité') : 'g';   // denrées saisies en grammes (converties en kg au stockage)
     return `<option value="${m.id}" data-emb="${emb?1:0}" data-unite="${esc(u)}">${emb?'📦 ':'🥚 '}${esc(m.nom)} (${esc(u)})</option>`;
   }).join('');
+  // [v1427] Catalogue de composants (chantache, chantilly…) pour le stock de départ.
+  const _compsCat = (await db.components.toArray().catch(()=>[])).sort((x,y)=>(x.nom||'').localeCompare(y.nom||''));
+  const compCatOpts = _compsCat.map(c=>`<option value="${c.id}">${esc(c.nom||('composant #'+c.id))}</option>`).join('');
   const totCA = histo.reduce((s,o)=>s+(+o.montant||0),0);
   const byMonth={};
   histo.forEach(o=>{ const m=(o.date||'').slice(0,7)||'?'; byMonth[m]=(byMonth[m]||0)+(+o.montant||0); });
@@ -54054,6 +54057,24 @@ async function renderMigration(){
        </div></div>
      <button class="btn" style="width:100%" onclick="migSaveGarniture()">＋ Ajouter au stock de garnitures</button>
    </div>
+   <div class="panel"><h2>2 quater · Stock de départ — chantache & garnitures du catalogue</h2>
+     <p class="note" style="margin-bottom:8px">Saisis tes <b>composants catalogue déjà prêts</b> (chantache, chantilly…) en stock. Ils ne dépendent d'aucun parfum : leur stock est <b>mutualisé</b> et sert de <b>3ᵉ élément</b> aux grands formats (2 coques + 1 crémeux + 1 dose de composant). Comptés <b>en doses</b> (1 dose = 1 grand format). Sans consommer de matières.</p>
+     ${compCatOpts ? `
+     <div class="field"><label>Composant</label><select id="mig_chantCid">${compCatOpts}</select></div>
+     <div class="row2">
+       <div class="field"><label>Nombre de doses en stock</label><input type="number" min="1" step="1" id="mig_chantQte" placeholder="ex : 20"></div>
+       <div class="field"><label>DLC (optionnel)</label><input type="date" id="mig_chantDlc"></div>
+     </div>
+     <div class="field"><label>Emplacement</label>
+       <div class="opt-table">
+         ${(()=>{ const firstFrigo=EMPLACEMENTS.findIndex(e=>e.type==='frigo'); const def=firstFrigo>=0?firstFrigo:0;
+           return EMPLACEMENTS.map((e,i)=>`<label class="opt-row"><input type="radio" name="mig_chantEmp" value="${e.key}" ${i===def?'checked':''}> <b class="opt-emp" style="background:${e.type==='frigo'?'#6aa3a0':'#3b6ea5'}">${e.lettre}</b> <span class="opt-main"><b>${e.icon} ${esc(e.nom)}</b></span></label>`).join(''); })()}
+       </div></div>
+     <button class="btn" style="width:100%" onclick="migSaveChantache()">＋ Ajouter au stock de composants</button>
+     <p class="note">Ce lot entre dans le système d'assemblage exactement comme un composant produit : il apparaîtra dans le sélecteur du 3ᵉ élément quand tu monteras un grand format.</p>
+     ` : `<div class="empty">Aucun composant au catalogue. Crée d'abord ta chantache dans <b>Recettes → Composants</b>, puis reviens ici saisir son stock de départ.</div>`}
+   </div>
+
    <div class="panel"><h2>3 · Stock de départ — matières & emballages</h2>
      <p class="note" style="margin-bottom:8px">Saisie rapide de ton stock actuel de matières premières et d'emballages, <b>sans n° de lot ni prix</b>. Ce stock part « à l'équilibre » (aucun écart de valeur) et sera <b>consommé en priorité</b> avant tes futures réceptions, pour une migration en douceur.</p>
      <div class="field"><label>Matière / emballage</label>
@@ -54223,6 +54244,45 @@ async function migSaveGarniture(){
   });
   const libelle = garnType==='cremeux' ? 'Crémeux' : 'Ganache';
   toast(`${libelle} ajouté : ${qty(qte)} dose(s) ✓`);
+  renderMigration();
+}
+// [v1427 — REPRISE CHANTACHE] Demande de Ben : la reprise savait saisir les produits finis, les
+// coques et les garnitures liées à un parfum, mais PAS les composants du catalogue (chantache,
+// chantilly…). Or un grand format en exige une dose, et l'assemblage BLOQUE si aucun lot terminé
+// n'existe (garde-fou v1248, volontaire). Sans cette saisie, Ben devait donc *produire* une
+// chantache qu'il avait déjà au frigo — et consommer des matières une seconde fois pour l'obtenir.
+// On crée le lot EXACTEMENT comme `produireComposant`, à trois différences près, toutes voulues :
+// aucune matière décomptée (c'est du stock de départ), `prodStatut:'termine'` (elle est prête),
+// et `histo:true, rangee:true` — la même signature que migSaveCoques / migSaveGarniture.
+async function migSaveChantache(){
+  const componentId=+val('mig_chantCid')||0;
+  const qte=Math.round(+val('mig_chantQte')||0);
+  const dlc=val('mig_chantDlc')||'';
+  const _defFrigo=(EMPLACEMENTS.find(e=>e.type==='frigo')||{}).key||(EMPLACEMENTS[0]||{}).key;
+  const dest=(document.querySelector('input[name="mig_chantEmp"]:checked')||{}).value||_defFrigo;
+  if(!componentId){ toast('Choisis un composant'); return; }
+  if(qte<=0){ toast('Indique un nombre de doses'); return; }
+  const comp = await db.components.get(componentId).catch(()=>null);
+  if(!comp){ toast('Composant introuvable'); return; }
+  const nowIso=new Date().toISOString();
+  // Même forme de n° de lot que la production d'une garniture catalogue : base JJMMAA+GAR,
+  // suffixe -GA (le composant est typé ganache à l'assemblage), + lettre d'emplacement.
+  const base=(typeof lotDateJJMMAA==='function' ? lotDateJJMMAA(today()) : String(today()).replace(/-/g,''))+'GAR';
+  const lot=lotAvecEmplacement(base+'-GA', dest);
+  await db.productions.add({
+    recipeId:null,
+    componentId,                          // origine : composant catalogue
+    composantCatalogue:true,              // drapeau lu par le sélecteur du 3ᵉ élément
+    garnitureNom:comp.nom||'',            // nom lisible dans les listes
+    lotProduction:lot, lotBase:base, date:today(),
+    composant:'ganache', garnitureType:'ganache', histo:true, rangee:true,
+    qteTheorique:qte, qteReelle:qte, ecart:0, qteProduite:qte, qteRestante:qte,
+    dlcProduit:dlc||'', dlcAuto:!dlc,
+    prodStatut:'termine', prodDebutTs:nowIso, prodTermineTs:nowIso, prodTimestamp:nowIso,
+    emplacement:dest, emplacementMaj:nowIso, venuDuCongelateur:isFreezer(dest),
+    histEmplacement:[{lieu:dest, ts:nowIso, motif:'composant de départ (reprise)'}]
+  });
+  toast(`${comp.nom||'Composant'} ajouté : ${qty(qte)} dose(s) ✓`);
   renderMigration();
 }
 function migMatUniteHint(){
