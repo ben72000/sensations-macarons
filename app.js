@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1427';
+const APP_VERSION = 'v1428';
 const APP_MAJ = 'CHANTIER A — L’APP NE PEUT PLUS ÉCHOUER EN SILENCE. Le constat de l’audit était dur : 347 endroits du code attrapaient une erreur et l’enregistraient fidèlement… dans un carnet que TU NE POUVAIS PAS OUVRIR. Il fallait brancher l’iPhone sur un Mac. Autant dire jamais. ET LE CARNET ÉTAIT EFFACÉ À CHAQUE RECHARGEMENT. C’est le mécanisme EXACT qui a caché la panne Dexie pendant un mois : chaque écriture kv échouait, la validation ne démarrait jamais, et l’écran affichait « 0 refus, 0 suspects » — ce qui RESSEMBLAIT à une bonne nouvelle alors que ça voulait dire « le contrôle n’a jamais démarré ». CE QUI CHANGE. 1) UN ÉCRAN « Santé de l’app » (Sauvegarde & sécurité) : tu lis enfin ce qui a cassé, depuis ton téléphone, sans Mac. 2) LES INCIDENTS VIVENT EN BASE (nouvelle table errLog) : ils survivent à un rechargement, donc tu peux constater qu’une panne DURE — c’est précisément ce que l’ancien carnet en mémoire rendait impossible. 3) UN FILET GLOBAL : une erreur hors try/catch te donnait un écran figé sans trace ; elle est maintenant enregistrée et annoncée par une bannière discrète. 4) UNE PASTILLE SUR L’ACCUEIL quand des incidents IMPORTANTS s’accumulent. LE TRI QUE J’AI FIGÉ, et qui est le cœur du travail : un échec d’AFFICHAGE et un échec d’ÉCRITURE EN BASE ne se valent pas. Base, sauvegarde, import, validation, compta → IMPORTANT, ça parle. Rendu, affichage → mineur, ça s’enregistre sans crier. Confondre les deux, c’est noyer le signal sous le bruit, et une alerte qui crie tout le temps est une alerte qu’on ne regarde plus. CE QUE JE N’AI PAS FAIT : deviner la cause d’une erreur, ni prétendre la réparer. L’écran montre ce qui s’est réellement passé. Une explication inventée serait pire qu’un silence. ET UNE MISE EN GARDE QUE JE TE DOIS : un écran Santé VIDE n’est PAS une preuve que tout va bien — c’est une absence d’incident enregistré, ce qui n’est pas la même chose. LA RÈGLE FIGÉE : une protection qu’on ne peut pas VOIR marcher doit être considérée comme ABSENTE jusqu’à preuve du contraire. Reste à faire : chantier B (valider le contenu à l’import), C (sortir les sauvegardes de la boîte qu’elles protègent), D (durcir import et QR). Suite : 88 → 89 suites, 1437 → 1475 assertions vertes.';
 
 // ============================================================
@@ -12140,6 +12140,10 @@ function prodV2VoirBoite(id, idx){
 // =============================================================================
 
 async function renderProductions(){
+  // [v1428] Le filtre « un seul batch » ne survit jamais à une nouvelle entrée dans l'écran :
+  // il n'est posé que par le focus juste en dessous. Sinon Ben retrouverait un jour la liste
+  // amputée sans savoir pourquoi.
+  window._prodLotFiltreId = null; window._prodLotFiltreLot = '';
   // [COCKPIT — étape 3] Si l'assistant nous a envoyés ici avec un focus sur un parfum précis
   // (« où est ma vanille » → 📦 Stock de Vanille), on pré-remplit la recherche pour ouvrir l'écran
   // déjà filtré sur ce parfum. Niveau B « gratuit » : on réutilise le filtre existant (prodnSearch).
@@ -12153,9 +12157,18 @@ async function renderProductions(){
     // Productions » ne doit pas déposer Ben dans la liste entière, mais POINTER le lot
     // concerné). On pré-filtre sur son n° de lot, et on garde son id pour le mettre en
     // évidence après le rendu (cf _prodPointerLot).
-    if(f && f.view==='productions' && f.type==='lot' && f.val){
-      prodnSearch = String(f.val);
-      window._prodLotAPointer = f.prodId!=null ? +f.prodId : null;
+    // [v1428] CORRIGÉ — la v1418 pré-remplissait la RECHERCHE avec le n° de lot. Or la recherche
+    // fait de la correspondance PARTIELLE : « 250626-FRA-B1F » ramenait toutes les boîtes du lot
+    // de base, et un lot dont le numéro contient la même séquence n'avait plus rien à voir avec
+    // celui d'où Ben venait. Pointer, ce n'est pas ressembler. On pose désormais un filtre EXACT
+    // sur l'ID du batch — un seul batch, celui qu'il a touché — annoncé par un bandeau qu'on peut
+    // lever d'un geste : un filtre invisible est un piège, on ne saurait pas pourquoi le reste a
+    // disparu. La recherche, elle, reste vide et disponible.
+    if(f && f.view==='productions' && f.type==='lot' && f.prodId!=null){
+      prodnSearch = '';
+      window._prodLotFiltreId  = +f.prodId;
+      window._prodLotFiltreLot = String(f.val||'');
+      window._prodLotAPointer  = +f.prodId;
       window._viewFocus = null;
     }
   }catch(e){swallow(e,'renderProductions')}
@@ -12414,6 +12427,13 @@ async function renderProductions(){
   // Cockpit chrono flottant : bulle + rafraîchissement live tant qu'on est sur cet écran.
   if(typeof chronoFloatStart==='function') chronoFloatStart();}
 
+// [v1428] Lève le filtre « un seul batch » et réaffiche la liste complète. Le geste est explicite
+// et réversible : Ben décide quand il veut revoir le reste.
+function prodLotFiltreClear(){
+  window._prodLotFiltreId = null;
+  window._prodLotFiltreLot = '';
+  if(typeof prodbatFilter==='function') prodbatFilter(prodnSearch||'');
+}
 // [v1418] Fait défiler jusqu'à la carte du lot ciblé et la met en surbrillance quelques
 // secondes. Consomme la cible (un seul pointage par navigation). Sans effet si aucun lot
 // n'est ciblé ou si sa carte n'est pas dans le DOM (lot filtré, replié…).
@@ -12723,6 +12743,27 @@ function _prodbatFilterInner(q){
   const body=document.getElementById('prodbatBody'); if(!body) return;
   const cnt=document.getElementById('prodCount'); const empty=document.getElementById('prodbatEmpty');
   const raw=(q||'').trim();
+  // [v1428] FILTRE EXACT « un seul batch » — posé en arrivant depuis « Voir dans Productions ».
+  // Il court-circuite la recherche : aucune correspondance partielle ne peut ramener un voisin.
+  // Dès que Ben tape quoi que ce soit, il reprend la main : le filtre exact se lève tout seul
+  // plutôt que d'ignorer sa frappe en silence.
+  if(window._prodLotFiltreId!=null && raw){ window._prodLotFiltreId=null; window._prodLotFiltreLot=''; }
+  const _lotId = window._prodLotFiltreId;
+  if(_lotId!=null){
+    const cible = _prodnCache.filter(r=> r && r.p && +r.p.id === +_lotId);
+    const lbl = window._prodLotFiltreLot || ('#'+_lotId);
+    if(cnt) cnt.textContent = `${cible.length} batch pointé`;
+    if(empty) empty.style.display='none';
+    const bandeau = `<div style="display:flex;align-items:center;gap:8px;background:#f3eef7;border:1px solid #d9c9e6;border-radius:10px;padding:7px 11px;margin-bottom:10px;font-size:.82rem;color:#5b3a78">
+      <span style="flex:1">📍 Lot <b>${esc(lbl)}</b> — affiché seul</span>
+      <button class="btn ghost sm" onclick="prodLotFiltreClear()">✕ Voir tout</button></div>`;
+    if(!cible.length){
+      body.innerHTML = bandeau + `<div class="empty" style="padding:14px">Ce batch n'apparaît pas dans la liste : il a peut-être été fusionné dans une autre boîte, ou rattaché à une commande déjà prête.</div>`;
+      return;
+    }
+    body.innerHTML = bandeau + _prodbatRowsAvecRepli(cible);
+    return;
+  }
   let rows;
   const empLetters = EMPLACEMENTS.map(e=>e.lettre.toLowerCase());
   if(raw.length===1 && empLetters.includes(raw.toLowerCase())){
@@ -17843,8 +17884,19 @@ async function traceProd(prodId){
   // été prélevé sur chaque contenant avant qu'ils ne soient réunis.
   const _idsFusion = (Array.isArray(prod.fusionHisto)?prod.fusionHisto:[])
     .map(f=>f && f.deId).filter(v=>v!=null).map(Number);
-  const _idsTrace = [prodId].concat(_idsFusion);
-  const _movesProd = await db.stockMoves.filter(m=>_idsTrace.indexOf(+m.productionId)>=0).toArray().catch(()=>[]);
+  const _idsTrace = [prodId].concat(_idsFusion).map(Number);
+  // [v1428] ⚠️ LE BUG DE LA TRAÇABILITÉ : cette ligne appelait `db.stockMoves.filter(...)`.
+  // `filter` est une méthode de Table dans le VRAI Dexie — notre `dexie_min.js` ne l'implémente
+  // PAS (Table n'expose que get/toArray/count/where/orderBy/add/put/delete/bulk*). L'appel levait
+  // donc un TypeError SYNCHRONE, avant même qu'il y ait une promesse : le `.catch(()=>[])` posé
+  // derrière n'attrapait rien, l'exception remontait au try/catch de traceProd, et TOUTE
+  // traçabilité de batch échouait — depuis n'importe quel écran, pas seulement les DLC expirées.
+  // ⚠️ POURQUOI LES TESTS N'ONT RIEN VU : la v1414 testait `construireFilTracabilite` (pure, 47
+  // assertions vertes) mais jamais le CÂBLAGE qui l'alimente. Une fonction juste, branchée sur une
+  // méthode qui n'existe pas, reste inutilisable. On filtre désormais en JS, sur le tableau relu —
+  // même coût qu'avant (le mini-Dexie fait déjà un toArray() sous chaque Collection).
+  const _movesProd = (await db.stockMoves.toArray().catch(()=>[]))
+    .filter(m=> m && _idsTrace.indexOf(+m.productionId)>=0);
   const _ordersTrace = await db.orders.toArray().catch(()=>[]);
   const _clientsTrace = await db.clients.toArray().catch(()=>[]);
   const _fil = construireFilTracabilite(prod, _movesProd, _ordersTrace, _clientsTrace);
