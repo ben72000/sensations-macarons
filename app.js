@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1428';
+const APP_VERSION = 'v1431';
 const APP_MAJ = 'CHANTIER A — L’APP NE PEUT PLUS ÉCHOUER EN SILENCE. Le constat de l’audit était dur : 347 endroits du code attrapaient une erreur et l’enregistraient fidèlement… dans un carnet que TU NE POUVAIS PAS OUVRIR. Il fallait brancher l’iPhone sur un Mac. Autant dire jamais. ET LE CARNET ÉTAIT EFFACÉ À CHAQUE RECHARGEMENT. C’est le mécanisme EXACT qui a caché la panne Dexie pendant un mois : chaque écriture kv échouait, la validation ne démarrait jamais, et l’écran affichait « 0 refus, 0 suspects » — ce qui RESSEMBLAIT à une bonne nouvelle alors que ça voulait dire « le contrôle n’a jamais démarré ». CE QUI CHANGE. 1) UN ÉCRAN « Santé de l’app » (Sauvegarde & sécurité) : tu lis enfin ce qui a cassé, depuis ton téléphone, sans Mac. 2) LES INCIDENTS VIVENT EN BASE (nouvelle table errLog) : ils survivent à un rechargement, donc tu peux constater qu’une panne DURE — c’est précisément ce que l’ancien carnet en mémoire rendait impossible. 3) UN FILET GLOBAL : une erreur hors try/catch te donnait un écran figé sans trace ; elle est maintenant enregistrée et annoncée par une bannière discrète. 4) UNE PASTILLE SUR L’ACCUEIL quand des incidents IMPORTANTS s’accumulent. LE TRI QUE J’AI FIGÉ, et qui est le cœur du travail : un échec d’AFFICHAGE et un échec d’ÉCRITURE EN BASE ne se valent pas. Base, sauvegarde, import, validation, compta → IMPORTANT, ça parle. Rendu, affichage → mineur, ça s’enregistre sans crier. Confondre les deux, c’est noyer le signal sous le bruit, et une alerte qui crie tout le temps est une alerte qu’on ne regarde plus. CE QUE JE N’AI PAS FAIT : deviner la cause d’une erreur, ni prétendre la réparer. L’écran montre ce qui s’est réellement passé. Une explication inventée serait pire qu’un silence. ET UNE MISE EN GARDE QUE JE TE DOIS : un écran Santé VIDE n’est PAS une preuve que tout va bien — c’est une absence d’incident enregistré, ce qui n’est pas la même chose. LA RÈGLE FIGÉE : une protection qu’on ne peut pas VOIR marcher doit être considérée comme ABSENTE jusqu’à preuve du contraire. Reste à faire : chantier B (valider le contenu à l’import), C (sortir les sauvegardes de la boîte qu’elles protègent), D (durcir import et QR). Suite : 88 → 89 suites, 1437 → 1475 assertions vertes.';
 
 // ============================================================
@@ -6298,6 +6298,12 @@ function estVenteAgregable(o){
 //   • espèces MOINS le fond de caisse (borné à 0 : on ne crée pas de CA négatif si Benjamin
 //     repart avec moins que sa monnaie de départ — ça, c'est une perte, pas un CA négatif) ;
 //   • plus la carte et les autres moyens.
+// [v1430] Bornes de plausibilité du prix moyen par macaron, partagées. La clôture s'en servait
+// déjà (littéral 0.8 / 5) pour alerter Ben ; le prévisionnel en a besoin pour la même raison, et
+// deux seuils qui divergeraient diraient deux vérités différentes sur la même donnée.
+const PPU_MIN_PLAUSIBLE = 0.80;
+const PPU_MAX_PLAUSIBLE = 5.00;
+
 function caMarcheEncaisse(mk){
   if(!mk || mk.statut !== 'clos') return 0;
   const ca = mk.ca || {};
@@ -11387,6 +11393,19 @@ function prodQteAffichee(p){
        : (p.qteTheorique!=null) ? p.qteTheorique : 0;
 }
 
+// [v1429] LA QUANTITÉ QU'ON MONTRE DANS UNE LISTE DE STOCK — c'est ce qu'il RESTE.
+// Ben, sur un même lot de ganache : « sur un écran il affiche 60 puis sur l'autre 120 ». Les deux
+// chiffres étaient vrais — 60 restants, 120 produits — mais tous deux libellés « pièces », sans
+// rien pour les distinguer. Deux nombres sous la même étiquette, c'est un seul mensonge.
+// RÈGLE : `prodQteAffichee` = ce qui a été PRODUIT (une trace de fabrication, elle ne bouge plus).
+// `prodQteStock` = ce qui RESTE (ce sur quoi Ben peut agir : assembler, déplacer, vendre). Une
+// liste de stock montre le stock. Le repli sur la quantité produite ne sert qu'aux lots anciens
+// où `qteRestante` n'a jamais été renseignée — sans lui, ils s'afficheraient à zéro. PURE.
+function prodQteStock(p){
+  if(!p) return 0;
+  return (p.qteRestante!=null) ? (+p.qteRestante||0) : prodQteAffichee(p);
+}
+
 // Date + heure de fab, format court « 26.06 · 14:25 ». Repli sur la date saisie.
 function prodFabCourt(p){
   const ts = p.prodTermineTs || p.prodDebutTs || p.prodTimestamp || '';
@@ -11416,7 +11435,7 @@ function prodStageColor(comp){
 function prodLotLigne(p, recipes){
   const comp = (typeof prodComposant==='function') ? prodComposant(p) : 'complet';
   const nom = prodNomEpure(p, recipes);
-  const qte = prodQteAffichee(p);
+  const qte = prodQteStock(p);          // [v1429] le stock, pas la quantité produite
   const fab = prodFabCourt(p);
   const stageCol = prodStageColor(comp);
   const dispatched = Array.isArray(p.placements) && p.placements.length>1;
@@ -11446,7 +11465,7 @@ function prodGroupeParParfum(prods, recipes){
       const tb = b.prodTermineTs||b.prodTimestamp||b.date||'';
       return String(tb).localeCompare(String(ta));
     });
-    const total = lots.reduce((s,p)=>s+prodQteAffichee(p),0);
+    const total = lots.reduce((s,p)=>s+prodQteStock(p),0);   // [v1429] somme des stocks, cohérente avec chaque ligne
     return { parfum, lots, total };
   });
 }
@@ -12055,7 +12074,12 @@ async function prodV2OpenPop(id){
   const recipes = window._allRecipesCache || await db.recipes.toArray().catch(()=>[]);
   const d = await buildLabelData(id).catch(()=>null);
   const nom = prodNomEpure(p, recipes);
-  const qte = prodQteAffichee(p);
+  // [v1429] La fiche d'un lot montre les DEUX chiffres, chacun nommé : le stock d'abord (c'est sur
+  // lui que portent Casse, Déplacer, Assembler, juste en dessous), la quantité produite ensuite et
+  // seulement si elle diffère. C'est la trace de fabrication : elle explique l'écart au lieu de le
+  // laisser passer pour une incohérence.
+  const qte = prodQteStock(p);
+  const qteProd = prodQteAffichee(p);
   const fab = prodFabCourt(p);
   const empTxt = p.emplacement ? `${empIcon(p.emplacement)} ${empNom(p.emplacement)} · ${empLettre(p.emplacement)}` : 'Non rangé';
   const lotTech = p.lotProduction || ('#'+p.id);
@@ -12082,7 +12106,7 @@ async function prodV2OpenPop(id){
   const html = `<div class="pv2-pop-back show" id="pv2PopBack" onclick="if(event.target===this)prodV2ClosePop()">
     <div class="pv2-pop">
       <div class="pv2-pop-h">
-        <div><div class="nom">${esc(nom)}</div><div class="meta">${esc(fab)} · ${qty(qte)} pièces</div></div>
+        <div><div class="nom">${esc(nom)}</div><div class="meta">${esc(fab)} · ${qty(qte)} pièce${qty(qte)==='1'?'':'s'} en stock${(qteProd>qte)?` · ${qty(qteProd)} produites`:''}</div></div>
         <button class="pv2-pop-x" onclick="prodV2ClosePop()">✕</button>
       </div>
       <div class="pv2-pop-body">
@@ -19244,6 +19268,16 @@ async function renderCmd(){
   // opérationnel, mais dans un repli « Commandes mères rangées » et atteignable par recherche.
   const orders = (await db.orders.toArray()).filter(o=>!o.histo).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
   const clients = await db.clients.toArray();
+  // [v1431] Les MARCHÉS OUVERTS sont des engagements de production au même titre qu'une commande :
+  // Ben doit les voir dans ce fil, avec la quantité qu'il vise. Ils ne rejoignent PAS `_cmdCache`
+  // (ce ne sont pas des commandes : pas de client, pas de montant dû, pas de statut de paiement —
+  // les y verser fausserait la recherche, les tags, les totaux à encaisser). Cache séparé, bloc
+  // séparé, même écran.
+  try{
+    _cmdMarketsCache = (await db.markets.toArray().catch(()=>[]))
+      .filter(m => m && m.statut !== 'clos')
+      .sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
+  }catch(e){ _cmdMarketsCache = []; swallow(e,'renderCmd marchés'); }
   const clById = Object.fromEntries(clients.map(c=>[c.id,c]));
   _cmdClNameMap = Object.fromEntries(clients.map(c=>[c.id, c.nom||'—']));
   const clName = id => (clById[id]||{}).nom||'—';
@@ -19543,6 +19577,7 @@ function cmdUpdateSelBar(){
   }
 }
 let _cmdClNameMap={};
+let _cmdMarketsCache=[];   // [v1431] marchés non clos, affichés dans le fil des commandes
 function _cmdClName(id){ return _cmdClNameMap[id]||'—'; }
 // Ligne SIMPLIFIÉE pour les sections repliées (terminées / à encaisser) :
 // client + montant + œil pour le détail. `distinctif` ajoute un marqueur visuel (à encaisser).
@@ -19701,6 +19736,40 @@ function cmdFilter(q){  cmdSearch=q||'';
 
   // 1b) À VENIR — encart déplié par défaut, une ligne par commande (comme « À encaisser »),
   //     regroupé par semaine (de la plus proche à la plus lointaine), dates croissantes dedans.
+  // [v1431] BLOC « MARCHÉS À VENIR » — un marché ouvert est un engagement de production, il a sa
+  // place dans le fil. On montre la quantité VISÉE et, si Ben l'a renseignée, sa ventilation par
+  // parfum ; sinon on le dit et on offre le bouton qui la calcule. Un marché sans quantité visée
+  // n'alimente PAS le rétroplanning : le signaler ici est plus utile que de le laisser muet.
+  if(_cmdMarketsCache.length){
+    const _mkLignes = _cmdMarketsCache.map(m=>{
+      const j = daysTo(m.date);
+      const q = +m.prevuQte||0;
+      const par = Array.isArray(m.prevuParfums) ? m.prevuParfums.filter(x=>x && +x.qte>0) : [];
+      const somme = par.reduce((s,x)=>s+(+x.qte||0),0);
+      const jTxt = (j===null) ? '' : (j<0 ? `il y a ${-j} j` : j===0 ? "aujourd'hui" : `dans ${j} j`);
+      const etat = q<=0
+        ? `<span style="color:#b3261e;font-weight:600;font-size:.78rem">aucune quantité visée</span>`
+        : par.length
+          ? `<span style="color:#3f7d52;font-weight:600;font-size:.78rem">${par.length} parfum${par.length>1?'s':''} · ${qty(somme)} pc</span>`
+          : `<span style="color:#b5701a;font-weight:600;font-size:.78rem">parfums à définir</span>`;
+      return `<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--hair)">
+        <span style="flex:1;min-width:0;display:flex;flex-direction:column">
+          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.9rem">${esc(m.nom||'Marché')}</span>
+          <span style="color:#8a7a72;font-size:.74rem;white-space:nowrap">${fmtDate(m.date)}${jTxt?' · '+jTxt:''}${m.lieu?' · '+esc(m.lieu):''}</span>
+        </span>
+        ${etat}
+        <b style="font-size:.9rem;white-space:nowrap">${q>0?qty(q)+' pc':'—'}</b>
+        <button class="cmd-pill detail" style="flex:none" onclick="marketForm(${m.id})" title="Ouvrir le marché">✏️</button>
+      </div>`;
+    }).join('');
+    const _mkTotal = _cmdMarketsCache.reduce((s,m)=>s+(+m.prevuQte||0),0);
+    html += `<details open style="margin:8px 0 4px;border:1px solid #cfd9c9;border-radius:12px;overflow:hidden;background:#f8faf6">
+      <summary style="cursor:pointer;padding:11px 13px;font-weight:600;color:#3f6b45;background:#eef4ea">
+        ⛺ Marchés à venir <span style="font-weight:400;color:#6a7a68">(${_cmdMarketsCache.length})${_mkTotal>0?` · ${qty(_mkTotal)} macarons visés`:''}</span></summary>
+      <div>${_mkLignes}</div>
+      <div style="padding:9px 12px;font-size:.76rem;color:#6a7a68">La quantité visée alimente le rétroplanning (<b>Plan de production</b>). Sans elle, le marché n'y apparaît pas.</div>
+    </details>`;
+  }
   if(aVenir.length){
     // Regroupe par clé de semaine ISO.
     const parSem={};
@@ -27030,7 +27099,10 @@ async function stockParfumDetail(nom){
     const nomEp = (typeof prodNomEpure==='function') ? prodNomEpure(p, recipes) : nom;
     const fab = (typeof prodFabCourt==='function') ? prodFabCourt(p) : '';
     const stageCol = (typeof prodStageColor==='function') ? prodStageColor(comp) : '#b08d57';
-    const q = (typeof prodQteAffichee==='function') ? prodQteAffichee(p) : (+p.qteRestante||0);
+    // [v1429] Cette ligne calculait la quantité PRODUITE dans une variable… jamais utilisée, et
+    // affichait `p.qteRestante` juste en dessous. D'où l'écart avec la fiche du lot, qui montrait
+    // la produite. Un seul prédicat désormais, des deux côtés.
+    const q = (typeof prodQteStock==='function') ? prodQteStock(p) : (+p.qteRestante||0);
     const dispatched = Array.isArray(p.placements) && p.placements.length>1;
     return `<div class="pv2-lot" onclick="closeModal();prodV2OpenPop(${p.id})">
       <div class="pv2-stage" style="background:${stageCol}"></div>
@@ -27039,7 +27111,7 @@ async function stockParfumDetail(nom){
         <div class="pv2-date">Fab. ${esc(fab)}</div>
         ${dispatched?`<div class="pv2-disp">⊟ dispatché · ${p.placements.length} boîtes</div>`:''}
       </div>
-      <div class="pv2-qte">${qty(p.qteRestante)}<small>pièces</small></div>
+      <div class="pv2-qte">${qty(q)}<small>pièces</small></div>
       <div class="pv2-grip">›</div>
     </div>`;
   };
@@ -37349,6 +37421,62 @@ async function renderMarkets(){
 
 async function marketForm(id){
   const mk = id ? await db.markets.get(id) : {date:today(), statut:'ouvert'};
+
+  // ══════════════════════════════════════════════════════════════════════════════════════════
+  // [v1431] PARFUMS VISÉS À L'OUVERTURE DU MARCHÉ — demande de Ben : « la quantité visée doit
+  // être renseignée à l'ouverture du marché avec les parfums souhaités. Ceci permet aussi
+  // d'approvisionner en donnée le rétroplanning ».
+  //
+  // Le rétroplanning consommait DÉJÀ les marchés non clos (buildProductionPlan), mais il DEVINAIT
+  // la ventilation par parfum d'après l'historique — et retombait sur une ligne fourre-tout
+  // « Marché (parfums à définir) » quand il n'y avait pas d'historique. Deviner est utile par
+  // défaut ; ce n'est pas une décision. Ici Ben décide, et sa décision doit primer.
+  //
+  // ON NE RÉÉCRIT AUCUN MOTEUR : le bouton « Répartir automatiquement » appelle `marketForecast`
+  // + `marketCrossPlan` + `marketVentilation` — exactement la chaîne de l'écran Plan de production
+  // et du copilote. La saisie manuelle reste souveraine : la suggestion PRÉ-REMPLIT, elle n'impose
+  // rien, et rien n'est écrit tant que Ben n'enregistre pas.
+  let _mkParfumsBloc = '';
+  try{
+    const _recs = await db.recipes.toArray().catch(()=>[]);
+    const _noms = [...new Set(_recs.map(r=>r && r.produitNom).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+    const _dejaSaisi = {};
+    (Array.isArray(mk.prevuParfums)?mk.prevuParfums:[]).forEach(x=>{ if(x && x.parfum) _dejaSaisi[x.parfum]=+x.qte||0; });
+    // Suggestion : la même ventilation que celle du Plan de production, sur la quantité visée.
+    let _sugg = {};
+    try{
+      const _fc = await marketForecast();
+      const _st = (typeof getSettings==='function') ? getSettings() : {};
+      const _cible = Array.isArray(_st.marketMix) ? _st.marketMix : [];
+      const _q = +mk.prevuQte||0;
+      const _v = marketVentilation(_cible, (_fc && _fc.repartition)||[], _q, {mode:'croise'});
+      (_v.lignes||[]).forEach(l=>{ if(l && l.parfum && l.pieces>0) _sugg[l.parfum]=l.pieces; });
+      window._mkVentilSuggeree = _sugg;
+      window._mkVentilSource = _v.sourceUtilisee || 'aucune';
+    }catch(e){ window._mkVentilSuggeree = {}; window._mkVentilSource='aucune'; swallow(e,'marketForm ventilation'); }
+    if(_noms.length){
+      const _rows = _noms.map(n=>{
+        const v = _dejaSaisi[n]!=null ? _dejaSaisi[n] : '';
+        const sg = _sugg[n];
+        return `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--hair)">
+          <span style="flex:1;min-width:0;font-size:.86rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(n)}</span>
+          ${sg>0?`<span style="font-size:.72rem;color:#8a7a72;white-space:nowrap">sugg. ${sg}</span>`:''}
+          <input type="number" min="0" step="1" style="width:78px;text-align:right" class="mk-parf" data-parfum="${esc(n)}" value="${v}" oninput="mkParfumsTotal()">
+        </div>`;
+      }).join('');
+      const _src = { cible:'ta cible de répartition', historique:'ton historique de ventes',
+                     croise:'ta cible croisée avec ton historique' }[window._mkVentilSource] || null;
+      _mkParfumsBloc = `<details ${Object.keys(_dejaSaisi).length?'open':''} style="margin:2px 0 8px;border:1px solid #cfd9c9;border-radius:12px;overflow:hidden;background:#f8faf6">
+        <summary style="cursor:pointer;padding:10px 12px;font-weight:600;color:#3f6b45;background:#eef4ea">🎯 Parfums visés <span style="font-weight:400;color:#6a7a68" id="mk_parfSum">—</span></summary>
+        <div style="padding:8px 12px">
+          <p class="note" style="margin:0 0 6px">Ce que tu vises par parfum. C'est cette ventilation que le <b>Plan de production</b> utilisera — à défaut, il devine d'après ton historique.</p>
+          ${_src?`<button type="button" class="btn ghost sm" style="width:100%;margin-bottom:6px" onclick="mkAppliquerVentilation()">🎯 Répartir automatiquement (${esc(_src)})</button>`:`<p class="note" style="margin:0 0 6px;color:#b5701a">Aucune répartition à proposer : définis une cible dans <b>Plan de production</b> ou accumule de l'historique de marché.</p>`}
+          ${_rows}
+        </div>
+      </details>`;
+    }
+  }catch(e){ swallow(e,'marketForm parfums'); }
+
   openModal(`<h3>${id?'Modifier':'Nouveau'} marché</h3>
     <div class="field"><label>Nom du marché *</label><input id="mk_nom" value="${esc(mk.nom||'')}" placeholder="ex : Marché de Noël du Mans"></div>
     <div class="row2">
@@ -37387,20 +37515,62 @@ async function marketForm(id){
     <div class="field"><label>Quantité prévue à emporter (macarons) <span style="color:#9a8a82;font-weight:400">— pour la planification intelligente</span></label>
       <input type="number" min="0" step="10" id="mk_prevu" value="${mk.prevuQte!=null?esc(mk.prevuQte):''}" placeholder="ex : 300">
       <p class="note" id="mk_prevuHint" style="margin-top:4px"></p></div>
+    ${_mkParfumsBloc}
     <div class="field"><label>Commentaires</label><textarea id="mk_notes" rows="2">${esc(mk.notes||'')}</textarea></div>
     <label class="opt-row" style="margin:4px 0 2px"><input type="checkbox" id="mk_histo" ${mk.histo?'checked':''}> <span class="opt-main"><b>📥 Marché historique (migration)</b><br><span style="font-size:.78rem;color:#9a8a82">Saisie de données passées pour les statistiques, <b>sans impact sur le stock</b>. Les sorties/retours ne décrémentent ni n'incrémentent tes productions.</span></span></label>
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveMarket(${id||0})">Enregistrer</button></div>`);
   // suggestion intelligente basée sur l'historique des marchés clos
   marketPrevuSuggestion();
+  mkParfumsTotal();
 }
 // Propose une quantité prévisionnelle d'après la moyenne des ventes des marchés passés.
+// [v1431] Total vivant du bloc « Parfums visés », comparé à la quantité visée. Un écart n'est pas
+// bloquant — Ben peut vouloir ventiler seulement une partie — mais il doit se VOIR : deux chiffres
+// qui divergent sans le dire, c'est le défaut qu'on vient de corriger deux fois (v1429, v1430).
+function mkParfumsTotal(){
+  const box=document.getElementById('mk_parfSum'); if(!box) return;
+  let tot=0, n=0;
+  document.querySelectorAll('.mk-parf').forEach(el=>{ const v=+el.value||0; if(v>0){ tot+=v; n++; } });
+  const cible=+((document.getElementById('mk_prevu')||{}).value)||0;
+  if(!n){ box.textContent='— non renseignés'; box.style.color='#6a7a68'; return; }
+  const ecart = cible>0 ? (tot-cible) : 0;
+  box.innerHTML = `(${n} parfum${n>1?'s':''} · ${tot} pc${cible>0&&ecart!==0?` <b style="color:${ecart>0?'#b5701a':'#b3261e'}">${ecart>0?'+':''}${ecart} vs ${cible} visés</b>`:''})`;
+  box.style.color='#6a7a68';
+}
+// [v1431] Pré-remplit les parfums avec la ventilation calculée par les moteurs existants.
+// Écrase les valeurs affichées, jamais la base : rien n'est enregistré avant « Enregistrer ».
+function mkAppliquerVentilation(){
+  const sugg = window._mkVentilSuggeree || {};
+  document.querySelectorAll('.mk-parf').forEach(el=>{
+    const n = el.dataset.parfum;
+    el.value = (sugg[n]>0) ? sugg[n] : '';
+  });
+  mkParfumsTotal();
+  const nb = Object.keys(sugg).filter(k=>sugg[k]>0).length;
+  toast(nb ? `Réparti sur ${nb} parfum(s) ✓` : 'Aucune répartition disponible');
+}
 async function marketPrevuSuggestion(){
   const hint=document.getElementById('mk_prevuHint'); if(!hint) return;
   try{
     const fc = await marketForecast();
+    // [v1430] La moyenne dit sur COMBIEN de marchés elle se calcule, et ce qui a été mis de côté.
+    // Une moyenne dont on ignore l'assiette n'est pas vérifiable — et c'est en la comparant au max
+    // que Ben a repéré que quelque chose n'allait pas. Autant le lui dire d'emblée.
+    const _ecartes = [];
+    if(fc.nbSansDonnee>0) _ecartes.push(`${fc.nbSansDonnee} sans mouvement saisi`);
+    if(fc.nbAVerifier>0)  _ecartes.push(`${fc.nbAVerifier} à vérifier (retours non comptés)`);
+    const _note = _ecartes.length
+      ? `<br><span style="color:#b5701a">⚠ ${_ecartes.join(' · ')} — écarté${_ecartes.length>1||fc.nbSansDonnee>1||fc.nbAVerifier>1?'s':''} du calcul sur ${fc.nbClos} marché(s) clos.</span>`
+      : '';
     if(fc.nbMarches>0){
-      hint.innerHTML = `💡 D'après tes ${fc.nbMarches} marché(s) passé(s) : ~<b>${fc.moyenneVendu}</b> macarons vendus en moyenne (max ${fc.maxVendu}). `+
-        `<span class="act" onclick="document.getElementById('mk_prevu').value=${fc.suggestion}">Utiliser ${fc.suggestion}</span>`;
+      hint.innerHTML = `💡 D'après ${fc.nbMarches} marché(s) exploitable(s) : ~<b>${fc.moyenneVendu}</b> macarons vendus en moyenne (max ${fc.maxVendu}). `+
+        `<span class="act" onclick="document.getElementById('mk_prevu').value=${fc.suggestion}">Utiliser ${fc.suggestion}</span>${_note}`;
+    } else if(fc.nbClos>0){
+      // Des marchés clos, mais aucun exploitable : ne rien suggérer plutôt que suggérer n'importe
+      // quoi. Un chiffre inventé sur du vide vaut moins que l'absence de chiffre.
+      hint.innerHTML = `⚠ ${fc.nbClos} marché(s) clos, mais aucun exploitable pour une moyenne : `+
+        `${fc.nbSansDonnee>0?`${fc.nbSansDonnee} sans mouvement saisi`:''}${fc.nbSansDonnee>0&&fc.nbAVerifier>0?', ':''}`+
+        `${fc.nbAVerifier>0?`${fc.nbAVerifier} avec des retours non comptés`:''}. Complète les sorties/retours d'un marché passé pour obtenir une suggestion fiable.`;
     } else {
       hint.textContent = 'Aucun historique de marché pour le moment — la suggestion s’affinera après tes premiers marchés clôturés.';
     }
@@ -37414,6 +37584,17 @@ async function saveMarket(id){
     meteo:val('mk_meteo'), notes:val('mk_notes'), prevuQte:+val('mk_prevu')||0, fondCaisse:+val('mk_fond')||0,
     coutStand:+val('mk_stand')||0, distanceKm:+val('mk_dist')||0, prixCarburant:+val('mk_carbu')||0, tempsRouteMin:+val('mk_route')||0, consoVehicule: val('mk_conso')!==''?(+val('mk_conso')||0):null};
   o.histo = !!document.getElementById('mk_histo')?.checked;
+  // [v1431] Parfums visés. On n'enregistre QUE les lignes renseignées : une liste pleine de zéros
+  // ferait croire au rétroplanning qu'une ventilation existe alors qu'elle dit « rien pour ce
+  // parfum ». Tableau vide = pas de choix de Ben = le plan devine, comme avant.
+  {
+    const _pf = [];
+    document.querySelectorAll('.mk-parf').forEach(el=>{
+      const n = el.dataset.parfum, q = Math.round(+el.value||0);
+      if(n && q>0) _pf.push({parfum:n, qte:q});
+    });
+    o.prevuParfums = _pf;
+  }
   // --- Mode marché sur 2 jours consécutifs (création uniquement) ---
   const deux = !id && !!document.getElementById('mk_2jours')?.checked;
   if(deux){
@@ -37809,7 +37990,7 @@ function marketCloseSummary(vendu, caTheo){
   const ppu = vendu>0 ? money2(tot/vendu) : 0;
   // cohérence : prix moyen par macaron plausible entre 0,80 € et 5 € (sinon alerte)
   let warn='';
-  if(vendu>0 && tot>0 && (ppu<0.8 || ppu>5)) warn=`<div style="color:var(--red,#b3261e);margin-top:4px">⚠ Prix moyen ${euro(ppu)}/macaron : écart inhabituel, vérifiez le CA ou les quantités.</div>`;
+  if(vendu>0 && tot>0 && (ppu<PPU_MIN_PLAUSIBLE || ppu>PPU_MAX_PLAUSIBLE)) warn=`<div style="color:var(--red,#b3261e);margin-top:4px">⚠ Prix moyen ${euro(ppu)}/macaron : écart inhabituel, vérifiez le CA ou les quantités.</div>`;
   if(vendu>0 && tot===0) warn=`<div style="color:var(--red,#b3261e);margin-top:4px">⚠ ${qty(vendu)} vendus mais 0 € encaissé.</div>`;
   const fondLine = fond>0 ? `<div style="display:flex;justify-content:space-between;color:#9a8a82"><span>dont fond de caisse déduit</span><b>−${euro(fond)}</b></div>
     <div style="display:flex;justify-content:space-between"><span>Espèces nettes</span><b>${euro(espNet)}</b></div>`:'';
@@ -40094,21 +40275,63 @@ async function marketForecast(){
   const movesByMarket={}; moves.forEach(mv=>{(movesByMarket[mv.marketId] ||= []).push(mv);});
   let totalVendu=0, maxVendu=0; const venduParParfum={};
   let venduSansParfum = 0;   // ventes réelles mais sans parfum identifiable (exclues de la répartition)
+
+  // ════════════════════════════════════════════════════════════════════════════════════════
+  // [v1430] « MES STATS MARCHÉS NE REFLÈTENT PAS LA RÉALITÉ » — Ben avait 8 marchés, une
+  // moyenne de 78 et un max de 404. Ces deux chiffres ne peuvent pas décrire la même réalité.
+  //
+  // UNE SEULE CAUSE, DEUX EFFETS OPPOSÉS : le calcul prenait TOUS les marchés clos et traitait
+  // l'ABSENCE DE DONNÉE COMME UNE MESURE DE ZÉRO. C'est exactement l'erreur nommée en v1337
+  // (« zéro n'est pas une mesure, c'est une affirmation »), qui avait été corrigée pour le CA
+  // mais jamais ici.
+  //   ① Un marché clôturé SANS AUCUN MOUVEMENT saisi comptait pour 0 vendu, et pesait autant
+  //      qu'un vrai marché dans la moyenne → la moyenne s'effondrait, et la suggestion de
+  //      quantité à emporter avec elle. Ben serait parti en marché avec trop peu de macarons.
+  //   ② Un marché où les RETOURS n'ont pas été saisis comptait tout le sorti comme vendu
+  //      (vendu = sortie − retour − don − perte, avec retour = 0) → le max explosait. D'où 404.
+  //
+  // La clôture n'exige aucun comptage de retour : ces deux situations ne sont donc pas des cas
+  // limites, elles sont normales. Un marché sans donnée n'est pas un échantillon.
+  //
+  // ⚠️ MAIS ON N'ÉCARTE PAS UN MARCHÉ SUR UN SOUPÇON. Un retour à zéro peut être la vérité :
+  // Ben a pu tout vendre. Il faut un DISCRIMINANT, pas une intuition — et l'app en a déjà un :
+  // le prix moyen par macaron, borné par PPU_MIN/MAX_PLAUSIBLE, dont la clôture se sert pour
+  // alerter. Un marché n'est écarté que si DEUX conditions tiennent ensemble :
+  //   • aucun comptage de fin (retour + don + perte = 0), ET
+  //   • un encaissement réel qui, rapporté au « vendu », donne un prix par macaron sous le
+  //     plancher plausible — donc un « vendu » nécessairement surévalué.
+  // Un marché réellement soldé à prix normal passe le test et reste compté. Rien n'est masqué :
+  // les exclusions sont renvoyées et affichées à Ben, qui peut aller corriger la saisie.
+  let nbSansDonnee = 0, nbAVerifier = 0, nbRetenus = 0;
+  const aVerifier = [];
   clos.forEach(mk=>{
-    const lines = marketLineSummary(movesByMarket[mk.id]||[]);
-    let venduMk=0;
+    const mvs = movesByMarket[mk.id]||[];
+    if(!mvs.length){ nbSansDonnee++; return; }          // ① rien de saisi : pas un échantillon
+    const lines = marketLineSummary(mvs);
+    let venduMk=0, comptageFin=0;
+    lines.forEach(l=>{ venduMk += (+l.vendu||0); comptageFin += (+l.retour||0)+(+l.don||0)+(+l.perte||0); });
+    if(venduMk<=0){ nbSansDonnee++; return; }           // sorties annulées, ou tout retourné
+    const enc = (typeof caMarcheEncaisse==='function') ? caMarcheEncaisse(mk) : 0;
+    const ppu = (enc>0) ? (enc/venduMk) : null;
+    if(comptageFin===0 && ppu!=null && ppu < PPU_MIN_PLAUSIBLE){   // ② vendu surévalué
+      nbAVerifier++;
+      aVerifier.push({id:mk.id, nom:mk.nom||'', date:mk.date||'', vendu:round3(venduMk), ppu:money2(ppu)});
+      return;
+    }
+    nbRetenus++;
+    // Ventilation par parfum — seulement sur les marchés retenus, pour que la répartition
+    // décrive les mêmes marchés que la moyenne.
     lines.forEach(l=>{
       // Nom de parfum : texte du mouvement, sinon nom de recette via productionId, sinon NON identifié.
       const nomRecette = recName((prods.find(p=>l.productionIds.includes(p.id))||{}).recipeId);
       const nom = l.parfum || nomRecette || '';
       const v = (+l.vendu||0);
-      venduMk += v;
       if(nom){ venduParParfum[nom]=(venduParParfum[nom]||0)+v; }
       else { venduSansParfum += v; }   // exclu de la ventilation, conservé dans le volume
     });
     totalVendu += venduMk; maxVendu = Math.max(maxVendu, venduMk);
   });
-  const nbMarches = clos.length;
+  const nbMarches = nbRetenus;
   const moyenneVendu = nbMarches>0 ? Math.round(totalVendu/nbMarches) : 0;
   // suggestion : moyenne + petite marge de sécurité de 10 %, arrondie à la dizaine
   const suggestion = nbMarches>0 ? Math.ceil(moyenneVendu*1.1/10)*10 : 0;
@@ -40121,7 +40344,9 @@ async function marketForecast(){
   })).sort((a,b)=>b.vendu-a.vendu);
   return {nbMarches, moyenneVendu, maxVendu, suggestion, repartition,
           totalVendu:round3(totalVendu), venduSansParfum:round3(venduSansParfum),
-          venduIdentifie:round3(totParf)};
+          venduIdentifie:round3(totParf),
+          // [v1430] Ce qui a été mis de côté, et pourquoi. Affiché, jamais tu.
+          nbClos:clos.length, nbSansDonnee, nbAVerifier, aVerifier};
 }
 
 // B. JAUGE DE SÉRÉNITÉ : score 0–100 reflétant ta capacité à honorer les commandes
@@ -41711,6 +41936,15 @@ async function _buildProductionPlanRaw(horizonDays){
       const totPct=rep.reduce((s,r)=>s+(+r.pct||0),0);
       mkFenetre.forEach(m=>{
         const q=+m.prevuQte||0; if(q<=0) return;
+        // [v1431] LE CHOIX DE BEN PRIME SUR LA DEVINETTE. S'il a renseigné les parfums visés à
+        // l'ouverture du marché, on les prend TELS QUELS — c'est une décision, pas une estimation.
+        // La ventilation apprise ne sert plus que de repli, et la ligne fourre-tout « parfums à
+        // définir » ne tombe qu'en dernier recours.
+        const _visee = Array.isArray(m.prevuParfums) ? m.prevuParfums.filter(x=>x && x.parfum && +x.qte>0) : [];
+        if(_visee.length){
+          _visee.forEach(x=>{ _besoinCmd[x.parfum]=(_besoinCmd[x.parfum]||0)+(+x.qte||0); });
+          return;
+        }
         if(rep.length && totPct>0){
           let cumule=0;
           rep.forEach((r,i)=>{ let part=(i===rep.length-1)?(q-cumule):Math.round(q*(+r.pct||0)/totPct); if(i!==rep.length-1)cumule+=part; if(part>0)_besoinCmd[r.parfum]=(_besoinCmd[r.parfum]||0)+part; });

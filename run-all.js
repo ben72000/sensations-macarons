@@ -139,7 +139,10 @@ const SUITES = [
   'v1425-mere-rangee-retrouvable.test.js',  // v1425 · une mère rangée sort du fil mais RESTE dans le cache (recherche/tags/jour) + repli dédié : ranger n'est pas effacer
   'v1426-assemblage-stock-parfum.test.js',  // v1426 · assembler depuis « Stock par parfum » en réutilisant prodAssembleForm, avec interdiction du mélange de parfums SUR CE CHEMIN seulement
   'v1427-migration-chantache.test.js',      // v1427 · reprise du stock de chantache (composant catalogue) : même signature de lot que produireComposant, sans consommer de matières
-  'v1428-tracabilite-et-pointage.test.js'   // v1428 · traçabilité réparée (Table.filter n'existe pas dans notre mini-Dexie — garde de motif globale) + pointage EXACT d'un batch dans Productions
+  'v1428-tracabilite-et-pointage.test.js',  // v1428 · traçabilité réparée (Table.filter n'existe pas dans notre mini-Dexie — garde de motif globale) + pointage EXACT d'un batch dans Productions
+  'v1429-quantite-lot-coherente.test.js',   // v1429 · un lot n'affiche plus 60 ici et 120 là : prodQteStock (ce qui reste) vs prodQteAffichee (ce qui a été produit), chacun nommé
+  'v1430-stats-marches-reelles.test.js',    // v1430 · stats marchés : un marché sans mouvement n'est pas un marché à 0 vendu, et des retours non comptés ne sont pas des ventes
+  'v1431-marche-parfums-vises.test.js'      // v1431 · marché ouvert visible dans le fil des commandes + parfums visés saisis à l'ouverture, qui PRIMENT sur la ventilation devinée du rétroplanning
 ];
 
 let allOk = true;
