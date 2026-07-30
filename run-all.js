@@ -142,7 +142,9 @@ const SUITES = [
   'v1428-tracabilite-et-pointage.test.js',  // v1428 · traçabilité réparée (Table.filter n'existe pas dans notre mini-Dexie — garde de motif globale) + pointage EXACT d'un batch dans Productions
   'v1429-quantite-lot-coherente.test.js',   // v1429 · un lot n'affiche plus 60 ici et 120 là : prodQteStock (ce qui reste) vs prodQteAffichee (ce qui a été produit), chacun nommé
   'v1430-stats-marches-reelles.test.js',    // v1430 · stats marchés : un marché sans mouvement n'est pas un marché à 0 vendu, et des retours non comptés ne sont pas des ventes
-  'v1431-marche-parfums-vises.test.js'      // v1431 · marché ouvert visible dans le fil des commandes + parfums visés saisis à l'ouverture, qui PRIMENT sur la ventilation devinée du rétroplanning
+  'v1431-marche-parfums-vises.test.js',     // v1431 · marché ouvert visible dans le fil des commandes + parfums visés saisis à l'ouverture, qui PRIMENT sur la ventilation devinée du rétroplanning
+  'v1432-cout-parfum-mesure.test.js',       // v1432 · coût par parfum mesuré sur les vrais batchs (prodConsumption) — les lots de reprise ne mesurent rien, et un coût inconnu vaut null, jamais 0
+  'v1433-marge-macaron-hors-reprises.test.js' // v1433 · le €/macaron de l'accueil : assiette de marge sans reprises/filles/impayées, et dénominateur limité aux pièces dont la marge est calculée
 ];
 
 let allOk = true;

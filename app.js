@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1431';
+const APP_VERSION = 'v1433';
 const APP_MAJ = 'CHANTIER A — L’APP NE PEUT PLUS ÉCHOUER EN SILENCE. Le constat de l’audit était dur : 347 endroits du code attrapaient une erreur et l’enregistraient fidèlement… dans un carnet que TU NE POUVAIS PAS OUVRIR. Il fallait brancher l’iPhone sur un Mac. Autant dire jamais. ET LE CARNET ÉTAIT EFFACÉ À CHAQUE RECHARGEMENT. C’est le mécanisme EXACT qui a caché la panne Dexie pendant un mois : chaque écriture kv échouait, la validation ne démarrait jamais, et l’écran affichait « 0 refus, 0 suspects » — ce qui RESSEMBLAIT à une bonne nouvelle alors que ça voulait dire « le contrôle n’a jamais démarré ». CE QUI CHANGE. 1) UN ÉCRAN « Santé de l’app » (Sauvegarde & sécurité) : tu lis enfin ce qui a cassé, depuis ton téléphone, sans Mac. 2) LES INCIDENTS VIVENT EN BASE (nouvelle table errLog) : ils survivent à un rechargement, donc tu peux constater qu’une panne DURE — c’est précisément ce que l’ancien carnet en mémoire rendait impossible. 3) UN FILET GLOBAL : une erreur hors try/catch te donnait un écran figé sans trace ; elle est maintenant enregistrée et annoncée par une bannière discrète. 4) UNE PASTILLE SUR L’ACCUEIL quand des incidents IMPORTANTS s’accumulent. LE TRI QUE J’AI FIGÉ, et qui est le cœur du travail : un échec d’AFFICHAGE et un échec d’ÉCRITURE EN BASE ne se valent pas. Base, sauvegarde, import, validation, compta → IMPORTANT, ça parle. Rendu, affichage → mineur, ça s’enregistre sans crier. Confondre les deux, c’est noyer le signal sous le bruit, et une alerte qui crie tout le temps est une alerte qu’on ne regarde plus. CE QUE JE N’AI PAS FAIT : deviner la cause d’une erreur, ni prétendre la réparer. L’écran montre ce qui s’est réellement passé. Une explication inventée serait pire qu’un silence. ET UNE MISE EN GARDE QUE JE TE DOIS : un écran Santé VIDE n’est PAS une preuve que tout va bien — c’est une absence d’incident enregistré, ce qui n’est pas la même chose. LA RÈGLE FIGÉE : une protection qu’on ne peut pas VOIR marcher doit être considérée comme ABSENTE jusqu’à preuve du contraire. Reste à faire : chantier B (valider le contenu à l’import), C (sortir les sauvegardes de la boîte qu’elles protègent), D (durcir import et QR). Suite : 88 → 89 suites, 1437 → 1475 assertions vertes.';
 
 // ============================================================
@@ -7868,6 +7868,7 @@ async function renderDash(){
   // Calcul protégé : en cas d'erreur ou d'absence de ventes, on n'affiche rien plutôt que de fausser.
   let margeNetteParMacaron = null;
   let coutDons = null, margeApresDons = null, piecesDon = 0;
+  let _piecesReprise = 0;   // [v1433] pièces de reprise d'historique, volontairement hors du €/macaron
   let livBeneficeNet = null, coutLivraisonBrut = 0, nbLivraisons = 0, margeApresLivraison = null;   // [A5]
   try {
     const [_ri, _lots, _mm, _st] = await Promise.all([
@@ -7876,15 +7877,26 @@ async function renderDash(){
       (db.marketMoves?db.marketMoves.toArray():Promise.resolve([])).catch(()=>[]),
       Promise.resolve(getSettings())
     ]);
-    const _An = analyzeFlavorProfitability({recipes, recipeItems:_ri, lots:_lots, mats:materials, orders, markets, marketMoves:_mm, productions, settings:_st});
-    if(_An && _An.totals && _An.totals.pieces>0){
+    // [v1433] Les consommations réelles doivent être fournies ICI aussi, sinon l'accueil et
+    // l'écran Rentabilité parfums ne résoudraient pas les coûts de la même façon (v1432) — et
+    // deux écrans qui affichent deux marges du même mois, c'est un troisième mensonge.
+    const _conso = await db.prodConsumption.toArray().catch(()=>[]);
+    const _An = analyzeFlavorProfitability({recipes, recipeItems:_ri, lots:_lots, mats:materials, orders, markets, marketMoves:_mm, productions, prodConsumption:_conso, settings:_st});
+    if(_An && _An.totals && (_An.totals.piecesAvecCout>0 || _An.totals.pieces>0)){
       // [AUDIT-2026-07 · A3] AVANT : margeNette / pieces (AVANT dons), alors que le libellé disait
       // « après coûts & charges ». Un don est un coût réel : la marge nette « vraie » est APRÈS dons.
       // On utilise margeApresDons (déjà calculé), avec repli sur margeNette pour rétro-compat.
       const _baseMarge = (_An.totals.margeApresDons!=null) ? _An.totals.margeApresDons : _An.totals.margeNette;
-      margeNetteParMacaron = money2(_baseMarge / _An.totals.pieces);
+      // [v1433] Dénominateur = les pièces dont la marge est réellement calculée. Utiliser `pieces`
+      // (toutes les pièces vendues) diviserait une marge partielle par un volume complet, et le
+      // €/macaron descendrait à chaque parfum au coût inconnu. Repli sur `pieces` pour les bases
+      // anciennes qui n'ont pas encore le champ.
+      const _piecesBase = (_An.totals.piecesAvecCout!=null && _An.totals.piecesAvecCout>0)
+        ? _An.totals.piecesAvecCout : _An.totals.pieces;
+      margeNetteParMacaron = _piecesBase>0 ? money2(_baseMarge / _piecesBase) : null;
     }
     if(_An && _An.totals){
+      _piecesReprise = _An.totals.piecesReprise||0;   // [v1433] volume écarté du calcul
       coutDons = _An.totals.coutDons||0;
       margeApresDons = _An.totals.margeApresDons;
       piecesDon = _An.totals.piecesDon||0;
@@ -8007,7 +8019,7 @@ async function renderDash(){
    ${prodDlcAlert.length?`<div class="banner" style="background:#fdf3f2">🧁 <div><b>DLC produits finis</b> <span style="font-size:.76rem;color:#9a8a82">— touche un lot pour intervenir</span><br>${prodDlcAlert.slice(0,6).map(a=>`<span style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted" onclick="dlcActions(${a.id})">${esc(a.nom)} ${empIcon(a.emplacement)}${a.emplacement?' '+empLettre(a.emplacement):''} (${a.j<=0?'<b style="color:#b3261e">expiré</b>':a.j+' j'}, lot ${esc(a.lot)})</span>`).join(' · ')}${prodDlcAlert.length>6?` … +${prodDlcAlert.length-6}`:''}</div></div>`:''}
    <div class="cards">
      <div class="card clickable accent" style="--card-accent:#3f7d52" onclick="caMonthDetail()" title="Voir le détail des encaissements du mois"><div class="corner">€</div><div class="lbl">CA ${esc(_moisCourantLbl)} ${kpiI('ca_mois')}</div><div class="val">${euro(caMonth)}</div><div class="sub">${_nbEncMois} rentrée(s) d'argent · voir le détail ›</div></div>
-     <div class="card clickable accent" style="--card-accent:#c9a227" onclick="goView('rentabilite')" title="Voir la rentabilité par parfum"><div class="corner">📈</div><div class="lbl">Marge nette / macaron ${kpiI('marge_nette')}</div><div class="val">${privacyModeEnabled()?'•••':(margeNetteParMacaron!=null?euro(margeNetteParMacaron):'—')}</div><div class="sub">${margeNetteParMacaron!=null?'après coûts, charges & dons ›':'pas encore de ventes ›'}</div></div>
+     <div class="card clickable accent" style="--card-accent:#c9a227" onclick="goView('rentabilite')" title="Voir la rentabilité par parfum"><div class="corner">📈</div><div class="lbl">Marge nette / macaron ${kpiI('marge_nette')}</div><div class="val">${privacyModeEnabled()?'•••':(margeNetteParMacaron!=null?euro(margeNetteParMacaron):'—')}</div><div class="sub">${margeNetteParMacaron!=null?(_piecesReprise>0?`hors ${qty(_piecesReprise)} pc de reprise ›`:'après coûts, charges & dons ›'):'pas encore de ventes ›'}</div></div>
      <div class="card clickable accent" style="--card-accent:#d98324" onclick="goView('rentabilite')" title="Impact des dons sur la marge"><div class="corner">🎁</div><div class="lbl">Coût des dons ${kpiI('cout_dons')}</div><div class="val">${privacyModeEnabled()?'•••':(coutDons!=null?euro(coutDons):'—')}</div><div class="sub">${(coutDons!=null&&piecesDon>0)?`${qty(piecesDon)} offert(s) · marge après dons ${euro(margeApresDons)} ›`:'aucun don enregistré ›'}</div></div>
      ${(nbLivraisons>0)?`<div class="card clickable accent" style="--card-accent:${livBeneficeNet>=0?'#3f7d52':'#b3261e'}" onclick="goView('rentabilite')" title="Impact des livraisons sur la marge"><div class="corner">🚚</div><div class="lbl">Impact livraisons</div><div class="val">${privacyModeEnabled()?'•••':`${livBeneficeNet>=0?'+':''}${euro(livBeneficeNet)}`}</div><div class="sub">${nbLivraisons} tournée(s) · coût ${euro(coutLivraisonBrut)} ›</div></div>`:''}
      <div class="card clickable accent" style="--card-accent:#7a4b82" onclick="goView('stockparfums')" title="Finis + potentiel à assembler (min coques/ganache par parfum)"><div class="corner">🍬</div><div class="lbl">Macarons en stock ${kpiI('macarons_stock')}</div><div class="val">${qtyP(stockPot.total)}</div><div class="sub" style="line-height:1.5">
@@ -9325,6 +9337,8 @@ async function renderRecipes(){
   const _productions = await db.productions.toArray();
   const _recipeItems = await db.recipeItems.toArray();
   const _settings = getSettings();
+  // [v1432] Consommations matière réelles : c'est la source du coût MESURÉ par parfum.
+  const _prodConso = await db.prodConsumption.toArray().catch(()=>[]);
   // Mode 'mesuré' : on précharge le temps de production lissé (brique 1) pour nourrir le coût de revient.
   let _mesureMin = null;
   let _mesureParRec = null;
@@ -9333,7 +9347,7 @@ async function renderRecipes(){
     // Temps RÉEL par recette (distingue GF/classique). Repli géré côté analyse si une recette manque de données.
     try{ _mesureParRec = await prodTempsParParfum(90); }catch(e){ console.error('tempsParParfum',e); }
   }
-  const _A = analyzeFlavorProfitability({recipes, recipeItems:_recipeItems, lots:_lots, mats, orders:_orders, markets:_markets, marketMoves:_marketMoves, productions:_productions, settings:_settings, minParMacaronMesure:_mesureMin, minParRecMesure:_mesureParRec});
+  const _A = analyzeFlavorProfitability({recipes, recipeItems:_recipeItems, lots:_lots, mats, orders:_orders, markets:_markets, marketMoves:_marketMoves, productions:_productions, prodConsumption:_prodConso, settings:_settings, minParMacaronMesure:_mesureMin, minParRecMesure:_mesureParRec});
   const _rowByRec = {}; _A.rows.forEach(r=>{ _rowByRec[r.recipeId]=r; });
   _recipeMultCache = {}; // {recipeId: {rendement, items:[{nom,unite,qteParBatch(affichée),base}]}}
   // Affichage : denrées (kg) → grammes ; autres → unité native.
@@ -28217,6 +28231,103 @@ function buildFlavorSales(orders, markets, marketMoves, recipes, productions, se
 
 // SYNTHÈSE COMPLÈTE par parfum : coût de revient + ventes + marges + classement + stock immobilisé.
 // Renvoie {rows:[...], unmatched:[...], totals:{...}, recIndex:{}}
+// ════════════════════════════════════════════════════════════════════════════════════════════
+// [v1432] LE COÛT D'UN PARFUM DÉDUIT DES DONNÉES RÉELLES — demande de Ben :
+// « lorsque je fais des reprises de migration et que j'ajoute des macarons en stock qui sont
+//  vendus mais qui ne consomment pas de matières premières, je me retrouve à avoir des écarts de
+//  rentabilité […] est-il possible de générer un coût par parfum basé sur ce que les données
+//  réelles disent déjà ? Ainsi on empêcherait les calculs de mentir. »
+//
+// LE MENSONGE EXACT : un lot de reprise n'a AUCUNE ligne dans prodConsumption — c'est voulu, les
+// matières ont été achetées avant l'app. Mais si la recette de ce parfum n'a pas non plus
+// d'ingrédients renseignés, `coutRevientRecette` renvoie 0. Et un coût de 0 ne produit pas une
+// marge inconnue : il produit une marge de 100 %. Le parfum remonte alors en tête du classement
+// de rentabilité — c'est le pire endroit possible pour une erreur, parce que c'est celui qui
+// oriente les décisions de prix et d'offre.
+//
+// LA MESURE QUI EXISTE DÉJÀ : `prodConsumption` relie chaque batch RÉEL aux lots matière
+// consommés, et chaque lot porte son prix (lotPU). On peut donc calculer, sans rien saisir de
+// plus, ce qu'a COÛTÉ EN VRAI un macaron de ce parfum : total des matières consommées ÷ pièces
+// produites, sur les batchs réellement produits. C'est la mesure la plus solide de l'app —
+// devant la recette théorique, qui décrit une intention, pas une consommation.
+//
+// PURE. Renvoie {recipeId: {coutMatUnit, pieces, nbBatchs, fiable}}.
+// `fiable` exige DEUX batchs et un volume minimal : une seule fournée peut être atypique
+// (première fois, ratage, matière de dépannage). Un chiffre mesuré sur un cas n'est pas une
+// mesure, c'est une anecdote — même règle qu'en v1430 sur les marchés.
+function coutMatiereMesureParRecette(productions, conso, lots, opts){
+  opts = opts||{};
+  const minBatchs = opts.minBatchs!=null ? +opts.minBatchs : 2;
+  const minPieces = opts.minPieces!=null ? +opts.minPieces : 30;
+  const parLot = {}; (lots||[]).forEach(l=>{ if(l) parLot[l.id]=l; });
+  // Coût matière réellement consommé, batch par batch.
+  const coutParProd = {};
+  (conso||[]).forEach(c=>{
+    if(!c || c.annuleeInventaire) return;                 // conso neutralisée à l'inventaire : rendue
+    const l = parLot[c.materialLotId]; if(!l) return;
+    const pu = (typeof lotPU==='function') ? lotPU(l) : (+l.prixUnitaire||0);
+    if(!(pu>0)) return;                                    // lot sans prix : on ne devine pas
+    coutParProd[c.productionId] = (coutParProd[c.productionId]||0) + (+c.qte||0)*pu;
+  });
+  const acc = {};
+  (productions||[]).forEach(p=>{
+    if(!p || p.recipeId==null) return;
+    if(p.histo === true) return;                           // un lot de REPRISE n'a rien consommé : il ne mesure rien
+    const cout = coutParProd[p.id]; if(!(cout>0)) return;  // aucun coût réel rattaché → n'entre pas dans la mesure
+    const pieces = (typeof prodQteAffichee==='function') ? prodQteAffichee(p) : (+p.qteReelle||+p.qteProduite||0);
+    if(!(pieces>0)) return;
+    const a = acc[p.recipeId] || (acc[p.recipeId]={cout:0, pieces:0, nbBatchs:0});
+    a.cout += cout; a.pieces += pieces; a.nbBatchs++;
+  });
+  const out = {};
+  for(const rid in acc){
+    const a = acc[rid];
+    out[rid] = {
+      coutMatUnit: a.pieces>0 ? money2(a.cout/a.pieces) : 0,
+      pieces: round3(a.pieces), nbBatchs: a.nbBatchs,
+      fiable: (a.nbBatchs >= minBatchs && a.pieces >= minPieces && a.cout > 0)
+    };
+  }
+  return out;
+}
+
+// [v1432] L'ÉCHELLE DE REPLI, ET SON DERNIER BARREAU QUI N'EST PAS ZÉRO.
+// Ordre : mesuré sur les vrais batchs > recette renseignée > médiane mesurée de l'atelier > INCONNU.
+// La médiane plutôt que la moyenne : un parfum aux ingrédients très chers ne doit pas tirer
+// l'estimation de tous les autres. Et `inconnu` renvoie unit=null, JAMAIS 0 — c'est tout l'objet
+// de la demande de Ben : un coût nul fabrique une marge de 100 %, alors qu'une absence de coût
+// doit produire une marge... absente. Un chiffre manquant se voit ; un chiffre faux se croit.
+// PURE. Renvoie {unit, source, fiable, coutMatUnit}.
+function resoudreCoutParfum(recipeId, mesure, coutRecette, medianeAtelierMat){
+  const m = mesure && mesure[recipeId];
+  const recUnit = +((coutRecette||{}).coutRevientUnit)||0;
+  const recMat  = +((coutRecette||{}).coutMatUnit)||0;
+  // Part non-matière de la recette (consommables + main-d'œuvre) : elle reste valable même quand
+  // la matière est estimée, et on la réutilise telle quelle — un seul point de vérité pour la MO.
+  const horsMat = Math.max(0, money2(recUnit - recMat));
+  if(m && m.fiable && m.coutMatUnit>0){
+    return {unit: money2(m.coutMatUnit + horsMat), coutMatUnit: m.coutMatUnit,
+            source:'mesure', fiable:true, nbBatchs:m.nbBatchs};
+  }
+  if(recUnit>0){
+    return {unit: money2(recUnit), coutMatUnit: recMat, source:'recette', fiable:true, nbBatchs:0};
+  }
+  if(medianeAtelierMat>0){
+    return {unit: money2(medianeAtelierMat + horsMat), coutMatUnit: money2(medianeAtelierMat),
+            source:'atelier', fiable:false, nbBatchs:0};
+  }
+  return {unit: null, coutMatUnit: null, source:'inconnu', fiable:false, nbBatchs:0};
+}
+
+// [v1432] Médiane des coûts matière MESURÉS de l'atelier (fiables uniquement). PURE.
+function medianeCoutMatiereAtelier(mesure){
+  const vals = Object.values(mesure||{}).filter(m=>m && m.fiable && m.coutMatUnit>0)
+                     .map(m=>m.coutMatUnit).sort((a,b)=>a-b);
+  if(!vals.length) return 0;
+  const n = vals.length, mid = Math.floor(n/2);
+  return money2(n%2 ? vals[mid] : (vals[mid-1]+vals[mid])/2);
+}
+
 function analyzeFlavorProfitability(data){
   const {recipes, recipeItems, lots, mats, orders, markets, marketMoves, productions, settings} = data;
   const s = settings || getSettings();
@@ -28236,8 +28347,36 @@ function analyzeFlavorProfitability(data){
     const opt = (minPourCetteRec!=null) ? {minParMacaronMesure:minPourCetteRec} : undefined;
     costByRecipe[r.id] = coutRevientRecette(r, recipeItems, lots, s, opt);
   });
-  // 2) ventes par parfum
-  const sales = buildFlavorSales(orders, markets, marketMoves, recipes, productions, s);
+  // [v1432] 1 bis) COÛT RÉSOLU PAR PARFUM. On mesure d'abord ce que les batchs réels ont coûté,
+  // puis on résout parfum par parfum selon l'échelle mesure > recette > atelier > inconnu.
+  const mesureCout = coutMatiereMesureParRecette(productions, data.prodConsumption||[], lots);
+  const medianeMat = medianeCoutMatiereAtelier(mesureCout);
+  const coutResolu = {};
+  recipes.forEach(r=>{ coutResolu[r.id] = resoudreCoutParfum(r.id, mesureCout, costByRecipe[r.id], medianeMat); });
+
+  // ════════════════════════════════════════════════════════════════════════════════════════
+  // [v1433] CE QUI ENTRE DANS UNE MARGE — et ce qui n'a rien à y faire.
+  // Ben : « j'ai un calcul sur la page d'accueil qui me donne la rentabilité par macaron. Je ne
+  // veux pas que ce chiffre clé évolue de manière fausse suite à la migration de commandes passées. »
+  // Il avait raison, et deux autres fuites se cachaient au même endroit — `buildFlavorSales`
+  // parcourait `orders` SANS AUCUN FILTRE :
+  //   ① REPRISES D'HISTORIQUE (`o.histo===true`) : ce sont des ventes d'AVANT l'app, à des prix
+  //      d'alors, dont le coût réel de l'époque est inconnu et le restera. On leur appliquait les
+  //      coûts d'AUJOURD'HUI. Chaque migration de commandes passées déplaçait donc le €/macaron —
+  //      exactement ce que Ben refuse. Une marge mélangeant deux époques ne mesure ni l'une ni l'autre.
+  //   ② COMMANDES FILLES (`commandeMereId!=null`) : leur contenu et leur montant DOUBLONNENT ceux
+  //      de leur mère (v1421). Elles gonflaient CA et pièces des deux côtés du ratio.
+  //   ③ COMMANDES NON PAYÉES : une commande à préparer n'est pas une vente réalisée.
+  // On réutilise `estVenteAgregable` (le prédicat gravé en v1421) plutôt que d'en réécrire un second.
+  // Ce qui est écarté n'est pas caché : les volumes sortis sont chiffrés dans les totaux.
+  const ordersReprise = (orders||[]).filter(o=>o && o.histo===true);
+  const ordersMarge   = (orders||[]).filter(o=>o && o.histo!==true && estVenteAgregable(o));
+
+  // 2) ventes par parfum — sur la seule assiette qui peut porter une marge
+  const sales = buildFlavorSales(ordersMarge, markets, marketMoves, recipes, productions, s);
+  // Volume des reprises, mesuré à part : Ben doit savoir ce qui a été mis de côté, et combien.
+  const salesReprise = ordersReprise.length
+    ? buildFlavorSales(ordersReprise, [], [], recipes, productions, s) : [];
   const salesByRecipe = {}; const unmatched=[];
   sales.forEach(sa=>{
     if(sa.recipeId){ (salesByRecipe[sa.recipeId] ||= []).push(sa); }
@@ -28257,20 +28396,26 @@ function analyzeFlavorProfitability(data){
     const caTheo = money2(saList.reduce((x,a)=>x+(a.caTheo||0),0));     // CA attendu (pièces × prix moyen)
     const ecartTheo = money2(ca - caTheo);                              // écart encaissé − attendu
     const prixVenteMoyen = piecesVendues>0 ? money2(ca/piecesVendues) : null;
-    // coûts rattachés aux pièces vendues
-    const coutVentes = money2(piecesVendues * c.coutRevientUnit);
-    const margeBrute = money2(ca - coutVentes);
-    const margeUnit = (prixVenteMoyen!=null) ? money2(prixVenteMoyen - c.coutRevientUnit) : null;
-    const tauxMarge = (prixVenteMoyen!=null && prixVenteMoyen>0) ? Math.round(margeUnit/prixVenteMoyen*1000)/10 : null;
+    // [v1432] COÛT RETENU : le résolu, pas le théorique. Quand il est INCONNU, les marges valent
+    // `null` et non 0 — sans quoi un parfum sans coût connu afficherait 100 % de marge et
+    // trônerait en tête du classement de rentabilité.
+    const cr = coutResolu[r.id] || {unit:c.coutRevientUnit||null, source:'recette'};
+    const coutUnitRetenu = (cr.unit!=null) ? cr.unit : null;
+    const coutConnu = (coutUnitRetenu!=null && coutUnitRetenu>0);
     // charges sociales (marchandise) sur le CA → marge nette estimée
     const chargesSoc = money2(ca * s.socialGoods/100);
-    const margeNette = money2(margeBrute - chargesSoc);
-    const tauxNet = ca>0 ? Math.round(margeNette/ca*1000)/10 : null;
+    const coutVentes = coutConnu ? money2(piecesVendues * coutUnitRetenu) : null;
+    const margeBrute = coutConnu ? money2(ca - coutVentes) : null;
+    const margeUnit  = (coutConnu && prixVenteMoyen!=null) ? money2(prixVenteMoyen - coutUnitRetenu) : null;
+    const tauxMarge  = (margeUnit!=null && prixVenteMoyen>0) ? Math.round(margeUnit/prixVenteMoyen*1000)/10 : null;
+    const margeNette = (margeBrute!=null) ? money2(margeBrute - chargesSoc) : null;
+    const tauxNet    = (margeNette!=null && ca>0) ? Math.round(margeNette/ca*1000)/10 : null;
     const stock = round3(stockByRecipe[r.id]||0);
-    const valStockCout = money2(stock * c.coutRevientUnit);
+    const valStockCout = coutConnu ? money2(stock * coutUnitRetenu) : null;
     const scale = flavorScale(tauxMarge);
     return {
       recipeId:r.id, nom:r.produitNom, cost:c,
+      coutUnitRetenu, coutSource:cr.source, coutFiable:!!cr.fiable, coutNbBatchs:cr.nbBatchs||0,
       piecesVendues, piecesDon, ca, caTheo, ecartTheo, prixVenteMoyen, coutVentes,
       margeBrute, margeUnit, tauxMarge, chargesSoc, margeNette, tauxNet,
       stock, valStockCout, scale
@@ -28284,15 +28429,33 @@ function analyzeFlavorProfitability(data){
     caCmdVentile: money2(sales.reduce((s2,a)=>s2+(+a.cmdCA||0),0)),
     caTheo: money2(rows.reduce((s2,r)=>s2+r.caTheo,0)),
     pieces: round3(rows.reduce((s2,r)=>s2+r.piecesVendues,0)),
-    margeBrute: money2(rows.reduce((s2,r)=>s2+r.margeBrute,0)),
-    margeNette: money2(rows.reduce((s2,r)=>s2+r.margeNette,0)),
-    valStock: money2(rows.reduce((s2,r)=>s2+r.valStockCout,0)),
+    // [v1433] Le DÉNOMINATEUR d'un €/macaron ne doit compter que les pièces dont la marge a pu
+    // être calculée. Compter au dénominateur des pièces absentes du numérateur (coût inconnu,
+    // v1432) diluerait le chiffre vers le bas — une autre façon de mentir.
+    piecesAvecCout: round3(rows.filter(r=>r.margeBrute!=null).reduce((s2,r)=>s2+r.piecesVendues,0)),
+    // [v1433] Ce que les reprises représentent, hors du calcul de marge.
+    piecesReprise: round3((salesReprise||[]).reduce((s2,a)=>s2+(+a.piecesVendues||0),0)),
+    caReprise: money2((salesReprise||[]).reduce((s2,a)=>s2+(+a.caVentes||0),0)),
+    nbCmdReprise: ordersReprise.length,
+    // [v1432] Les parfums au coût INCONNU sont exclus des totaux de marge — les compter à 0
+    // gonflerait la marge globale exactement comme avant. Ce qui est exclu est chiffré juste
+    // en dessous (`caSansCout`), pour que le total ne cache pas ce qu'il ne sait pas.
+    margeBrute: money2(rows.reduce((s2,r)=>s2+(r.margeBrute||0),0)),
+    margeNette: money2(rows.reduce((s2,r)=>s2+(r.margeNette||0),0)),
+    valStock: money2(rows.reduce((s2,r)=>s2+(r.valStockCout||0),0)),
+    caAvecCout: money2(rows.filter(r=>r.margeBrute!=null).reduce((s2,r)=>s2+r.ca,0)),
+    caSansCout: money2(rows.filter(r=>r.margeBrute==null).reduce((s2,r)=>s2+r.ca,0)),
+    nbCoutMesure:  rows.filter(r=>r.coutSource==='mesure').length,
+    nbCoutRecette: rows.filter(r=>r.coutSource==='recette').length,
+    nbCoutAtelier: rows.filter(r=>r.coutSource==='atelier').length,
+    nbCoutInconnu: rows.filter(r=>r.coutSource==='inconnu').length,
+    medianeCoutMatiereAtelier: medianeMat,
     piecesDon: round3(rows.reduce((s2,r)=>s2+(r.piecesDon||0),0)),
     // coût des dons = pièces données × coût de revient complet (matières + temps) de chaque parfum
-    coutDons: money2(rows.reduce((s2,r)=>s2+((r.piecesDon||0) * (r.cost?r.cost.coutRevientUnit:0)),0))
+    coutDons: money2(rows.reduce((s2,r)=>s2+((r.piecesDon||0) * (r.coutUnitRetenu||0)),0))   // [v1432] coût retenu
   };
   // dons non rattachés à un parfum (ex : "Non spécifié") → valorisés au coût de revient MOYEN
-  const coutsArr = rows.map(r=>r.cost?r.cost.coutRevientUnit:0).filter(c=>c>0);
+  const coutsArr = rows.map(r=>r.coutUnitRetenu||0).filter(c=>c>0);   // [v1432]
   const coutMoyen = coutsArr.length ? coutsArr.reduce((a,b)=>a+b,0)/coutsArr.length : 0;
   const piecesDonNS = round3((unmatched||[]).reduce((s2,u)=>s2+(u.piecesDon||0),0));
   if(piecesDonNS>0){
@@ -28377,9 +28540,9 @@ function flavorRecommendations(analysis, data){
   const volFaibleMarge = sold.filter(r=>r.piecesVendues>=medPieces && r.tauxMarge!=null && r.tauxMarge<25)
     .sort((a,b)=>a.tauxMarge-b.tauxMarge);
   volFaibleMarge.slice(0,3).forEach(r=>{
-    const cible = r.cost.coutRevientUnit>0 ? money2(r.cost.coutRevientUnit/(1-0.40)) : null; // prix pour 40% de marge
+    const cible = (r.coutUnitRetenu>0) ? money2(r.coutUnitRetenu/(1-0.40)) : null;   // [v1432] // prix pour 40% de marge
     recs.push({icon:'⚠️', col:'#d98324',
-      txt:`${r.nom} : forte demande (${qty(r.piecesVendues)} vendus) mais marge faible (${r.tauxMarge}%). ${cible?`Visez ~${euro(cible)}/pièce pour 40% de marge, ou réduisez le coût de revient (${euro(r.cost.coutRevientUnit)}).`:'Revoyez le prix ou le coût.'}`});
+      txt:`${r.nom} : forte demande (${qty(r.piecesVendues)} vendus) mais marge faible (${r.tauxMarge}%). ${cible?`Visez ~${euro(cible)}/pièce pour 40% de marge, ou réduisez le coût de revient (${euro(r.coutUnitRetenu||0)}).`:'Revoyez le prix ou le coût.'}`});
   });
   // 3) faible demande mais très rentable → pousser à la vente
   const nicheRentable = sold.filter(r=>r.piecesVendues<medPieces && r.tauxMarge!=null && r.tauxMarge>=40)
@@ -28392,7 +28555,7 @@ function flavorRecommendations(analysis, data){
   const perte = sold.filter(r=>r.tauxMarge!=null && r.tauxMarge<0);
   perte.forEach(r=>{
     recs.push({icon:'🛑', col:'#b3261e',
-      txt:`${r.nom} se vend À PERTE (prix moyen ${r.prixVenteMoyen!=null?euro(r.prixVenteMoyen):'?'} < coût ${euro(r.cost.coutRevientUnit)}). Augmentez le prix ou retirez-le de l'offre.`});
+      txt:`${r.nom} se vend À PERTE (prix moyen ${r.prixVenteMoyen!=null?euro(r.prixVenteMoyen):'?'} < coût ${euro(r.coutUnitRetenu||0)}). Augmentez le prix ou retirez-le de l'offre.`});
   });
   // 5) stock immobilisé peu rentable
   const stockMort = analysis.rows.filter(r=>r.stock>0 && (r.piecesVendues===0 || (r.tauxMarge!=null && r.tauxMarge<15)))
@@ -35415,7 +35578,8 @@ async function renderParfums(){
     db.orders.toArray(), db.markets.toArray(), db.marketMoves.toArray(), db.productions.toArray()
   ]);
   const s = getSettings();
-  const data = {recipes, recipeItems, lots, mats, orders, markets, marketMoves, productions, settings:s};
+  const prodConsumption = await db.prodConsumption.toArray().catch(()=>[]);   // [v1432] coût mesuré
+  const data = {recipes, recipeItems, lots, mats, orders, markets, marketMoves, productions, prodConsumption, settings:s};
 
   if(!recipes.length){
     document.getElementById('main').innerHTML=`
@@ -35429,14 +35593,30 @@ async function renderParfums(){
   const hikes = flavorCostHikeAlerts(data, A);
   const recs = flavorRecommendations(A, data);
 
+  // [v1432] D'OÙ VIENT CHAQUE COÛT — bandeau d'honnêteté. Sans lui, la correction serait invisible
+  // et Ben lirait des marges estimées comme des marges mesurées. Le CA dont le coût est inconnu est
+  // chiffré : c'est la part du classement sur laquelle il ne faut RIEN conclure.
+  const _T = A.totals || {};
+  const _srcParts = [];
+  if(_T.nbCoutMesure>0)  _srcParts.push(`<b>${_T.nbCoutMesure}</b> mesuré${_T.nbCoutMesure>1?'s':''} sur tes batchs réels`);
+  if(_T.nbCoutRecette>0) _srcParts.push(`<b>${_T.nbCoutRecette}</b> d'après la recette`);
+  if(_T.nbCoutAtelier>0) _srcParts.push(`<b>${_T.nbCoutAtelier}</b> estimé${_T.nbCoutAtelier>1?'s':''} (médiane atelier ${euro(_T.medianeCoutMatiereAtelier||0)}/pc de matière)`);
+  const _coutBandeau = (_srcParts.length || _T.nbCoutInconnu>0) ? `
+    <div class="panel" style="background:#fbf9f4;border-color:#e0d6c4">
+      <h2 style="font-size:.98rem">🏷️ D'où vient le coût de chaque parfum</h2>
+      ${_srcParts.length?`<p class="note" style="margin:0 0 4px">${_srcParts.join(' · ')}.</p>`:''}
+      ${_T.nbCoutInconnu>0?`<p class="note" style="margin:0;color:#b3261e">⚠ <b>${_T.nbCoutInconnu}</b> parfum(s) sans coût connu — ${euro(_T.caSansCout||0)} de CA <b>exclu</b> des marges ci-dessous. Un coût nul afficherait 100 % de marge : mieux vaut un blanc qu'un chiffre faux. Renseigne les ingrédients de ces recettes, ou produis-en un batch réel.</p>`:''}
+      <p class="note" style="margin:4px 0 0;font-size:.74rem">Un lot de <b>reprise</b> ne consomme aucune matière : il ne peut pas servir de mesure. Le coût est alors pris sur la recette, sinon estimé à la médiane de l'atelier — et signalé comme tel sur chaque ligne.</p>
+    </div>` : '';
+
   // tri
   const rows=[...A.rows];
   const sorters={
-    marge:(a,b)=>b.margeBrute-a.margeBrute,
+    marge:(a,b)=>(b.margeBrute==null?-Infinity:b.margeBrute)-(a.margeBrute==null?-Infinity:a.margeBrute),   // [v1432] coût inconnu → en bas
     ca:(a,b)=>b.ca-a.ca,
     pieces:(a,b)=>b.piecesVendues-a.piecesVendues,
     taux:(a,b)=>(b.tauxMarge==null?-1:b.tauxMarge)-(a.tauxMarge==null?-1:a.tauxMarge),
-    stock:(a,b)=>b.valStockCout-a.valStockCout,
+    stock:(a,b)=>(b.valStockCout||0)-(a.valStockCout||0),
     nom:(a,b)=>a.nom.localeCompare(b.nom)
   };
   rows.sort(sorters[_parfumSort]||sorters.marge);
@@ -35541,6 +35721,14 @@ async function renderParfums(){
 
   // tableau principal
   const sortBtn=(k,lib)=>`<button class="btn ghost sm" style="${_parfumSort===k?'border-color:var(--caramel);font-weight:600':''}" onclick="_parfumSort='${k}';renderParfums()">${lib}</button>`;
+  // [v1432] Marqueur d'origine du coût, sur CHAQUE ligne. Un coût estimé qui ressemble à un coût
+  // mesuré est précisément ce qui faisait mentir l'écran.
+  const _srcTag = r => {
+    if(r.coutSource==='mesure')  return `<span class="tag" style="background:#e7f0e9;color:#3f6b45;font-size:.62rem" title="Coût matière calculé sur ${r.coutNbBatchs} batch(s) réellement produits">✓ mesuré</span>`;
+    if(r.coutSource==='recette') return `<span class="tag" style="background:#eef1f6;color:#4a5b74;font-size:.62rem" title="Coût calculé d'après les ingrédients de la recette">recette</span>`;
+    if(r.coutSource==='atelier') return `<span class="tag" style="background:#fbf0e0;color:#8a6d3b;font-size:.62rem" title="Aucune donnée propre à ce parfum : estimation à la médiane de l'atelier">≈ estimé</span>`;
+    return `<span class="tag" style="background:#f6e3e0;color:#b3261e;font-size:.62rem" title="Aucun coût connu : les marges de cette ligne ne sont pas calculées">coût inconnu</span>`;
+  };
   const mainTable=`<div style="display:flex;flex-direction:column;gap:10px">${rows.map(r=>{
       const taux=r.tauxMarge;
       const tauxClamp=taux!=null?Math.max(0,Math.min(100,taux)):0;
@@ -35549,13 +35737,14 @@ async function renderParfums(){
         <div style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
           <span style="width:20px;height:20px;border-radius:50%;background:${col};flex:none;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08)"></span>
           <b style="flex:1;font-size:1rem;color:var(--bordeaux);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.nom)}${r.cost.pertePct>0?` <span style="color:#9a8a82;font-size:.7rem;font-weight:400">· pertes ${r.cost.pertePct}%</span>`:''}</b>
+          ${_srcTag(r)}
           <span class="tag" style="background:${r.scale.col};color:#fff;font-size:.66rem">${r.scale.dot} ${r.scale.label||''}</span>
         </div>
         <div style="display:flex;gap:6px;text-align:center;margin-bottom:10px">
-          <div style="flex:1"><div style="font-size:.6rem;text-transform:uppercase;letter-spacing:.03em;color:#9a8a82;font-weight:600">Coût/pc</div><div style="font-weight:700;color:var(--bordeaux);font-size:.88rem">${euro(r.cost.coutRevientUnit)}</div></div>
+          <div style="flex:1"><div style="font-size:.6rem;text-transform:uppercase;letter-spacing:.03em;color:#9a8a82;font-weight:600">Coût/pc</div><div style="font-weight:700;color:var(--bordeaux);font-size:.88rem">${r.coutUnitRetenu!=null?euro(r.coutUnitRetenu):'—'}</div></div>
           <div style="flex:1;border-left:1px solid var(--hair)"><div style="font-size:.6rem;text-transform:uppercase;letter-spacing:.03em;color:#9a8a82;font-weight:600">Vente/pc</div><div style="font-weight:700;color:var(--bordeaux);font-size:.88rem">${r.prixVenteMoyen!=null?euro(r.prixVenteMoyen):'—'}</div></div>
           <div style="flex:1;border-left:1px solid var(--hair)"><div style="font-size:.6rem;text-transform:uppercase;letter-spacing:.03em;color:#9a8a82;font-weight:600">Vendus</div><div style="font-weight:700;color:var(--bordeaux);font-size:.88rem">${r.piecesVendues>0?qty(r.piecesVendues):'0'}</div></div>
-          <div style="flex:1;border-left:1px solid var(--hair)"><div style="font-size:.6rem;text-transform:uppercase;letter-spacing:.03em;color:#9a8a82;font-weight:600">Marge brute</div><div style="font-weight:700;font-size:.88rem;color:${r.margeBrute>=0?'#3f7d52':'#b3261e'}">${euro(r.margeBrute)}</div></div>
+          <div style="flex:1;border-left:1px solid var(--hair)"><div style="font-size:.6rem;text-transform:uppercase;letter-spacing:.03em;color:#9a8a82;font-weight:600">Marge brute</div><div style="font-weight:700;font-size:.88rem;color:${r.margeBrute==null?'#9a8a82':(r.margeBrute>=0?'#3f7d52':'#b3261e')}">${r.margeBrute!=null?euro(r.margeBrute):'—'}</div></div>
         </div>
         <div style="display:flex;align-items:center;gap:8px">
           <span style="font-size:.66rem;color:#9a8a82;flex:none">taux net</span>
@@ -35632,6 +35821,7 @@ async function renderParfums(){
      <button class="btn ghost sm" onclick="parfumSettingsForm()">⚙ Coûts & MO</button></div>
    ${hikeBanner}
    ${incohBanner}
+   ${_coutBandeau}
    ${diagBox}
    ${kpis}
    ${coffretsBox}
