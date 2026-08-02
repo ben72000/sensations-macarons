@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1436';
+const APP_VERSION = 'v1437';
 const APP_MAJ = 'CHANTIER A — L’APP NE PEUT PLUS ÉCHOUER EN SILENCE. Le constat de l’audit était dur : 347 endroits du code attrapaient une erreur et l’enregistraient fidèlement… dans un carnet que TU NE POUVAIS PAS OUVRIR. Il fallait brancher l’iPhone sur un Mac. Autant dire jamais. ET LE CARNET ÉTAIT EFFACÉ À CHAQUE RECHARGEMENT. C’est le mécanisme EXACT qui a caché la panne Dexie pendant un mois : chaque écriture kv échouait, la validation ne démarrait jamais, et l’écran affichait « 0 refus, 0 suspects » — ce qui RESSEMBLAIT à une bonne nouvelle alors que ça voulait dire « le contrôle n’a jamais démarré ». CE QUI CHANGE. 1) UN ÉCRAN « Santé de l’app » (Sauvegarde & sécurité) : tu lis enfin ce qui a cassé, depuis ton téléphone, sans Mac. 2) LES INCIDENTS VIVENT EN BASE (nouvelle table errLog) : ils survivent à un rechargement, donc tu peux constater qu’une panne DURE — c’est précisément ce que l’ancien carnet en mémoire rendait impossible. 3) UN FILET GLOBAL : une erreur hors try/catch te donnait un écran figé sans trace ; elle est maintenant enregistrée et annoncée par une bannière discrète. 4) UNE PASTILLE SUR L’ACCUEIL quand des incidents IMPORTANTS s’accumulent. LE TRI QUE J’AI FIGÉ, et qui est le cœur du travail : un échec d’AFFICHAGE et un échec d’ÉCRITURE EN BASE ne se valent pas. Base, sauvegarde, import, validation, compta → IMPORTANT, ça parle. Rendu, affichage → mineur, ça s’enregistre sans crier. Confondre les deux, c’est noyer le signal sous le bruit, et une alerte qui crie tout le temps est une alerte qu’on ne regarde plus. CE QUE JE N’AI PAS FAIT : deviner la cause d’une erreur, ni prétendre la réparer. L’écran montre ce qui s’est réellement passé. Une explication inventée serait pire qu’un silence. ET UNE MISE EN GARDE QUE JE TE DOIS : un écran Santé VIDE n’est PAS une preuve que tout va bien — c’est une absence d’incident enregistré, ce qui n’est pas la même chose. LA RÈGLE FIGÉE : une protection qu’on ne peut pas VOIR marcher doit être considérée comme ABSENTE jusqu’à preuve du contraire. Reste à faire : chantier B (valider le contenu à l’import), C (sortir les sauvegardes de la boîte qu’elles protègent), D (durcir import et QR). Suite : 88 → 89 suites, 1437 → 1475 assertions vertes.';
 
 // ============================================================
@@ -18362,7 +18362,7 @@ async function gsContactCard(id){
     ${corps}
     <div style="display:flex;gap:8px;margin-top:14px">
       <button class="btn ghost" style="flex:1" onclick="closeModal()">Fermer</button>
-      <button class="btn" style="flex:1" onclick="closeModal();clientForm(${c.id})">Fiche complète</button>
+      <button class="btn" style="flex:1" onclick="closeModal();clientFiche(${c.id})">Fiche complète</button>
     </div>`);
 }
 
@@ -18488,6 +18488,494 @@ function clientsHubSwitch(tab){
   renderClientsHub();
 }
 
+/* ============================================================================================
+   [v1437] LA FICHE CLIENT INTELLIGENTE — moteur de calcul (fonctions PURES)
+   --------------------------------------------------------------------------------------------
+   Ben : « faire évoluer le module Client afin qu'il ne soit plus une simple fiche d'informations
+   mais un véritable copilote CRM […] transformer automatiquement toutes les données déjà
+   présentes en informations utiles, en analyses pertinentes et en recommandations concrètes ».
+
+   ⚠️ LE PRINCIPE QUI GOUVERNE TOUT CE FICHIER — LE SEUIL DE SILENCE.
+   Chaque indicateur porte le nombre d'observations sur lequel il repose, et REFUSE de se
+   prononcer en dessous. Un « intervalle habituel » calculé sur deux commandes n'est pas une
+   habitude, c'est une coïncidence ; affiché comme un fait, il enverrait Ben relancer un client
+   qui n'a rien demandé. C'est la règle de la v1337 (« zéro n'est pas une mesure, c'est une
+   affirmation ») appliquée au comportement d'achat, et de la v1430 (un marché sans donnée n'est
+   pas un marché à zéro vente).
+
+   Conséquence assumée : sur une base jeune, cette fiche dira souvent « pas encore assez de
+   commandes pour le dire ». C'est le comportement voulu. Un CRM qui affirme sur deux points
+   fabrique de la confiance sans fondement — et Ben a déjà payé le prix d'un chiffre auquel il ne
+   pouvait plus se fier.
+   ============================================================================================ */
+
+// Seuils d'observations. Nommés une fois, jamais redupliqués en littéral.
+const CL_MIN_INTERVALLE  = 3;   // 3 commandes = 2 intervalles : le minimum pour parler de rythme
+const CL_MIN_REGULARITE  = 4;   // dispersion : 3 intervalles minimum
+const CL_MIN_TENDANCE    = 4;   // pente du panier
+const CL_MIN_DIVERSITE   = 2;   // exploration des parfums
+const CL_RETARD_FACTEUR  = 1.5; // « en retard » = 1,5× son propre intervalle habituel
+const CL_DORMANT_FACTEUR = 3;   // « dormant » = 3× son propre intervalle habituel
+
+// [v1437] Les FAITS d'un client : rien de calculé, rien d'interprété — uniquement ce que ses
+// commandes disent. Toute la suite en dérive, et rien d'autre. PURE.
+function clientFaits(clientId, orders, opts){
+  opts = opts||{};
+  const aujourdhui = opts.aujourdhui || (typeof today==='function' ? today() : '');
+  const cid = +clientId;
+  const cmds = (orders||[])
+    // ⚠️ `o.histo!==true` EST INDISPENSABLE et ne fait PAS doublon avec estVenteAgregable :
+    // une reprise d'historique est payée et sans commande mère, donc elle PASSE ce prédicat
+    // (piège déjà rencontré en v1433). Or c'est du CA d'avant l'app : l'inclure fausserait son
+    // ancienneté, son CA, et surtout son rythme — un client migré paraîtrait actif depuis des
+    // années avec des intervalles qui n'ont jamais été observés par l'app.
+    .filter(o => o && +o.clientId===cid && o.date && o.histo!==true
+                 && (typeof estVenteAgregable!=='function' || estVenteAgregable(o)))
+    .sort((a,b)=> String(a.date).localeCompare(String(b.date)));
+
+  const jours = (d1, d2) => {
+    try{ return Math.round((new Date(d2+'T00:00:00') - new Date(d1+'T00:00:00'))/86400000); }
+    catch(_){ return null; }
+  };
+  const dates = cmds.map(o=>o.date);
+  const intervalles = [];
+  for(let i=1;i<dates.length;i++){ const j = jours(dates[i-1], dates[i]); if(j!=null && j>=0) intervalles.push(j); }
+
+  // Parfums : quantités cumulées, nb de commandes où il apparaît, première et dernière fois.
+  const parfums = {};
+  // Associations : paires de parfums COMMANDÉS ENSEMBLE (dans la même commande). C'est
+  // exploitable parce que la composition EST stockée sur la ligne (ln.parfums) — contrairement à
+  // ce qu'un audit antérieur avait conclu.
+  const paires = {};
+  const tailles = {};
+  cmds.forEach(o=>{
+    const dem = (typeof _orderParfumDemand==='function') ? _orderParfumDemand(o) : {};
+    const noms = Object.keys(dem).filter(n=>n && n!=='À définir' && dem[n]>0);
+    noms.forEach(n=>{
+      const a = parfums[n] || (parfums[n]={nom:n, qte:0, nbCmd:0, premiere:o.date, derniere:o.date});
+      a.qte += dem[n]; a.nbCmd++;
+      if(o.date < a.premiere) a.premiere = o.date;
+      if(o.date > a.derniere) a.derniere = o.date;
+    });
+    // Paires non ordonnées, une seule fois par commande.
+    for(let i=0;i<noms.length;i++) for(let j=i+1;j<noms.length;j++){
+      const k = [noms[i],noms[j]].sort().join(' + ');
+      paires[k] = (paires[k]||0) + 1;
+    }
+    // Taille de coffret : seule la ligne coffret en porte une.
+    ((typeof orderToLines==='function' ? orderToLines(o) : (o.lignes||[]))||[]).forEach(ln=>{
+      if(ln && ln.type==='coffret' && +ln.taille>0) tailles[+ln.taille] = (tailles[+ln.taille]||0)+1;
+    });
+  });
+
+  const montants = cmds.map(o=>+o.montant||0);
+  const ca = montants.reduce((s,x)=>s+x,0);
+  return {
+    clientId: cid, nbCommandes: cmds.length,
+    premiereCmd: dates[0]||null, derniereCmd: dates[dates.length-1]||null,
+    anciennete: dates.length ? jours(dates[0], aujourdhui) : null,
+    joursDepuisDerniere: dates.length ? jours(dates[dates.length-1], aujourdhui) : null,
+    ca: (typeof money2==='function') ? money2(ca) : ca,
+    montants, dates, intervalles,
+    parfums: Object.values(parfums).sort((a,b)=>b.qte-a.qte),
+    paires: Object.entries(paires).map(([k,v])=>({paire:k, fois:v})).sort((a,b)=>b.fois-a.fois),
+    tailles: Object.entries(tailles).map(([k,v])=>({taille:+k, fois:v})).sort((a,b)=>b.fois-a.fois),
+    commandes: cmds
+  };
+}
+
+// Médiane — plus robuste que la moyenne sur de petits effectifs, où une seule commande
+// exceptionnelle (un mariage) déplacerait tout. PURE.
+function _clMediane(arr){
+  const v = (arr||[]).filter(x=>typeof x==='number' && isFinite(x)).slice().sort((a,b)=>a-b);
+  if(!v.length) return null;
+  const m = Math.floor(v.length/2);
+  return v.length%2 ? v[m] : (v[m-1]+v[m])/2;
+}
+
+// [v1437] Un INDICATEUR porte toujours son assise. `suffisant:false` n'est pas une valeur basse,
+// c'est un refus de se prononcer — et l'écran doit l'afficher comme tel. PURE.
+function _clInd(valeur, n, minRequis, detail){
+  const ok = (n >= minRequis) && valeur!=null && isFinite(valeur);
+  return { valeur: ok ? valeur : null, suffisant: ok, n, minRequis, detail: detail||'' };
+}
+
+// [v1437] Les INDICATEURS dérivés des faits. Aucun n'invente : chacun dit sur quoi il repose. PURE.
+function clientIndicateurs(faits){
+  const f = faits || {};
+  const n = f.nbCommandes||0;
+  const M = (typeof money2==='function') ? money2 : (x=>Math.round(x*100)/100);
+
+  const panierMoyen = n>0 ? M(f.ca/n) : null;
+  const intervalleMedian = _clMediane(f.intervalles);
+
+  // Régularité : dispersion des intervalles rapportée à leur médiane. Basse = prévisible.
+  let regularite = null;
+  if((f.intervalles||[]).length >= (CL_MIN_REGULARITE-1) && intervalleMedian>0){
+    const moy = f.intervalles.reduce((s,x)=>s+x,0)/f.intervalles.length;
+    const ec = Math.sqrt(f.intervalles.reduce((s,x)=>s+(x-moy)*(x-moy),0)/f.intervalles.length);
+    regularite = Math.round((ec/intervalleMedian)*100)/100;
+  }
+
+  // Tendance du panier : compare la moyenne des 3 dernières commandes aux précédentes.
+  // Volontairement PAS une régression linéaire — sur 5 points elle donnerait une pente précise
+  // et fausse. Deux moyennes, c'est moins savant et plus honnête.
+  let tendancePanier = null;
+  if(n >= CL_MIN_TENDANCE){
+    const recents = f.montants.slice(-3), anciens = f.montants.slice(0, -3);
+    if(anciens.length){
+      const mR = recents.reduce((s,x)=>s+x,0)/recents.length;
+      const mA = anciens.reduce((s,x)=>s+x,0)/anciens.length;
+      if(mA>0) tendancePanier = Math.round(((mR-mA)/mA)*100);
+    }
+  }
+
+  // Diversité : parfums distincts rapportés au nombre de commandes. Explorateur ou fidèle à
+  // son parfum — deux clients à ne pas relancer de la même façon.
+  const nbParfums = (f.parfums||[]).length;
+  const diversite = n>0 ? Math.round((nbParfums/n)*100)/100 : null;
+
+  // État : actif / en retard / dormant — RELATIF À SON PROPRE RYTHME, jamais à une moyenne
+  // générale. Un client qui commande deux fois par an n'est pas en retard au bout de trois mois.
+  let etat = 'inconnu', etatDetail = 'pas encore assez de commandes pour juger d\'un rythme';
+  if(n >= CL_MIN_INTERVALLE && intervalleMedian>0 && f.joursDepuisDerniere!=null){
+    const ratio = f.joursDepuisDerniere / intervalleMedian;
+    if(ratio >= CL_DORMANT_FACTEUR){ etat='dormant';  etatDetail = `${f.joursDepuisDerniere} j sans commande, soit ${Math.round(ratio*10)/10}× son rythme habituel (${Math.round(intervalleMedian)} j)`; }
+    else if(ratio >= CL_RETARD_FACTEUR){ etat='retard'; etatDetail = `${f.joursDepuisDerniere} j sans commande, pour un rythme habituel de ${Math.round(intervalleMedian)} j`; }
+    else { etat='actif'; etatDetail = `dernière commande il y a ${f.joursDepuisDerniere} j, rythme habituel ${Math.round(intervalleMedian)} j`; }
+  } else if(n>0 && f.joursDepuisDerniere!=null){
+    etatDetail = `${n} commande(s) : il en faut ${CL_MIN_INTERVALLE} pour parler de rythme`;
+  }
+
+  return {
+    nbCommandes: n,
+    ca: f.ca||0,
+    panierMoyen: _clInd(panierMoyen, n, 1, n>0?`${n} commande(s)`:''),
+    intervalleMedian: _clInd(intervalleMedian, n, CL_MIN_INTERVALLE, `${(f.intervalles||[]).length} intervalle(s) observé(s)`),
+    regularite: _clInd(regularite, n, CL_MIN_REGULARITE, `${(f.intervalles||[]).length} intervalle(s)`),
+    tendancePanier: _clInd(tendancePanier, n, CL_MIN_TENDANCE, '3 dernières commandes comparées aux précédentes'),
+    diversite: _clInd(diversite, n, CL_MIN_DIVERSITE, `${nbParfums} parfum(s) sur ${n} commande(s)`),
+    nbParfumsDistincts: nbParfums,
+    etat, etatDetail,
+    anciennete: f.anciennete, joursDepuisDerniere: f.joursDepuisDerniere
+  };
+}
+
+// [v1437] STATUT — une étiquette, et TOUJOURS la raison qui la produit. Le rang de valeur exige
+// le contexte des autres clients : sans lui, on ne prétend pas au titre de VIP. PURE.
+function clientStatut(ind, contexte){
+  const c = contexte||{};
+  const n = ind.nbCommandes||0;
+  if(n===0) return {cle:'aucun', label:'Aucune commande', couleur:'#9a8a82', pourquoi:'aucune vente enregistrée à son nom'};
+  if(ind.etat==='dormant') return {cle:'dormant', label:'Dormant', couleur:'#b3261e', pourquoi:ind.etatDetail};
+  if(ind.etat==='retard')  return {cle:'retard',  label:'À relancer', couleur:'#b5701a', pourquoi:ind.etatDetail};
+  // VIP : uniquement si on connaît le CA des autres — sinon l'étiquette ne veut rien dire.
+  if(c.seuilVip!=null && (ind.ca||0) >= c.seuilVip && n>=2){
+    return {cle:'vip', label:'VIP', couleur:'#8a6d3b',
+            pourquoi:`${(typeof euro==='function')?euro(ind.ca):ind.ca} de CA — parmi les ${c.pctVip||10} % de clients les plus importants`};
+  }
+  if(n===1) return {cle:'nouveau', label:'Nouveau', couleur:'#3b6ea5', pourquoi:'une seule commande à ce jour'};
+  if(n>=CL_MIN_INTERVALLE && ind.etat==='actif') return {cle:'fidele', label:'Fidèle', couleur:'#3f7d52', pourquoi:ind.etatDetail};
+  return {cle:'actif', label:'Client actif', couleur:'#3f7d52', pourquoi:`${n} commandes`};
+}
+
+// [v1437] PRÉFÉRENCES reconstruites. `jamaisCommandes` a une valeur commerciale directe : c'est
+// la liste de ce qu'on peut lui faire découvrir. PURE.
+function clientPreferences(faits, catalogueParfums){
+  const f = faits||{};
+  const connus = (f.parfums||[]).map(p=>p.nom);
+  const cat = (catalogueParfums||[]).filter(Boolean);
+  const n = f.nbCommandes||0;
+  return {
+    favoris: (f.parfums||[]).slice(0,5).map(p=>({
+      nom:p.nom, qte:p.qte, nbCmd:p.nbCmd,
+      // Part des commandes où ce parfum apparaît : plus parlant qu'un volume brut.
+      partCmd: n>0 ? Math.round((p.nbCmd/n)*100) : null
+    })),
+    // Une association n'a de sens qu'observée PLUSIEURS fois : deux parfums vus ensemble une
+    // seule fois, c'est une commande, pas une habitude.
+    associations: (f.paires||[]).filter(p=>p.fois>=2).slice(0,5),
+    jamaisCommandes: cat.filter(nom => connus.indexOf(nom)<0),
+    tailleFavorite: (f.tailles||[]).length ? f.tailles[0] : null,
+    nbParfumsDistincts: connus.length
+  };
+}
+
+// [v1437] SYNTHÈSE en français — ce que Ben lirait s'il analysait lui-même les écrans. Chaque
+// phrase ne sort QUE si l'indicateur qui la porte est suffisant : une synthèse qui comble les
+// trous avec des formules vagues serait pire qu'une synthèse courte. PURE.
+function clientSynthese(ind, prefs){
+  const out = [];
+  const E = (typeof euro==='function') ? euro : (x=>x+' €');
+  if(ind.nbCommandes===0) return ['Aucune commande enregistrée pour ce client.'];
+  if(ind.intervalleMedian.suffisant){
+    const j = Math.round(ind.intervalleMedian.valeur);
+    const sem = Math.round(j/7);
+    out.push(`Commande en moyenne toutes les ${sem>=2?`${sem} semaines`:`${j} jours`}.`);
+  }
+  if(ind.panierMoyen.suffisant) out.push(`Panier moyen de ${E(ind.panierMoyen.valeur)} sur ${ind.nbCommandes} commande(s).`);
+  if(ind.tendancePanier.suffisant){
+    const t = ind.tendancePanier.valeur;
+    if(t >= 10) out.push(`Son panier progresse (+${t} % sur ses 3 dernières commandes).`);
+    else if(t <= -10) out.push(`Son panier recule (${t} % sur ses 3 dernières commandes).`);
+    else out.push(`Son panier est stable.`);
+  }
+  if(prefs.tailleFavorite && prefs.tailleFavorite.fois>=2) out.push(`Privilégie les coffrets de ${prefs.tailleFavorite.taille}.`);
+  if(prefs.favoris.length){
+    const noms = prefs.favoris.slice(0,3).map(p=>p.nom);
+    out.push(`Choisit principalement ${noms.join(', ')}.`);
+  }
+  if(ind.diversite.suffisant){
+    const d = ind.diversite.valeur;
+    if(d >= 2) out.push(`Explorateur : ${ind.nbParfumsDistincts} parfums différents goûtés.`);
+    else if(d <= 1) out.push(`Fidèle à ses parfums : peu de variation d'une commande à l'autre.`);
+  }
+  if(ind.etat==='retard' || ind.etat==='dormant') out.push(`⚠ ${ind.etatDetail}.`);
+  return out;
+}
+
+// [v1437] RECOMMANDATIONS — chacune porte son déclencheur, ses faits et son niveau de confiance.
+// Une recommandation dont Ben ne peut pas vérifier le fondement est une recommandation qu'il
+// suivra une fois, puis plus jamais. PURE.
+function clientRecommandations(ind, prefs, faits){
+  const recos = [];
+  const n = ind.nbCommandes||0;
+  if(n===0) return recos;
+
+  if(ind.etat==='retard' && ind.regularite.suffisant && ind.regularite.valeur <= 0.5){
+    recos.push({ cle:'relance-regulier', urgence:'haute', confiance:'haute',
+      titre:'Relancer maintenant',
+      pourquoi:`Client régulier (dispersion ${ind.regularite.valeur}) et ${ind.etatDetail}.`,
+      action: prefs.favoris.length ? `Proposer ${prefs.favoris[0].nom}, son parfum le plus commandé.` : 'Prendre contact.' });
+  } else if(ind.etat==='retard'){
+    recos.push({ cle:'relance-simple', urgence:'moyenne', confiance:'moyenne',
+      titre:'Sans nouvelles depuis plus longtemps que d\'habitude',
+      pourquoi: ind.etatDetail + ' — mais son rythme est irrégulier, le retard est moins significatif.',
+      action:'Un message simple, sans offre.' });
+  }
+  if(ind.etat==='dormant'){
+    recos.push({ cle:'dormant', urgence:'moyenne', confiance:'haute',
+      titre:'Client dormant',
+      pourquoi: ind.etatDetail,
+      action:'Contact personnel plutôt qu\'une offre commerciale.' });
+  }
+  if(n===1 && ind.joursDepuisDerniere!=null && ind.joursDepuisDerniere>=42){
+    recos.push({ cle:'premier-sans-suite', urgence:'moyenne', confiance:'moyenne',
+      titre:'Première commande sans suite',
+      pourquoi:`Une seule commande, il y a ${ind.joursDepuisDerniere} jours.`,
+      action:'Un remerciement, pas une relance commerciale.' });
+  }
+  if(ind.tendancePanier.suffisant && ind.tendancePanier.valeur <= -25){
+    recos.push({ cle:'panier-baisse', urgence:'basse', confiance:'moyenne',
+      titre:'Panier en baisse',
+      pourquoi:`${ind.tendancePanier.valeur} % sur ses 3 dernières commandes.`,
+      action:'Comprendre avant de proposer : un changement de besoin, pas forcément un désintérêt.' });
+  }
+  // Parfum délaissé : signal FAIBLE, donc jamais une alerte — une piste de conversation.
+  const delaisse = (faits.parfums||[]).find(p=>{
+    if(p.nbCmd < 2) return false;
+    const troisDernieres = (faits.dates||[]).slice(-3);
+    return troisDernieres.length===3 && p.derniere < troisDernieres[0];
+  });
+  if(delaisse){
+    recos.push({ cle:'parfum-delaisse', urgence:'basse', confiance:'faible',
+      titre:`${delaisse.nom} a disparu de ses commandes`,
+      pourquoi:`Commandé ${delaisse.nbCmd} fois, plus depuis le ${delaisse.derniere}.`,
+      action:'À mentionner en conversation — pas une relance en soi.' });
+  }
+  const ordre = {haute:0, moyenne:1, basse:2};
+  return recos.sort((a,b)=> ordre[a.urgence]-ordre[b.urgence]);
+}
+
+// [v1437] LA VUE — point d'entrée UNIVERSEL. Tout clic sur un nom de client, depuis n'importe
+// quel écran (Commandes, Dashboard, Statistiques, Copilote, Impayés…), arrive ici. Le formulaire
+// d'édition reste accessible depuis cette fiche, mais il n'est plus la porte d'entrée : ouvrir un
+// client pour le comprendre et l'ouvrir pour le corriger sont deux gestes différents.
+async function clientFiche(id){
+  const cid = +id;
+  const c = await db.clients.get(cid).catch(()=>null);
+  if(!c){ toast('Client introuvable'); return; }
+  const orders = await db.orders.toArray().catch(()=>[]);
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  const catalogue = [...new Set(recipes.map(r=>r&&r.produitNom).filter(Boolean))];
+
+  const faits = clientFaits(cid, orders);
+  const ind   = clientIndicateurs(faits);
+  const prefs = clientPreferences(faits, catalogue);
+
+  // Seuil VIP : calculé sur la population réelle des clients. Sans ce contexte, l'étiquette « VIP »
+  // ne voudrait rien dire — on ne se compare pas à soi-même.
+  let contexte = {};
+  try{
+    const caParClient = {};
+    orders.forEach(o=>{ if(o && o.clientId && (typeof estVenteAgregable!=='function' || estVenteAgregable(o)) && o.histo!==true){
+      caParClient[o.clientId] = (caParClient[o.clientId]||0) + (+o.montant||0); } });
+    const vals = Object.values(caParClient).sort((a,b)=>b-a);
+    if(vals.length >= 5) contexte = { seuilVip: vals[Math.max(0, Math.ceil(vals.length*0.1)-1)], pctVip:10 };
+  }catch(e){ swallow(e,'clientFiche vip'); }
+
+  const st = clientStatut(ind, contexte);
+  const synthese = clientSynthese(ind, prefs);
+  const recos = clientRecommandations(ind, prefs, faits);
+
+  const P = (typeof privacyModeEnabled==='function' && privacyModeEnabled());
+  const masque = v => P ? '•••' : v;
+  const tel = (c.tel||'').trim(), mail = (c.email||'').trim(), adr = (c.adresse||'').trim();
+
+  // ── Actions immédiates ────────────────────────────────────────────────────────────────────
+  const btn = (label, onclick, titre) => `<button class="btn ghost sm" style="flex:1 1 auto;min-width:88px" onclick="${onclick}" title="${esc(titre||label)}">${label}</button>`;
+  const actions = [
+    tel  ? btn('📞 Appeler', `location.href='tel:${esc(tel.replace(/\s/g,''))}'`) : '',
+    tel  ? btn('💬 SMS', `location.href='sms:${esc(tel.replace(/\s/g,''))}'`) : '',
+    mail ? btn('✉️ E-mail', `location.href='mailto:${esc(mail)}'`) : '',
+    tel  ? btn('⧉ Tél', `clFicheCopier(${JSON.stringify(tel)})`, 'Copier le téléphone') : '',
+    mail ? btn('⧉ Mail', `clFicheCopier(${JSON.stringify(mail)})`, 'Copier l\'adresse e-mail') : '',
+    adr  ? btn('🗺 Maps', `window.open('https://maps.google.com/?q='+encodeURIComponent(${JSON.stringify(adr)}),'_blank')`) : '',
+    btn('🛒 Commande', `closeModal();cmdForm(null,{clientId:${cid}})`, 'Créer une nouvelle commande pour ce client'),
+    btn('✎ Modifier', `closeModal();clientForm(${cid})`, 'Modifier la fiche d\'identité'),
+  ].filter(Boolean).join('');
+
+  // ── Indicateur avec son assise : jamais un chiffre nu ─────────────────────────────────────
+  const kpi = (label, indic, format, unite) => {
+    if(!indic.suffisant){
+      return `<div class="sum-box" style="flex-direction:column;align-items:flex-start;gap:2px">
+        <span style="font-size:.76rem;color:#9a8a82">${label}</span>
+        <b style="color:#9a8a82;font-weight:500;font-size:.82rem">pas encore mesurable</b>
+        <span style="font-size:.68rem;color:#b5a89f">${indic.n} commande(s) — il en faut ${indic.minRequis}</span>
+      </div>`;
+    }
+    const v = format ? format(indic.valeur) : indic.valeur;
+    return `<div class="sum-box" style="flex-direction:column;align-items:flex-start;gap:2px">
+      <span style="font-size:.76rem;color:#9a8a82">${label}</span>
+      <b style="font-size:.95rem">${masque(v)}${unite||''}</b>
+      <span style="font-size:.68rem;color:#b5a89f">${esc(indic.detail||'')}</span>
+    </div>`;
+  };
+
+  const troisDernieres = faits.commandes.slice(-3).reverse().map(o=>{
+    const dem = _orderParfumDemand(o);
+    const compo = Object.entries(dem).filter(([,q])=>q>0).map(([n,q])=>`${esc(n)} ×${q}`).join(', ');
+    return `<div class="sum-box" style="flex-direction:column;align-items:flex-start;gap:3px;cursor:pointer" onclick="closeModal();cmdView(${o.id})">
+      <span style="display:flex;width:100%;justify-content:space-between;gap:8px">
+        <b style="font-size:.86rem">${fmtDate(o.date)}</b><b>${masque(euro(+o.montant||0))}</b></span>
+      ${compo?`<span style="font-size:.74rem;color:#8a7a72">${compo}</span>`:''}
+      ${o.commentaire?`<span style="font-size:.72rem;color:#9a8a82;font-style:italic">${esc(o.commentaire)}</span>`:''}
+    </div>`;
+  }).join('') || '<p class="note">Aucune commande.</p>';
+
+  const favorisHtml = prefs.favoris.length
+    ? prefs.favoris.map(p=>`<div class="sum-box"><span>${esc(p.nom)}</span><b>${p.qte} pc · ${p.partCmd}% de ses commandes</b></div>`).join('')
+    : '<p class="note">Aucun parfum identifié sur ses commandes.</p>';
+
+  const assocHtml = prefs.associations.length
+    ? prefs.associations.map(a=>`<div class="sum-box"><span>${esc(a.paire)}</span><b>${a.fois}×</b></div>`).join('')
+    : `<p class="note">Aucune association récurrente${faits.nbCommandes<2?' (il faut plusieurs commandes)':' — les parfums varient d\'une commande à l\'autre'}.</p>`;
+
+  const recosHtml = recos.length ? recos.map(r=>{
+    const col = r.urgence==='haute'?'#b3261e':(r.urgence==='moyenne'?'#b5701a':'#6a7a68');
+    return `<div style="border-left:3px solid ${col};background:#fbf9f4;border-radius:8px;padding:9px 11px;margin-bottom:7px">
+      <b style="font-size:.88rem;color:${col}">${esc(r.titre)}</b>
+      <div style="font-size:.78rem;color:#6a5a52;margin-top:3px">${esc(r.pourquoi)}</div>
+      <div style="font-size:.78rem;margin-top:4px">→ ${esc(r.action)}</div>
+      <div style="font-size:.68rem;color:#9a8a82;margin-top:4px">confiance ${esc(r.confiance)}</div>
+    </div>`;
+  }).join('') : '<p class="note">Rien à signaler : ce client suit son rythme habituel.</p>';
+
+  openModal(`
+    <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:2px">
+      <h3 style="margin:0">${masque(esc(c.nom||'—'))}</h3>
+      <span class="tag" style="background:${st.couleur};color:#fff;font-size:.7rem">${esc(st.label)}</span>
+    </div>
+    <p class="note" style="margin:0 0 8px">${esc(st.pourquoi)}</p>
+
+    <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px">${actions}</div>
+
+    <div class="panel" style="margin-bottom:8px">
+      <h2 style="font-size:.95rem">📌 Ce qu'on sait</h2>
+      <div class="sum-box"><span>Client depuis</span><b>${faits.premiereCmd?`${fmtDate(faits.premiereCmd)} (${Math.round((faits.anciennete||0)/30)} mois)`:'—'}</b></div>
+      <div class="sum-box"><span>Commandes</span><b>${faits.nbCommandes}</b></div>
+      <div class="sum-box"><span>Chiffre d'affaires</span><b>${masque(euro(faits.ca))}</b></div>
+      ${tel?`<div class="sum-box"><span>Téléphone</span><b>${masque(esc(tel))}</b></div>`:''}
+      ${mail?`<div class="sum-box"><span>E-mail</span><b>${masque(esc(mail))}</b></div>`:''}
+    </div>
+
+    <div class="panel" style="margin-bottom:8px">
+      <h2 style="font-size:.95rem">📊 Son comportement</h2>
+      ${kpi('Panier moyen', ind.panierMoyen, euro)}
+      ${kpi('Rythme habituel', ind.intervalleMedian, v=>Math.round(v), ' jours')}
+      ${kpi('Régularité', ind.regularite, v=> v<=0.35?'très régulier':(v<=0.6?'régulier':'irrégulier'))}
+      ${kpi('Tendance du panier', ind.tendancePanier, v=>(v>0?'+':'')+v, ' %')}
+      ${kpi('Diversité', ind.diversite, v=> v>=2?'explorateur':(v<=1?'fidèle à ses parfums':'équilibré'))}
+      <p class="note" style="margin:6px 0 0;font-size:.72rem">Chaque indicateur affiche sur combien de commandes il repose. En dessous du seuil, il ne se prononce pas — un rythme déduit de deux commandes n'est pas un rythme.</p>
+    </div>
+
+    ${synthese.length?`<div class="panel" style="margin-bottom:8px;background:#f7faf6;border-color:#cfd9c9">
+      <h2 style="font-size:.95rem">🧭 En résumé</h2>
+      ${synthese.map(p=>`<div style="font-size:.86rem;margin-bottom:4px">• ${esc(p)}</div>`).join('')}
+    </div>`:''}
+
+    <div class="panel" style="margin-bottom:8px">
+      <h2 style="font-size:.95rem">💡 Que faire maintenant</h2>
+      ${recosHtml}
+    </div>
+
+    <div class="panel" style="margin-bottom:8px">
+      <h2 style="font-size:.95rem">🍬 Ses goûts</h2>
+      ${favorisHtml}
+      ${prefs.tailleFavorite?`<div class="sum-box"><span>Format favori</span><b>Coffret de ${prefs.tailleFavorite.taille} (${prefs.tailleFavorite.fois}×)</b></div>`:''}
+      <h3 style="font-size:.84rem;margin:10px 0 4px;color:#8a7a72">Associations récurrentes</h3>
+      ${assocHtml}
+      ${prefs.jamaisCommandes.length?`<h3 style="font-size:.84rem;margin:10px 0 4px;color:#8a7a72">Jamais goûtés (${prefs.jamaisCommandes.length})</h3>
+        <p class="note" style="font-size:.78rem">${prefs.jamaisCommandes.slice(0,8).map(esc).join(' · ')}${prefs.jamaisCommandes.length>8?' …':''}</p>`:''}
+    </div>
+
+    <div class="panel" style="margin-bottom:8px">
+      <h2 style="font-size:.95rem">🧾 Ses 3 dernières commandes</h2>
+      ${troisDernieres}
+      ${faits.nbCommandes>3?`<button class="btn ghost sm" style="width:100%;margin-top:6px" onclick="clFicheHistorique(${cid})">Afficher tout l'historique (${faits.nbCommandes})</button>`:''}
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Fermer</button>
+      <button class="btn" onclick="closeModal();clientForm(${cid})">Modifier la fiche</button>
+    </div>`);
+}
+
+// [v1437] Historique complet, dans la même fiche : « aucune navigation inutile ne doit être imposée ».
+async function clFicheHistorique(id){
+  const cid=+id;
+  const orders = await db.orders.toArray().catch(()=>[]);
+  const f = clientFaits(cid, orders);
+  const P = (typeof privacyModeEnabled==='function' && privacyModeEnabled());
+  const lignes = f.commandes.slice().reverse().map(o=>{
+    const dem = _orderParfumDemand(o);
+    const compo = Object.entries(dem).filter(([,q])=>q>0).map(([n,q])=>`${esc(n)} ×${q}`).join(', ');
+    return `<div class="sum-box" style="flex-direction:column;align-items:flex-start;gap:3px;cursor:pointer" onclick="closeModal();cmdView(${o.id})">
+      <span style="display:flex;width:100%;justify-content:space-between;gap:8px">
+        <b style="font-size:.86rem">${fmtDate(o.date)}</b><b>${P?'•••':euro(+o.montant||0)}</b></span>
+      ${compo?`<span style="font-size:.74rem;color:#8a7a72">${compo}</span>`:''}
+    </div>`;
+  }).join('') || '<p class="note">Aucune commande.</p>';
+  openModal(`<h3>Historique complet</h3>
+    <p class="note">${f.nbCommandes} commande(s) · ${P?'•••':euro(f.ca)}</p>
+    <div style="max-height:60vh;overflow:auto">${lignes}</div>
+    <div class="modal-actions"><button class="btn ghost" onclick="clientFiche(${cid})">← Retour à la fiche</button>
+      <button class="btn" onclick="closeModal()">Fermer</button></div>`);
+}
+
+// Copie presse-papier avec repli : sur iOS l'API moderne échoue hors contexte sécurisé.
+function clFicheCopier(txt){
+  try{
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(txt).then(()=>toast('Copié ✓')).catch(()=>toast('Copie impossible'));
+      return;
+    }
+    const ta=document.createElement('textarea'); ta.value=txt; ta.style.position='fixed'; ta.style.opacity='0';
+    document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+    toast('Copié ✓');
+  }catch(e){ toast('Copie impossible'); swallow(e,'clFicheCopier'); }
+}
+
 async function renderClients(){
   const clients = await db.clients.orderBy('nom').toArray();
   const orders = await db.orders.toArray();
@@ -18502,7 +18990,7 @@ async function renderClients(){
   });
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Clients</h1><p id="clCount">${clients.length} fiche(s)</p></div>
-     <div class="flex"><button class="btn ghost sm" onclick="togglePrivacyMode()" title="Masquer/afficher les données sensibles">${privacyModeEnabled()?'👁️':'🙈'}</button><input class="search" id="clSearch" placeholder="Nom, société, téléphone, e-mail, réf, notes…" value="${esc(clientSearch)}" oninput="clientFilter(this.value)" autocomplete="off" autocapitalize="off" autocorrect="off"><button class="btn" onclick="clientForm()">+ Nouveau client</button></div></div>
+     <div class="flex"><button class="btn ghost sm" onclick="togglePrivacyMode()" title="Masquer/afficher les données sensibles">${privacyModeEnabled()?'👁️':'🙈'}</button><input class="search" id="clSearch" placeholder="Nom, société, téléphone, e-mail, réf, notes…" value="${esc(clientSearch)}" oninput="clientFilter(this.value)" autocomplete="off" autocapitalize="off" autocorrect="off"><button class="btn" onclick="clientFiche()">+ Nouveau client</button></div></div>
    <div class="panel">
      <div id="clBody" class="cl-list"></div>
      <div id="clEmpty" class="empty" style="display:none">Aucun client.</div>
@@ -18514,7 +19002,7 @@ function _clientRow(row){
   const c=row.c;
   const typeTag = `<span class="tag ${c.type==='Pro'?'event':'ok'}">${esc(c.type||'Particulier')}</span>`;
   const contact = [c.tel?nameP(c.tel):'', c.email?nameP(c.email):''].filter(Boolean).join(' · ');
-  return `<div class="cl-card" onclick="clientForm(${c.id})">
+  return `<div class="cl-card" onclick="clientFiche(${c.id})">
     <div class="cl-card-head">
       <span class="cl-card-nom">${nameP(c.nom)}</span>
       ${typeTag}
@@ -18620,7 +19108,7 @@ async function clientPopup(id){
     ${ligne('Adresse', c.adresse)}
     ${c.notes?`<div class="sum-box" style="flex-direction:column;align-items:flex-start"><span>Notes</span><b style="font-weight:500;white-space:pre-wrap">${esc(c.notes)}</b></div>`:''}
     ${stat}
-    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn" onclick="clientForm(${id})">Ouvrir la fiche complète</button></div>`);
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn" onclick="clientFiche(${id})">Ouvrir la fiche complète</button></div>`);
 }
 // Détail des commandes d'un client : quoi a été acheté et à quelle date.
 async function clientOrders(id){
@@ -20091,7 +20579,7 @@ async function cmdView(id){
   const _fillesDeCetteCmd = commandesFillesDe(o.id, _ordersTous);
   const _reliquatSiMere = _fillesDeCetteCmd.length ? reliquatCommandeMere(o, _ordersTous) : null;
   openModal(`${retourBoutonHtml()}<h3>Détail commande</h3>
-    <p style="margin-bottom:10px"><b>${cl?`<span class="link-name" onclick="closeModal();clientForm(${cl.id})">${esc(cl.nom)}</span>`:'—'}</b> · ${fmtDate(o.date)}${o.heureLivraison?' · '+esc(o.heureLivraison):''}</p>
+    <p style="margin-bottom:10px"><b>${cl?`<span class="link-name" onclick="closeModal();clientFiche(${cl.id})">${esc(cl.nom)}</span>`:'—'}</b> · ${fmtDate(o.date)}${o.heureLivraison?' · '+esc(o.heureLivraison):''}</p>
     ${(function(){
       // Encart paiement EN HAUT, bien visible : statut + date(s) et moyen(s) au premier coup d'œil.
       const st=orderPayStatus(o), solde=orderBalance(o), enc=orderPaid(o);
@@ -37090,7 +37578,7 @@ async function renderProfit(){
   const clientTable = clientRows.length?`<div style="display:flex;flex-direction:column;gap:10px">${clientRows.map((c,idx)=>{
       const tauxClamp=Math.max(0,Math.min(100,c.tauxNet||0));
       const medaille = idx===0?'🥇':idx===1?'🥈':idx===2?'🥉':`<span style="display:inline-flex;width:22px;height:22px;align-items:center;justify-content:center;background:#f0e9de;border-radius:50%;font-size:.72rem;color:#9a8a82;font-weight:700">${idx+1}</span>`;
-      return `<div onclick="${c.clientId?`clientForm(${c.clientId})`:''}" style="${c.clientId?'cursor:pointer;':''}background:#fff;border:1px solid var(--hair);border-left:4px solid ${c.scale.col};border-radius:14px;padding:13px 15px;box-shadow:var(--sh-1)">
+      return `<div onclick="${c.clientId?`clientFiche(${c.clientId})`:''}" style="${c.clientId?'cursor:pointer;':''}background:#fff;border:1px solid var(--hair);border-left:4px solid ${c.scale.col};border-radius:14px;padding:13px 15px;box-shadow:var(--sh-1)">
         <div style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
           <span style="flex:none">${medaille}</span>
           <b style="flex:1;font-size:1rem;color:var(--bordeaux);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.nom)}${c.aReprise?` <span style="color:#9a8a82;font-size:.66rem;font-weight:400" title="Contient des commandes de reprise : marge estimée">~ estimé</span>`:''}</b>
@@ -38526,9 +39014,9 @@ async function renderAnalyse(){
 
   // --- CLIENTS ---
   const A=analyzeClients(R,orders);
-  const valLine=c=>`<div class="sum-box"><span><span class="link-name" onclick="clientForm(${c.id})">${esc(c.nom)}</span></span><b>${euro(c.ca)} · ${c.nbCommandes} cmd · panier ${euro(c.panierMoyen)}</b></div>`;
-  const freqLine=c=>`<div class="sum-box"><span><span class="link-name" onclick="clientForm(${c.id})">${esc(c.nom)}</span></span><b>${c.nbCommandes} commandes${c.intervalleMoy!=null?' · ~'+Math.round(c.intervalleMoy)+' j entre cmd':''}</b></div>`;
-  const prefLine=c=>`<div class="sum-box"><span><span class="link-name" onclick="clientForm(${c.id})">${esc(c.nom)}</span></span><b>${c.parfumFavori?esc(c.parfumFavori):'—'}</b></div>`;
+  const valLine=c=>`<div class="sum-box"><span><span class="link-name" onclick="clientFiche(${c.id})">${esc(c.nom)}</span></span><b>${euro(c.ca)} · ${c.nbCommandes} cmd · panier ${euro(c.panierMoyen)}</b></div>`;
+  const freqLine=c=>`<div class="sum-box"><span><span class="link-name" onclick="clientFiche(${c.id})">${esc(c.nom)}</span></span><b>${c.nbCommandes} commandes${c.intervalleMoy!=null?' · ~'+Math.round(c.intervalleMoy)+' j entre cmd':''}</b></div>`;
+  const prefLine=c=>`<div class="sum-box"><span><span class="link-name" onclick="clientFiche(${c.id})">${esc(c.nom)}</span></span><b>${c.parfumFavori?esc(c.parfumFavori):'—'}</b></div>`;
   const clientBlock=`
    <div class="panel"><h2>Clients à forte valeur <span style="font-weight:400;font-size:.8rem;color:#9a8a82">— CA cumulé</span></h2>
      ${A.parValeur.length?A.parValeur.slice(0,8).map(valLine).join(''):'<p class="note">Aucune commande payée.</p>'}</div>
@@ -38858,7 +39346,7 @@ async function renderEvents(){
     const finalLate = r.dateFinal && r.st!=='Payé' && daysTo(r.dateFinal)!=null && daysTo(r.dateFinal)<0;
     return `<div class="panel" style="margin:8px 0">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
-        <div><b>${o.clientId?`<span class="link-name" onclick="clientForm(${o.clientId})">${esc(r.clientNom)}</span>`:esc(r.clientNom)}</b>
+        <div><b>${o.clientId?`<span class="link-name" onclick="clientFiche(${o.clientId})">${esc(r.clientNom)}</span>`:esc(r.clientNom)}</b>
           <span style="color:#9a8a82;font-size:.8rem"> · n°${esc(orderNumber(o))} · ${fmtDate(o.date)}</span></div>
         ${stTag}
       </div>
@@ -45688,7 +46176,7 @@ async function aiQueryTopClients(params){
   const t=rank[0];
   aiSay(`${aiHero(esc(t.nom), fl?`Meilleur client — ${esc(fl)}`:'Ton meilleur client', {color:'var(--caramel)', sub:`${qty(t.n)} macaron${t.n>1?'s':''}`})}
     ${aiSynth(`En tête${rank[1]?`, devant <b>${esc(rank[1].nom)}</b>`:''}. Pense à le chouchouter.`, {icon:'⭐'})}
-    ${aiDetails(rank.map((x,i)=>`<div class="sum-box"><span>${i+1}. ${x.id?`<span class="link-name" onclick="clientForm(${x.id})">${esc(x.nom)}</span>`:esc(x.nom)}</span><b>${qty(x.n)} mac.</b></div>`).join(''), 'Voir le classement')}
+    ${aiDetails(rank.map((x,i)=>`<div class="sum-box"><span>${i+1}. ${x.id?`<span class="link-name" onclick="clientFiche(${x.id})">${esc(x.nom)}</span>`:esc(x.nom)}</span><b>${qty(x.n)} mac.</b></div>`).join(''), 'Voir le classement')}
     ${aiSuite([{label:'🔔 Qui relancer ?', ask:'qui je dois relancer'}])}`);
 }
 // [LOT 3] URSSAF — réutilise computeMonthlyBilan(ym) (source unique de la compta) pour donner les
@@ -45732,7 +46220,7 @@ async function aiQueryPaiementsDus(){
       ${aiSynth('Tout est réglé, aucune commande avec un solde dû.', {tone:'ok', icon:'✅'})}`);
   }
   const total = Math.round(dus.reduce((s,x)=>s+x.reste,0)*100)/100;
-  const lignes = dus.map(x=>`<div class="sum-box"><span>${x.clientId?`<span class="link-name" onclick="clientForm(${x.clientId})">${esc(x.client)}</span>`:esc(x.client)}${x.date?` · ${fmtDate(x.date)}`:''} <span class="tag" style="font-size:.66rem;background:${x.statut==='Partiel'?'#fbeede':'#fdecea'};color:${x.statut==='Partiel'?'#9a5b16':'#b3261e'}">${esc(x.statut)}</span></span><b style="color:var(--red,#b3261e)">${euro(x.reste)}${x.statut==='Partiel'?` <span style="font-weight:400;font-size:.72rem;color:#9a8a82">/ ${euro(x.total)}</span>`:''}</b></div>`).join('');
+  const lignes = dus.map(x=>`<div class="sum-box"><span>${x.clientId?`<span class="link-name" onclick="clientFiche(${x.clientId})">${esc(x.client)}</span>`:esc(x.client)}${x.date?` · ${fmtDate(x.date)}`:''} <span class="tag" style="font-size:.66rem;background:${x.statut==='Partiel'?'#fbeede':'#fdecea'};color:${x.statut==='Partiel'?'#9a5b16':'#b3261e'}">${esc(x.statut)}</span></span><b style="color:var(--red,#b3261e)">${euro(x.reste)}${x.statut==='Partiel'?` <span style="font-weight:400;font-size:.72rem;color:#9a8a82">/ ${euro(x.total)}</span>`:''}</b></div>`).join('');
   const _plusGros = dus.slice().sort((a,b)=>b.reste-a.reste)[0];
   return aiSay(`${aiHero(euro(total), 'Total dû', {color:'var(--red)', sub:`${dus.length} commande${dus.length>1?'s':''} en attente`})}
     ${aiSynth(`Le plus gros reste à encaisser : <b>${esc(_plusGros.client)}</b> (${euro(_plusGros.reste)}).`, {icon:'💸'})}
@@ -45934,7 +46422,7 @@ async function aiQueryClientsRelance(){
       <div class="sum-box" style="border-left:4px solid #3f7d52"><span>✓ Aucun client en sommeil : tes clients réguliers sont à jour.</span></div>`);
   }
   return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">Clients à relancer <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(${rows.length})</span></h3>
-    ${rows.slice(0,10).map(r=>`<div class="sum-box"><span>${r.id?`<span class="link-name" onclick="clientForm(${r.id})">${esc(r.nom)}</span>`:esc(r.nom)} <span style="color:#9a8a82;font-size:.72rem">(${r.n} cmd${r.n>1?'s':''}${r.freq!=null?`, ~${r.freq>=14?Math.round(r.freq/7)+' sem':r.freq+' j'}`:''})</span></span><b style="color:var(--red,#b3261e)">${r.joursDepuis} j</b></div>`).join('')}
+    ${rows.slice(0,10).map(r=>`<div class="sum-box"><span>${r.id?`<span class="link-name" onclick="clientFiche(${r.id})">${esc(r.nom)}</span>`:esc(r.nom)} <span style="color:#9a8a82;font-size:.72rem">(${r.n} cmd${r.n>1?'s':''}${r.freq!=null?`, ~${r.freq>=14?Math.round(r.freq/7)+' sem':r.freq+' j'}`:''})</span></span><b style="color:var(--red,#b3261e)">${r.joursDepuis} j</b></div>`).join('')}
     <p class="note">Clients qui n'ont pas commandé depuis nettement plus longtemps que leur habitude.</p>`);
 }
 
@@ -46203,7 +46691,7 @@ async function aiQueryRentabilite(params){
     if(!rows.length) return aiSay(`<p class="note">Pas assez de données de marge par client.</p>`);
     const tri=[...rows].sort((a,b)=> sensPire ? a.nette-b.nette : b.nette-a.nette);
     const head=tri[0];
-    const liste=tri.slice(0,6).map((x,i)=>`<div class="sum-box"><span>${i+1}. ${x.id?`<span class="link-name" onclick="clientForm(${x.id})">${esc(x.nom)}</span>`:esc(x.nom)}</span><b style="color:${x.nette>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(x.nette)} · ${x.tauxNet}%</b></div>`).join('');
+    const liste=tri.slice(0,6).map((x,i)=>`<div class="sum-box"><span>${i+1}. ${x.id?`<span class="link-name" onclick="clientFiche(${x.id})">${esc(x.nom)}</span>`:esc(x.nom)}</span><b style="color:${x.nette>=0?'#3f7d52':'var(--red,#b3261e)'}">${euro(x.nette)} · ${x.tauxNet}%</b></div>`).join('');
     return aiSay(`<h3 style="font-size:1rem;margin-bottom:6px">${sensPire?'Clients les MOINS rentables':'Clients les plus rentables'} <span style="font-weight:400;font-size:.78rem;color:#9a8a82">(marge nette)</span></h3>
       <div style="font-size:.86rem;margin-bottom:8px">${sensPire?'Le moins rentable':'Ton client le plus rentable'} : <b>${esc(head.nom)}</b> — ${euro(head.nette)} de marge nette sur ${head.n} commande(s).</div>
       ${liste}`);
@@ -47840,7 +48328,7 @@ async function aiQueryProfilClient(params){
       <div class="sum-box"><span>Panier moyen</span><b>${euro(D.panierMoyen)}</b></div>
       ${D.parfumPrefere?`<div class="sum-box"><span>Parfum préféré</span><b>${esc(D.parfumPrefere)}</b></div>`:''}
       <div class="sum-box"><span>Fréquence</span><b>${esc(D.frequenceTxt||'—')}</b></div>`, 'Voir le détail')}
-    ${aiSuite([{label:'👤 Ouvrir sa fiche', action:`clientForm(${params.client.id})`},{label:'🛒 Son dernier achat', ask:`dernière commande de ${params.client.nom||''}`}])}`);
+    ${aiSuite([{label:'👤 Ouvrir sa fiche', action:`clientFiche(${params.client.id})`},{label:'🛒 Son dernier achat', ask:`dernière commande de ${params.client.nom||''}`}])}`);
 }
 
 // [V943] PRÉVISION DE VENTES (ce qui va partir) — réutilise computeSalesVelocity (vélocité = demande).

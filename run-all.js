@@ -147,7 +147,8 @@ const SUITES = [
   'v1433-marge-macaron-hors-reprises.test.js', // v1433 · le €/macaron de l'accueil : assiette de marge sans reprises/filles, et dénominateur limité aux pièces dont la marge est calculée
   'v1434-dons-independants-paiement.test.js', // v1434 · un DON compte qu'il soit payé ou non : le filtre de vente s'applique APRÈS le comptage des dons, jamais en amont de buildFlavorSales
   'v1435-marches-dans-planning.test.js',      // v1435 · les marchés programmés entrent dans le planning : besoinMarchesParParfum, point de vérité unique des 3 écrans, sans condition de mode
-  'v1436-location-pyramide-service.test.js'   // v1436 · la location de pyramide remonte en prestation de service même sans ligne prestation séparée — montantServiceLigne, point de vérité unique
+  'v1436-location-pyramide-service.test.js',  // v1436 · la location de pyramide remonte en prestation de service même sans ligne prestation séparée — montantServiceLigne, point de vérité unique
+  'v1437-fiche-client-copilote.test.js'       // v1437 · fiche client intelligente : indicateurs à seuil de silence, état relatif au rythme du client, recos argumentées, ouverture universelle
 ];
 
 let allOk = true;
