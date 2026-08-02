@@ -63,7 +63,7 @@ function vrai(cond, label){ eq(!!cond, true, label); }
 // La règle d'assiette, rejouée à l'identique d'analyzeFlavorProfitability.
 function assiette(M, orders){
   return {
-    marge:   (orders||[]).filter(o=>o && o.histo!==true && M.estVenteAgregable(o)),
+    marge:   (orders||[]).filter(o=>o && o.histo!==true && o.commandeMereId==null),
     reprise: (orders||[]).filter(o=>o && o.histo===true),
   };
 }
@@ -113,7 +113,8 @@ const VENTES = [
   const fille  = { id:30, date:'2026-06-20', montant:160, paiement:'Payé', commandeMereId:1 };
   const impaye = { id:31, date:'2026-06-21', montant:200, paiement:'En attente' };
   const a = assiette(M, VENTES.concat([fille, impaye]));
-  eq(a.marge.map(o=>o.id), [1,2], 'CAS3 · ni la fille ni l\'impayée n\'entrent');
+  eq(a.marge.map(o=>o.id), [1,2,31],
+     'CAS3 · l\'assiette écarte la fille ; l\'impayée est retenue plus loin (ses DONS comptent — v1434)');
   eq(M.estVenteAgregable(fille), false,  'CAS3 · la fille doublonne sa mère');
   eq(M.estVenteAgregable(impaye), false, 'CAS3 · une commande à préparer n\'est pas une vente');
   eq(M.estVenteAgregable(VENTES[0]), true, 'CAS3 · une vente payée, elle, compte');
@@ -156,13 +157,21 @@ const VENTES = [
   const src = stripComments(extractFunction('analyzeFlavorProfitability'));
   vrai(/const ordersReprise = \(orders\|\|\[\]\)\.filter\(o=>o && o\.histo===true\)/.test(src),
      'CAS7 · les reprises sont isolées');
-  vrai(/const ordersMarge   = \(orders\|\|\[\]\)\.filter\(o=>o && o\.histo!==true && estVenteAgregable\(o\)\)/.test(src),
-     'CAS7 · l\'assiette de marge exclut reprises, filles et impayées');
+  // ⚠️ RÉÉCRIT EN v1434, et il faut dire pourquoi. Cette assertion gelait `estVenteAgregable` DANS
+  // l'assiette d'entrée — or ce prédicat exige `paiement==='Payé'`, ce qui écartait aussi les DONS
+  // (un don n'est jamais payé). `buildFlavorSales` produit DEUX mesures de nature différente ;
+  // filtrer en amont appliquait à toutes le critère d'une seule. L'assiette ne porte donc plus que
+  // ce qui vaut pour TOUTES les mesures — époque et doublon — et la condition de paiement vit
+  // désormais dans buildFlavorSales, là où vente et don se séparent (cf. suite v1434).
+  vrai(/const ordersMarge   = \(orders\|\|\[\]\)\.filter\(o=>o && o\.histo!==true && o\.commandeMereId==null\)/.test(src),
+     'CAS7 · l\'assiette de marge exclut reprises et filles');
+  vrai(/estVenteAgregable\(o\)\) return;/.test(stripComments(extractFunction('buildFlavorSales'))),
+     'CAS7 · la condition de paiement s\'applique à la VENTE, dans buildFlavorSales');
   vrai(/buildFlavorSales\(ordersMarge,/.test(src),
      'CAS7 · c\'est bien cette assiette qui alimente les ventes par parfum');
   eq(/buildFlavorSales\(orders,/.test(src), false,
      'CAS7 · plus aucun appel sur la liste brute des commandes');
-  vrai(/estVenteAgregable\(o\)/.test(src),
+  vrai(/estVenteAgregable/.test(stripComments(extractFunction('buildFlavorSales'))),
      'CAS7 · on réutilise le prédicat de la v1421, on n\'en réécrit pas un second');
 }
 

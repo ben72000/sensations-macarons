@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1433';
+const APP_VERSION = 'v1436';
 const APP_MAJ = 'CHANTIER A — L’APP NE PEUT PLUS ÉCHOUER EN SILENCE. Le constat de l’audit était dur : 347 endroits du code attrapaient une erreur et l’enregistraient fidèlement… dans un carnet que TU NE POUVAIS PAS OUVRIR. Il fallait brancher l’iPhone sur un Mac. Autant dire jamais. ET LE CARNET ÉTAIT EFFACÉ À CHAQUE RECHARGEMENT. C’est le mécanisme EXACT qui a caché la panne Dexie pendant un mois : chaque écriture kv échouait, la validation ne démarrait jamais, et l’écran affichait « 0 refus, 0 suspects » — ce qui RESSEMBLAIT à une bonne nouvelle alors que ça voulait dire « le contrôle n’a jamais démarré ». CE QUI CHANGE. 1) UN ÉCRAN « Santé de l’app » (Sauvegarde & sécurité) : tu lis enfin ce qui a cassé, depuis ton téléphone, sans Mac. 2) LES INCIDENTS VIVENT EN BASE (nouvelle table errLog) : ils survivent à un rechargement, donc tu peux constater qu’une panne DURE — c’est précisément ce que l’ancien carnet en mémoire rendait impossible. 3) UN FILET GLOBAL : une erreur hors try/catch te donnait un écran figé sans trace ; elle est maintenant enregistrée et annoncée par une bannière discrète. 4) UNE PASTILLE SUR L’ACCUEIL quand des incidents IMPORTANTS s’accumulent. LE TRI QUE J’AI FIGÉ, et qui est le cœur du travail : un échec d’AFFICHAGE et un échec d’ÉCRITURE EN BASE ne se valent pas. Base, sauvegarde, import, validation, compta → IMPORTANT, ça parle. Rendu, affichage → mineur, ça s’enregistre sans crier. Confondre les deux, c’est noyer le signal sous le bruit, et une alerte qui crie tout le temps est une alerte qu’on ne regarde plus. CE QUE JE N’AI PAS FAIT : deviner la cause d’une erreur, ni prétendre la réparer. L’écran montre ce qui s’est réellement passé. Une explication inventée serait pire qu’un silence. ET UNE MISE EN GARDE QUE JE TE DOIS : un écran Santé VIDE n’est PAS une preuve que tout va bien — c’est une absence d’incident enregistré, ce qui n’est pas la même chose. LA RÈGLE FIGÉE : une protection qu’on ne peut pas VOIR marcher doit être considérée comme ABSENTE jusqu’à preuve du contraire. Reste à faire : chantier B (valider le contenu à l’import), C (sortir les sauvegardes de la boîte qu’elles protègent), D (durcir import et QR). Suite : 88 → 89 suites, 1437 → 1475 assertions vertes.';
 
 // ============================================================
@@ -25133,13 +25133,50 @@ async function _computeTresorerieAvec(settingsOverride, recurringOverride){
 // horaire, lui, appliquait le taux MARCHANDISE (12,3 %) à TOUT le CA — prestations comprises,
 // alors qu'elles cotisent à 25,6 %. Deux écrans, deux vérités, sur la même commande.
 // Pure : ne lit aucune base, dépend seulement de la commande.
+// ════════════════════════════════════════════════════════════════════════════════════════════
+// [v1436] LA PART « SERVICE » D'UNE LIGNE — un seul point de vérité, enfin complet.
+// Ben : « certaines locations de pyramides ne passent pas en prestation de service […] la
+// ventilation ne remonte pas systématiquement l'ensemble des commandes avec une location ».
+//
+// LA RÉPONSE À SA QUESTION DIRECTE : le lien se fait bien À LA SOURCE. Une pyramide LOUÉE est
+// correctement marquée (`ligneALocation`, `pyraTotalLigne`), et son montant est bien inclus dans
+// le total de la ligne événement. Le bug est ENTIÈREMENT EN AVAL — dans l'agrégation qui décide
+// ce qui compte comme service.
+//
+// LA CAUSE : `partServiceCommande` (créée en v1325, précisément pour être LE point de vérité
+// partagé et mettre fin aux divergences) ne reconnaissait que les lignes `type==='prestation'`.
+// Elle ignorait totalement les lignes `type==='evenement'` — où vit pourtant la location de
+// pyramide et l'accessoire décoratif. Résultat : une commande AVEC pyramide louée mais SANS
+// ligne prestation séparée remontait à 100 % en marchandise. Une commande qui avait LES DEUX
+// remontait en partie service — mais seulement à hauteur de la prestation, jamais de la
+// location. D'où le symptôme exact de Ben : « pas systématiquement » — ça dépendait de la
+// présence, par ailleurs, d'une ligne prestation, jamais de la location elle-même.
+//
+// ET LA VRAIE RÈGLE EXISTAIT DÉJÀ, ailleurs : `computeAccounting` (l'écran de rentabilité
+// annuelle) sait depuis toujours que la pyramide LOUÉE est un service et que la pyramide VENDUE
+// est une marchandise. La fonction censée être « LE » point de vérité partagé n'était donc pas
+// la seule vérité — computeAccounting en portait une seconde, plus complète. Deux écrans, deux
+// vérités : exactement ce que la v1325 disait vouloir éliminer.
+//
+// PURE. Montant d'UNE ligne qui relève du régime social « service ».
+function montantServiceLigne(ln){
+  if(!ln) return 0;
+  if(ln.type==='prestation') return money2(lineTotalStored(ln));
+  if(ln.type==='evenement'){
+    let svc = 0;
+    if(!pyraEstVente(ln)) svc = money2(svc + pyraTotalLigne(ln));       // louée → service ; vendue → marchandise (déjà exclue)
+    if(accessoireDecoActif(ln)) svc = money2(svc + accessoireDecoTotal(ln));
+    return svc;
+  }
+  return 0;
+}
+
 function partServiceCommande(o){
   const total = money2(+((o&&o.montant)||0));
   if(!(total > 0)) return 0;
+  // [v1436] Toutes les lignes qui portent du service — plus seulement les lignes prestation.
   let svc = 0;
-  (orderToLines(o) || []).forEach(ln => {
-    if(ln && ln.type === 'prestation') svc = money2(svc + lineTotalStored(ln));
-  });
+  (orderToLines(o) || []).forEach(ln => { svc = money2(svc + montantServiceLigne(ln)); });
   return Math.min(1, svc / total);
 }
 
@@ -26116,12 +26153,11 @@ function computeOrderMargins(o, recipes, recipeItems, lots, materials, embEstRat
         // [v1079] pyramide VENDUE → marchandise cédée (caGoods) + son coût d'achat en coût de revient.
         caGoods=money2(caGoods+pyraMontant);
         coutMat=money2(coutMat+pyraCoutLigne(ln));
-      } else {
-        // pyramide LOUÉE → prestation de service.
-        caService=money2(caService+pyraMontant);
       }
-      // [v1246] Accessoire décoratif (ruban + déco LOVE) → location = prestation de service.
-      if(accessoireDecoActif(ln)){ caService=money2(caService+accessoireDecoTotal(ln)); }
+      // [v1436] Location de pyramide + accessoire décoratif : même règle que partout ailleurs,
+      // via le point de vérité partagé (`montantServiceLigne`) — pyramide VENDUE déjà exclue
+      // au-dessus, donc `montantServiceLigne` ne renvoie ici que la part réellement en service.
+      caService=money2(caService+montantServiceLigne(ln));
       return;
     }
     // coffret / grand / don / histo : marchandise
@@ -28160,6 +28196,20 @@ function buildFlavorSales(orders, markets, marketMoves, recipes, productions, se
       if(ln.type!=='don') return;
       lineParfumsOf(ln).forEach(p=>{ const a=ensure(p.nom); a.piecesDon+=+p.qte; a.cmdPieces+=+p.qte; if(!a.recipeId){const r=matchRecipe(p.nom); if(r)a.recipeId=r.id;} });
     });
+    // ══════════════════════════════════════════════════════════════════════════════════════
+    // [v1434] MA RÉGRESSION DE LA v1433 : LES DONS ONT DISPARU.
+    // Ben : « pourquoi mes dons ont bougé suite à cette mise à jour ? »
+    // En v1433 j'ai restreint l'assiette EN AMONT (`buildFlavorSales(ordersMarge, …)`) avec
+    // `estVenteAgregable`, qui exige `paiement==='Payé'`. Or un DON n'est pas payé — c'est même sa
+    // définition. Toute commande contenant des macarons offerts, et toute commande de don pure,
+    // sortait donc du calcul AVANT même d'arriver ici, à l'étape 1 qui compte les pièces offertes.
+    // Les dons se sont effondrés, et avec eux `coutDons`, `margeApresDons` et le €/macaron.
+    // LEÇON : filtrer une liste en amont d'une fonction qui en tire PLUSIEURS mesures, c'est
+    // appliquer à toutes le critère d'une seule. Le filtre doit vivre là où la distinction se fait.
+    // Ici : le DON compte toujours (il a déjà été compté juste au-dessus) ; la VENTE, elle, n'est
+    // comptée que si elle est réalisée — payée, et pas une fille qui doublonne sa mère.
+    if(typeof estVenteAgregable==='function' && !estVenteAgregable(o)) return;
+
     // 2) Valeur catalogue des lignes macarons vs prestation (pour répartir le montant réel).
     let valMac=0, valPresta=0, totalPiecesMac=0;
     lignes.forEach(ln=>{
@@ -28369,8 +28419,11 @@ function analyzeFlavorProfitability(data){
   //   ③ COMMANDES NON PAYÉES : une commande à préparer n'est pas une vente réalisée.
   // On réutilise `estVenteAgregable` (le prédicat gravé en v1421) plutôt que d'en réécrire un second.
   // Ce qui est écarté n'est pas caché : les volumes sortis sont chiffrés dans les totaux.
+  // [v1434] L'assiette ne porte plus que ce qui relève de l'ÉPOQUE et du DOUBLON — deux critères
+  // qui valent pour toutes les mesures. La condition de paiement, elle, ne vaut que pour la vente :
+  // elle est appliquée à l'intérieur de buildFlavorSales, là où vente et don se séparent.
   const ordersReprise = (orders||[]).filter(o=>o && o.histo===true);
-  const ordersMarge   = (orders||[]).filter(o=>o && o.histo!==true && estVenteAgregable(o));
+  const ordersMarge   = (orders||[]).filter(o=>o && o.histo!==true && o.commandeMereId==null);
 
   // 2) ventes par parfum — sur la seule assiette qui peut porter une marge
   const sales = buildFlavorSales(ordersMarge, markets, marketMoves, recipes, productions, s);
@@ -28466,7 +28519,11 @@ function analyzeFlavorProfitability(data){
   // On valorise UN emballage par ligne de don (coût unitaire de la matière emballage). Ajouté au coût des dons.
   try{
     let coutEmbDons = 0;
-    (orders||[]).forEach(o=>{
+    // [v1434] MÊME ASSIETTE QUE LES PIÈCES OFFERTES. `totals.piecesDon` vient de `ordersMarge` :
+    // valoriser ici les emballages de dons de commandes qui n'ont pas fourni ces pièces
+    // rattacherait un coût d'emballage à un don absent du compte. Deux chiffres qui se rapportent
+    // au même objet doivent décrire le même périmètre — sinon le coût par don devient faux.
+    (ordersMarge||[]).forEach(o=>{
       (o.lignes||[]).forEach(ln=>{
         if(ln && ln.type==='don' && ln.donEmbMode==='autre' && ln.embMatId!=null){
           coutEmbDons += embMatUnitCost(ln.embMatId, mats||[], lots||[]);
@@ -41622,32 +41679,17 @@ async function ordoBuildNeeds(mode, horizon){
     });
   }catch(e){ console.error('ordo orders',e); }
 
-  // 1b) MARCHÉS programmés (mode 'marches' ou 'auto') : quantité prévue ventilée par parfum
-  //     selon la répartition apprise, sinon au prorata des commandes, sinon ligne « à définir ».
-  if(mode==='marches' || mode==='auto'){
-    try{
-      const mks=await db.markets.toArray().catch(()=>[]);
-      const mkFenetre=mks.filter(m=>{ const j=daysTo(m.date); return j!==null && j<=H && m.statut!=='clos' && (+m.prevuQte||0)>0; });
-      if(mkFenetre.length){
-        let rep=[]; try{ const mf=await marketForecast(); rep=(mf&&mf.repartition)?mf.repartition:[]; }catch(e){ rep=[]; }
-        const totPct=rep.reduce((s,r)=>s+(+r.pct||0),0);
-        // base de prorata = besoins commandes déjà connus
-        const baseNoms=Object.keys(besoins); const baseTot=baseNoms.reduce((s,n)=>s+besoins[n],0);
-        mkFenetre.forEach(m=>{
-          const q=+m.prevuQte||0; if(q<=0) return;
-          if(rep.length && totPct>0){
-            let cumule=0;
-            rep.forEach((r,i)=>{ let part=(i===rep.length-1)?(q-cumule):Math.round(q*(+r.pct||0)/totPct); if(i!==rep.length-1)cumule+=part; if(part>0) add(r.parfum, part, 'marche'); });
-          } else if(baseTot>0){
-            let c=0;
-            baseNoms.forEach((n,i)=>{ let part=(i===baseNoms.length-1)?(q-c):Math.round(q*besoins[n]/baseTot); if(i!==baseNoms.length-1)c+=part; if(part>0) add(n, part, 'marche'); });
-          } else {
-            add('Marché (parfums à définir)', q, 'marche');
-          }
-        });
-      }
-    }catch(e){ console.error('ordo marchés',e); }
-  }
+  // [v1435] MARCHÉS PROGRAMMÉS — DANS TOUS LES MODES.
+  // Avant : `if(mode==='marches' || mode==='auto')`. Or l'écran ne propose que « Commandes
+  // fermes » et « Commandes + réassort » : aucun bouton ne passait jamais par ici. C'était la
+  // réponse à la question de Ben — le code marchait, il n'était jamais atteint.
+  // Un marché programmé est une échéance ferme : on ne s'y présente pas les mains vides.
+  try{
+    const mks = await db.markets.toArray().catch(()=>[]);
+    const rep = await (async()=>{ try{ const mf=await marketForecast(); return (mf&&mf.repartition)||[]; }catch(e){ return []; } })();
+    const besoinMk = besoinMarchesParParfum(mks, rep, besoins, {horizonJours:H});
+    for(const nom in besoinMk){ add(nom, besoinMk[nom], 'marche'); }
+  }catch(e){ console.error('ordo marchés',e); }
 
   // 2) Réassort (vélocité − stock) seulement en mode 'reassort'.
   if(mode==='reassort'){
@@ -42116,35 +42158,12 @@ async function _buildProductionPlanRaw(horizonDays){
       for(const nom in dem){ if(+dem[nom]>0) _besoinCmd[nom]=(_besoinCmd[nom]||0)+(+dem[nom]); }
     });
   }catch(e){ console.error('plan orders',e); }
-  // Marchés programmés (ouverts) dans l'horizon : quantité prévue ventilée par parfum
-  // selon la répartition apprise, sinon au prorata des commandes, sinon ligne « à définir ».
+  // [v1435] Marchés programmés : même règle que partout ailleurs, via le point de vérité unique.
   try{
     const mks = await db.markets.toArray().catch(()=>[]);
-    const mkFenetre = mks.filter(m=>{ const j=daysTo(m.date); return j!==null && j<=H && m.statut!=='clos' && (+m.prevuQte||0)>0; });
-    if(mkFenetre.length){
-      let rep=[]; try{ const mf=await marketForecast(); rep=(mf&&mf.repartition)?mf.repartition:[]; }catch(e){ rep=[]; }
-      const totPct=rep.reduce((s,r)=>s+(+r.pct||0),0);
-      mkFenetre.forEach(m=>{
-        const q=+m.prevuQte||0; if(q<=0) return;
-        // [v1431] LE CHOIX DE BEN PRIME SUR LA DEVINETTE. S'il a renseigné les parfums visés à
-        // l'ouverture du marché, on les prend TELS QUELS — c'est une décision, pas une estimation.
-        // La ventilation apprise ne sert plus que de repli, et la ligne fourre-tout « parfums à
-        // définir » ne tombe qu'en dernier recours.
-        const _visee = Array.isArray(m.prevuParfums) ? m.prevuParfums.filter(x=>x && x.parfum && +x.qte>0) : [];
-        if(_visee.length){
-          _visee.forEach(x=>{ _besoinCmd[x.parfum]=(_besoinCmd[x.parfum]||0)+(+x.qte||0); });
-          return;
-        }
-        if(rep.length && totPct>0){
-          let cumule=0;
-          rep.forEach((r,i)=>{ let part=(i===rep.length-1)?(q-cumule):Math.round(q*(+r.pct||0)/totPct); if(i!==rep.length-1)cumule+=part; if(part>0)_besoinCmd[r.parfum]=(_besoinCmd[r.parfum]||0)+part; });
-        } else {
-          const noms=Object.keys(_besoinCmd); const tot=noms.reduce((s,n)=>s+_besoinCmd[n],0);
-          if(tot>0){ let c=0; noms.forEach((n,i)=>{ let part=(i===noms.length-1)?(q-c):Math.round(q*_besoinCmd[n]/tot); if(i!==noms.length-1)c+=part; if(part>0)_besoinCmd[n]=(_besoinCmd[n]||0)+part; }); }
-          else _besoinCmd['Marché (parfums à définir)']=(_besoinCmd['Marché (parfums à définir)']||0)+q;
-        }
-      });
-    }
+    let rep=[]; try{ const mf=await marketForecast(); rep=(mf&&mf.repartition)?mf.repartition:[]; }catch(e){ rep=[]; }
+    const besoinMk = besoinMarchesParParfum(mks, rep, _besoinCmd, {horizonJours:H});
+    for(const nom in besoinMk){ _besoinCmd[nom] = (_besoinCmd[nom]||0) + besoinMk[nom]; }
   }catch(e){ console.error('plan marchés',e); }
   // Déduit le stock fini disponible et crée les items « commande » (besoin net > 0).
   let _stockCmd = {};
@@ -42408,6 +42427,76 @@ function marketCrossPlan(prevuQte, forecast, opts){
    Renvoie une ventilation détaillée et transparente, sans rien inventer :
    si aucune donnée, renvoie une ventilation vide (le cerveau le signalera).
 */
+// ════════════════════════════════════════════════════════════════════════════════════════════
+// [v1435] LE BESOIN DE PRODUCTION D'UN MARCHÉ — UN SEUL POINT DE VÉRITÉ.
+// Ben : « le plan de travail appelé planning de production ne prend pas en compte les marchés
+// programmés, pourquoi ? »
+//
+// LA CAUSE : la même règle était écrite TROIS FOIS, dans trois écrans, et la v1431 n'en avait
+// corrigé qu'UNE (`_buildProductionPlanRaw`). Les deux autres — `ordoBuildNeeds` (l'ordonnanceur,
+// c'est l'écran que Ben regarde) et `generateProductionOrder` (l'agenda de production) — sont
+// restées sur l'ancienne version, qui ignore les parfums visés.
+//
+// PIRE, ET C'EST LA VRAIE RÉPONSE À SA QUESTION : `ordoBuildNeeds` n'incluait les marchés que si
+// `mode==='marches' || mode==='auto'`. Or l'écran ne propose que DEUX boutons — « Commandes
+// fermes » et « Commandes + réassort ». Le mode 'marches' n'existe nulle part dans l'interface,
+// et 'auto' n'est utilisé que par le copilote. **Aucun bouton accessible à Ben ne déclenchait la
+// prise en compte des marchés.** Le code était juste, il n'était simplement jamais appelé.
+//
+// Un marché programmé est une échéance FERME au même titre qu'une commande : on ne choisit pas
+// d'y aller les mains vides. Il entre donc dans tous les modes.
+//
+// PURE. Renvoie {parfum: pièces}. `besoinBase` sert de prorata de repli et n'est jamais modifié.
+function besoinMarchesParParfum(markets, repartition, besoinBase, opts){
+  opts = opts||{};
+  const H = opts.horizonJours!=null ? +opts.horizonJours : 14;
+  const jours = opts.daysTo || (typeof daysTo==='function' ? daysTo : (()=>null));
+  const out = {};
+  const add = (nom, q) => { if(nom && q>0) out[nom] = (out[nom]||0) + q; };
+  const rep = Array.isArray(repartition) ? repartition : [];
+  const totPct = rep.reduce((s,r)=>s+(+r.pct||0),0);
+  // Prorata de repli : le besoin des commandes DÉJÀ connu, figé avant d'ajouter quoi que ce soit
+  // (sinon le premier marché servirait de base au deuxième, et la répartition dériverait).
+  const baseNoms = Object.keys(besoinBase||{});
+  const baseTot  = baseNoms.reduce((s,n)=>s+(+besoinBase[n]||0),0);
+
+  (markets||[]).forEach(m=>{
+    if(!m || m.statut==='clos') return;
+    const q = +m.prevuQte||0; if(q<=0) return;
+    const j = jours(m.date);
+    // `j>=0` : un marché PASSÉ mais jamais clôturé n'est plus un besoin de production. Sans ce
+    // test (absent des trois versions d'origine), il resterait indéfiniment dans le plan.
+    if(j===null || j<0 || j>H) return;
+
+    // ① LE CHOIX DE BEN D'ABORD (v1431) : les parfums visés saisis à l'ouverture du marché.
+    const visee = Array.isArray(m.prevuParfums) ? m.prevuParfums.filter(x=>x && x.parfum && +x.qte>0) : [];
+    if(visee.length){ visee.forEach(x=>add(x.parfum, +x.qte||0)); return; }
+    // ② sinon la répartition apprise des marchés passés
+    if(rep.length && totPct>0){
+      let cumule=0;
+      rep.forEach((r,i)=>{
+        const part = (i===rep.length-1) ? (q-cumule) : Math.round(q*(+r.pct||0)/totPct);
+        if(i!==rep.length-1) cumule += part;
+        add(r.parfum, part);
+      });
+      return;
+    }
+    // ③ sinon au prorata des commandes en cours
+    if(baseTot>0){
+      let c=0;
+      baseNoms.forEach((n,i)=>{
+        const part = (i===baseNoms.length-1) ? (q-c) : Math.round(q*(+besoinBase[n]||0)/baseTot);
+        if(i!==baseNoms.length-1) c += part;
+        add(n, part);
+      });
+      return;
+    }
+    // ④ dernier recours : une ligne honnête plutôt qu'un chiffre inventé
+    add('Marché (parfums à définir)', q);
+  });
+  return out;
+}
+
 function marketVentilation(cible, historique, volume, opts){
   opts = opts||{};
   const mode = ['croise','mienne','histo'].includes(opts.mode) ? opts.mode : 'croise';
@@ -68415,47 +68504,21 @@ async function generateProductionOrder(startDate, endDate, tempsDisponibleMinute
     for(const nom in besoinAdditionnel){ const q=+besoinAdditionnel[nom]||0; if(q>0) brut[nom]=(brut[nom]||0)+q; }
   }
 
-  // 1b) MARCHÉS PROGRAMMÉS dans la fenêtre [startDate, endDate] : la quantité prévue
-  // à emporter est un besoin de production, au même titre qu'une commande.
-  // Ventilée par parfum selon la répartition apprise des marchés passés (intelligence
-  // centrale) ; sans historique, répartie au prorata du besoin commandes, ou à défaut
-  // ajoutée en ligne « Marché (parfums à définir) » pour rester visible.
+  // [v1435] MARCHÉS PROGRAMMÉS — même point de vérité que l'ordonnanceur et le plan de production.
+  // La quantité prévue à emporter est un besoin de production au même titre qu'une commande.
+  // Cette version-ci ignorait les parfums visés (v1431) : trois écrans, trois résultats possibles
+  // pour la même question. Un seul appel désormais.
   let _mrpMarketTotal = 0;
   try{
     const _allMk = await db.markets.toArray().catch(()=>[]);
-    const _mkFenetre = _allMk.filter(m=> m.date && m.date>=startDate && m.date<=_endPool && m.statut!=='clos' && (+m.prevuQte||0)>0);
-    if(_mkFenetre.length){
-      let _rep = [];
-      try{ const _mf = await marketForecast(); _rep = (_mf && _mf.repartition) ? _mf.repartition : []; }catch(e){ _rep=[]; }
-      const _totPct = _rep.reduce((s,r)=>s+(+r.pct||0),0);
-      _mkFenetre.forEach(m=>{
-        const q=+m.prevuQte||0; if(q<=0) return;
-        _mrpMarketTotal += q;
-        if(_rep.length && _totPct>0){
-          let cumule=0;
-          _rep.forEach((r,i)=>{
-            let part=(i===_rep.length-1)?(q-cumule):Math.round(q*(+r.pct||0)/_totPct);
-            if(i!==_rep.length-1) cumule+=part;
-            if(part>0) brut[r.parfum]=(brut[r.parfum]||0)+part;
-          });
-        } else {
-          // pas d'historique : on répartit au prorata du besoin commandes déjà connu ;
-          // si aucune commande non plus, on garde une ligne visible « à définir ».
-          const noms=Object.keys(brut);
-          const totalCmd=noms.reduce((s,n)=>s+brut[n],0);
-          if(totalCmd>0){
-            let cumule=0;
-            noms.forEach((n,i)=>{
-              let part=(i===noms.length-1)?(q-cumule):Math.round(q*brut[n]/totalCmd);
-              if(i!==noms.length-1) cumule+=part;
-              if(part>0) brut[n]=(brut[n]||0)+part;
-            });
-          } else {
-            brut['Marché (parfums à définir)']=(brut['Marché (parfums à définir)']||0)+q;
-          }
-        }
-      });
-    }
+    let _rep = []; try{ const _mf = await marketForecast(); _rep = (_mf && _mf.repartition) ? _mf.repartition : []; }catch(e){ _rep=[]; }
+    // La fenêtre de cet écran est un intervalle de DATES, pas un horizon en jours : on convertit
+    // en bornes de jours pour réutiliser la fonction commune sans la dénaturer.
+    const _jDe = d => { try{ const a=new Date(d+'T00:00:00'), b=new Date(startDate+'T00:00:00');
+                              return Math.round((a-b)/86400000); }catch(_){ return null; } };
+    const _H = _jDe(_endPool);
+    const besoinMk = besoinMarchesParParfum(_allMk, _rep, brut, {horizonJours:_H!=null?_H:14, daysTo:_jDe});
+    for(const nom in besoinMk){ brut[nom] = (brut[nom]||0) + besoinMk[nom]; _mrpMarketTotal += besoinMk[nom]; }
   }catch(e){ console.error('mrp marchés', e); }
   // 2) Pour chaque parfum : besoin net, nb de batchs (60), garniture, temps ganache+montage (par batch)
   const lignes=[]; const warnings=[];

@@ -162,20 +162,28 @@ const REP = [{parfum:'Framboise', pct:50}, {parfum:'Pistache', pct:30}, {parfum:
   eq(rien.lignes, [],               'CAS7 · … et aucune ligne inventée');
 }
 
-// ── CAS 8 : le plan fait primer le choix AVANT les deux replis ───────────
-// L'ordre est la règle : placé après, le choix de Ben n'aurait jamais servi.
+// ── CAS 8 : le choix prime AVANT les deux replis ─────────────────────────
+// ⚠️ RÉÉCRIT EN v1435. Ces gardes visaient `_buildProductionPlanRaw`, qui portait alors sa
+// propre copie de la règle. Il s'est avéré que la MÊME règle était écrite dans TROIS écrans et
+// que la v1431 n'en avait corrigé qu'un : les deux autres ignoraient encore les parfums visés.
+// La règle vit désormais dans `besoinMarchesParParfum`, appelée par les trois — c'est donc là
+// que l'ordre doit être vérifié. L'intention est inchangée : le choix de Ben passe en premier.
 {
-  const src = stripComments(extractFunction('_buildProductionPlanRaw'));
-  const iVisee = src.indexOf('_visee');
+  const src = stripComments(extractFunction('besoinMarchesParParfum'));
+  const iVisee = src.indexOf('const visee =');
   const iRep   = src.indexOf('if(rep.length && totPct>0)');
   const iFourre= src.indexOf('parfums à définir');
-  vrai(iVisee > -1, 'CAS8 · le plan lit prevuParfums');
+  vrai(iVisee > -1, 'CAS8 · la règle lit prevuParfums');
   vrai(iVisee < iRep,    'CAS8 · … avant la ventilation apprise');
   vrai(iVisee < iFourre, 'CAS8 · … et avant le fourre-tout');
   vrai(/m\.prevuParfums\.filter\(x=>x && x\.parfum && \+x\.qte>0\)/.test(src),
      'CAS8 · seules les lignes non nulles comptent comme une décision');
-  vrai(/_visee\.length\)\{[\s\S]{0,220}return;/.test(src),
+  vrai(/if\(visee\.length\)\{[\s\S]{0,120}return;/.test(src),
      'CAS8 · … et le choix retourne immédiatement (aucun repli ne s\'y ajoute)');
+  ['ordoBuildNeeds', '_buildProductionPlanRaw', 'generateProductionOrder'].forEach(fn=>{
+    vrai(/besoinMarchesParParfum\(/.test(stripComments(extractFunction(fn))),
+       'CAS8 · ' + fn + ' applique bien cette règle (plus de copie divergente)');
+  });
 }
 
 // ── CAS 9 : le formulaire marché sait saisir les parfums visés ───────────
