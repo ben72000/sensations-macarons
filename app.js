@@ -5,8 +5,11 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1439'; // suite : voir tests/v1439-prodboard-launch.test.js
-const APP_MAJ = 'LE BOUTON « ＋ LANCER UNE TÂCHE » DE L\u2019ATELIER COMPLET N\u2019OUVRAIT RIEN. Signalé par Ben, capture du journal d\u2019incident à l\u2019appui : « Can\u2019t find variable: prodTaskPicker », écran atelier. CE QUI SE PASSAIT : prodBoardLaunch() (le bouton marron) appelait prodTaskPicker() — un sélecteur MODAL qui n\u2019a jamais existé dans app.js. Un commentaire prétendait le contraire (« Réutilise […] prodTaskPicker ») : c\u2019est cette documentation fausse qui a laissé le bug invisible à la relecture. Le vrai sélecteur, depuis le passage à la « couche flottante » (v1364), s\u2019ouvre en posant `_atPicker = true` puis en redessinant le board — exactement ce que fait déjà atTogglePicker() pour le panneau flottant jumeau, qui lui fonctionnait. CE QUI EST FAIT : prodBoardLaunch() ouvre désormais le même mécanisme réel ; le commentaire fautif corrigé. Suite v1439 : 7 assertions (tests/v1439-prodboard-launch.test.js), dont une preuve par réintroduction (l\u2019ancien appel reproduit lève bien le ReferenceError exact vu par Ben).';
+const APP_VERSION = 'v1442'; // suite : voir tests/v1442-meringue-fiche-combinee.test.js
+const APP_MAJ = 'LA FICHE MERINGUE MUTUALISÉE, ACCESSIBLE À TOUT MOMENT. Ben : « je dois pouvoir accéder à la recette donnant la quantité totale de meringue mutualisée au même titre que le reste de la recette […] indiquer de manière séparée mais sur la même vue le détail et poids des ingrédients qui suivent pour chaque recette (coques chocolat et praliné par exemple) […] disponible à tout moment à l\u2019intérieur de ce bouton-là présent en haut de la page fabrication. » CE QUI EXISTAIT DÉJÀ : le calcul complet (base meringue commune cumulée + détail propre de chaque parfum, sur une seule vue) existait depuis la v1379/v1380 — mais ne s\u2019affichait qu\u2019UNE fois, juste après le lancement d\u2019un duo. Ensuite, le bouton « Voir la recette » d\u2019un sous-lot ne montrait plus QUE ce parfum, jamais la base commune ni l\u2019autre parfum : la seule vue combinée disparaissait dès la popup fermée. CE QUI EST FAIT : un batch relié à une fournée de meringue commune rouvre désormais la fiche COMBINÉE (base + chaque parfum séparément) depuis le même bouton « Voir la recette », en haut de la page Fabrication — à tout moment de la production, pas seulement au lancement. Suite v1442 : 15 assertions (tests/v1442-meringue-fiche-combinee.test.js), dont la reconstruction exacte des quantités par parfum sur une vraie base de données factice.';
+const _APP_MAJ_v1441_ARCHIVE_INUTILISEE = 'RAPPEL DE DIVISION BICOLORE. Ben : pour un parfum bicolore (ex. praliné = coques marron foncé + blanc), il devait passer par le mode « duo » (2-3 parfums) et simuler un faux 2e parfum juste pour faire apparaître un sélecteur de couleurs, alors que sa recette est mono-parfum — « je suis obligé de simuler 2 parfums différents afin d\u2019avoir la possibilité de sélectionner mes deux couleurs ». Deux questions posées, deux réponses tranchées : UN SEUL lot de coques (rien ne change au modèle de données ni au stock), toujours 50/50 (pas de curseur). CE QUI EST FAIT : dès qu\u2019une recette bicolore est sélectionnée, un rappel s\u2019affiche — dans le formulaire de lancement (désormais aussi en mode « Batch complet », le mode par défaut, qui n\u2019affichait jusqu\u2019ici aucune information couleur) ET dans la fiche de production TOUJOURS affichée après le lancement (l\u2019endroit le plus sûr pour ne pas le manquer) : « 🎨 Praliné est bicolore : divise ta meringue en 2 portions égales — 60 coques marron foncé + 60 coques blanches. » Le split est toujours un nombre entier exact (2 coques par macaron garantit un total pair). Suite v1441 : 15 assertions (tests/v1441-bicolore-rappel.test.js).';
+const _APP_MAJ_v1440_ARCHIVE_INUTILISEE = 'LE BOUTON « ＋ LANCER UNE TÂCHE », RÉPARÉ MAIS INVISIBLE. Suite directe de v1439 : Ben a signalé que le bouton ne plantait plus, mais que « quand je clique dessus plus rien ne se passe ». CE QUI SE PASSAIT : le sélecteur s\u2019ouvrait BEL ET BIEN (même mécanisme que le bouton ▼ « Voir toutes les tâches », qui fonctionnait déjà), mais plus bas dans l\u2019écran, après les tâches en cours — sans aucun repère visuel. Pire : `_atPicker` n\u2019est jamais remis à `false` par un simple rechargement de vue, seulement par un choix de tâche ou une fermeture explicite — donc si le sélecteur était déjà ouvert d\u2019un essai précédent, cliquer à nouveau ne changeait RIEN à l\u2019écran, exactement le symptôme décrit. FIX : `prodBoardLaunch()` attend désormais le rendu puis fait défiler la liste dans le cadre (repli sur le bloc suggestion si la liste est vide) — un clic sur ce bouton a maintenant TOUJOURS un effet visible, que le sélecteur vienne de s\u2019ouvrir ou qu\u2019il l\u2019était déjà. Suite v1439 amendée : 14 assertions (tests/v1439-prodboard-launch.test.js), dont la preuve par réintroduction du symptôme exact de ce deuxième rapport.';
+const _APP_MAJ_v1439_ARCHIVE_INUTILISEE = 'LE BOUTON « ＋ LANCER UNE TÂCHE » DE L\u2019ATELIER COMPLET N\u2019OUVRAIT RIEN. Signalé par Ben, capture du journal d\u2019incident à l\u2019appui : « Can\u2019t find variable: prodTaskPicker », écran atelier. CE QUI SE PASSAIT : prodBoardLaunch() (le bouton marron) appelait prodTaskPicker() — un sélecteur MODAL qui n\u2019a jamais existé dans app.js. Un commentaire prétendait le contraire (« Réutilise […] prodTaskPicker ») : c\u2019est cette documentation fausse qui a laissé le bug invisible à la relecture. Le vrai sélecteur, depuis le passage à la « couche flottante » (v1364), s\u2019ouvre en posant `_atPicker = true` puis en redessinant le board — exactement ce que fait déjà atTogglePicker() pour le panneau flottant jumeau, qui lui fonctionnait. CE QUI EST FAIT : prodBoardLaunch() ouvre désormais le même mécanisme réel ; le commentaire fautif corrigé. Suite v1439 : 7 assertions (tests/v1439-prodboard-launch.test.js), dont une preuve par réintroduction (l\u2019ancien appel reproduit lève bien le ReferenceError exact vu par Ben).';
 const _APP_MAJ_v1438_ARCHIVE_INUTILISEE = 'LA COURSE AU DÉMARRAGE QUI FAISAIT AFFICHER DES CHIFFRES AU LIEU DES PARFUMS. Ben l\u2019a repéré au lancement : certains batchs s\u2019affichaient avec un numéro (« #1234 ») au lieu du nom du parfum, et l\u2019écran Productions plantait parfois tout court (« Affichage indisponible ») — sur les DEUX, le rapport d\u2019incident montrait la même erreur IndexedDB : « The transaction finished » ou « The specified object store was not found ». CE QUI SE PASSAIT : dans le moteur de base (dexie.min.js), la transaction « en cours » (_activeTx) est un seul champ PARTAGÉ sur toute l\u2019app — pas propre à chaque appel. Au démarrage, plusieurs opérations tournent en même temps (migrations, journal d\u2019audit qui se flush après coup) ; il arrivait qu\u2019une lecture des recettes ou des productions hérite PAR ERREUR de la transaction d\u2019une autre opération, déjà terminée ou ne portant pas la bonne table. atParfumsDispo() avalait cette erreur en silence (repli sur une liste vide) → chaque batch s\u2019affichait avec son numéro brut au lieu de son nom (148 occurrences dans le journal). Sur Productions, la même erreur n\u2019était pas rattrapée → l\u2019écran entier plantait. CE QUI EST FAIT : le moteur vérifie désormais, avant de réutiliser la transaction partagée, qu\u2019elle est encore VIVANTE et qu\u2019elle porte bien la table demandée ; sinon il ouvre sa propre transaction au lieu de planter. Zéro changement à app.js pour ce correctif — tout est dans dexie.min.js. Preuve par réintroduction : les mêmes tests, rejoués contre l\u2019ancien fichier, replantent bien sur les deux messages d\u2019erreur exacts vus par Ben. Suite v1438 : 7 assertions (tests/v1438-activeTx-course.test.js).';
 const _APP_MAJ_v1437_ARCHIVE_INUTILISEE = 'CHANTIER A — L’APP NE PEUT PLUS ÉCHOUER EN SILENCE. Le constat de l’audit était dur : 347 endroits du code attrapaient une erreur et l’enregistraient fidèlement… dans un carnet que TU NE POUVAIS PAS OUVRIR. Il fallait brancher l’iPhone sur un Mac. Autant dire jamais. ET LE CARNET ÉTAIT EFFACÉ À CHAQUE RECHARGEMENT. C’est le mécanisme EXACT qui a caché la panne Dexie pendant un mois : chaque écriture kv échouait, la validation ne démarrait jamais, et l’écran affichait « 0 refus, 0 suspects » — ce qui RESSEMBLAIT à une bonne nouvelle alors que ça voulait dire « le contrôle n’a jamais démarré ». CE QUI CHANGE. 1) UN ÉCRAN « Santé de l’app » (Sauvegarde & sécurité) : tu lis enfin ce qui a cassé, depuis ton téléphone, sans Mac. 2) LES INCIDENTS VIVENT EN BASE (nouvelle table errLog) : ils survivent à un rechargement, donc tu peux constater qu’une panne DURE — c’est précisément ce que l’ancien carnet en mémoire rendait impossible. 3) UN FILET GLOBAL : une erreur hors try/catch te donnait un écran figé sans trace ; elle est maintenant enregistrée et annoncée par une bannière discrète. 4) UNE PASTILLE SUR L’ACCUEIL quand des incidents IMPORTANTS s’accumulent. LE TRI QUE J’AI FIGÉ, et qui est le cœur du travail : un échec d’AFFICHAGE et un échec d’ÉCRITURE EN BASE ne se valent pas. Base, sauvegarde, import, validation, compta → IMPORTANT, ça parle. Rendu, affichage → mineur, ça s’enregistre sans crier. Confondre les deux, c’est noyer le signal sous le bruit, et une alerte qui crie tout le temps est une alerte qu’on ne regarde plus. CE QUE JE N’AI PAS FAIT : deviner la cause d’une erreur, ni prétendre la réparer. L’écran montre ce qui s’est réellement passé. Une explication inventée serait pire qu’un silence. ET UNE MISE EN GARDE QUE JE TE DOIS : un écran Santé VIDE n’est PAS une preuve que tout va bien — c’est une absence d’incident enregistré, ce qui n’est pas la même chose. LA RÈGLE FIGÉE : une protection qu’on ne peut pas VOIR marcher doit être considérée comme ABSENTE jusqu’à preuve du contraire. Reste à faire : chantier B (valider le contenu à l’import), C (sortir les sauvegardes de la boîte qu’elles protègent), D (durcir import et QR). Suite : 88 → 89 suites, 1437 → 1475 assertions vertes.';
 
@@ -5280,6 +5283,24 @@ function coqueColorProfile(prod, recById){
 function recEstBicolore(rec){
   const c = recCoqueColors(rec);
   return c.length===2 && c[0]!==c[1];
+}
+
+// [v1441] RAPPEL DE DIVISION BICOLORE — Ben : pour un parfum bicolore (praliné = marron foncé +
+// blanc), rien ne rappelait de diviser la meringue en 2 couleurs SAUF en passant par le mode
+// « duo » (2-3 parfums) en simulant un faux 2e parfum — uniquement pour faire apparaître un
+// sélecteur de couleurs. Décision de Ben : UN SEUL lot de coques (comme aujourd'hui, rien ne
+// change au modèle de données ni au stock), toujours 50/50 (COQUES_PAR_MACARON=2 garantit un
+// total pair, donc la moitié est toujours un entier exact) — juste un rappel qui se voit. PURE.
+function _bicoloreRappelHtml(rec, nbMacarons){
+  if(!rec || !recEstBicolore(rec)) return '';
+  const [c1,c2] = recCoqueColors(rec);
+  const coques = Math.max(0, Math.round(+nbMacarons||0)) * COQUES_PAR_MACARON;
+  const moitie = coques/2;
+  return `<div class="banner" style="background:#faf6ee;border-color:#e5d8c8;margin:8px 0">
+    🎨 <b>${esc(rec.produitNom||'Ce parfum')}</b> est <b>bicolore</b> : divise ta meringue en <b>2 portions égales</b> —
+    ${coqueCouleurPastille(c1)}<b>${qty(moitie)} coques ${esc(coqueCouleurLabel(c1).toLowerCase())}</b>
+    + ${coqueCouleurPastille(c2)}<b>${qty(moitie)} coques ${esc(coqueCouleurLabel(c2).toLowerCase())}</b>.
+  </div>`;
 }
 
 // Lots de coques utilisables pour UNE couleur précise, à taille égale (std ≠ grand format).
@@ -14991,7 +15012,7 @@ async function prodForm(prefill){  const recipes = await db.recipes.toArray();
    </div>
    <div class="row2" id="f_qteRow">
      <div class="field"><label>Quantité théorique <span style="color:#9a8a82;font-weight:400" id="qteUnit">— en macarons (base matières)</span></label>
-       <input type="number" id="f_qte" value="${recSel.rendement}" min="1" oninput="prodSyncReelDefault();prodApercuGarniture()"></div>
+       <input type="number" id="f_qte" value="${recSel.rendement}" min="1" oninput="prodSyncReelDefault();prodApercuGarniture();prodUpdateCoqueHint()"></div>
      <div class="field"><label>Date</label><input type="date" id="f_date" value="${today()}" onchange="prodRefreshLot()"></div>
    </div>
    <p class="note" id="coqueHint" style="display:none;margin:-4px 0 8px;color:#8a6d3b"></p>
@@ -15210,7 +15231,11 @@ function prodCompSwitch(){
   if(mode==='composant' && comp==='ganache') prodFilterGarnTypes();
   const hint=document.getElementById('coqueHint');
   const unit=document.getElementById('qteUnit');
-  const isCoques = (mode==='composant' && comp==='coques');
+  // [v1441] Élargi à 'complet' (mode par défaut) — un batch complet produit AUSSI des coques,
+  // et c'est justement ce chemin, le plus emprunté, qui ne montrait jusqu'ici aucun rappel
+  // couleur : Ben devait passer par le mode duo pour en voir un, alors même que sa recette
+  // est mono-parfum. La note « 1 macaron = 2 coques » reste pertinente dans les deux modes.
+  const isCoques = (mode==='complet') || (mode==='composant' && comp==='coques');
   if(unit) unit.textContent = isCoques ? '— en macarons (× 2 coques)' : '— en macarons (base matières)';
   if(hint){
     if(isCoques){
@@ -15243,10 +15268,19 @@ async function prodFilterGarnTypes(){
     if(!aCremeux && crChecked && crChecked.checked && gaChecked){ gaChecked.checked=true; }
   }catch(e){ console.error('prodFilterGarnTypes',e); }
 }
-function prodUpdateCoqueHint(){
+async function prodUpdateCoqueHint(){
   const hint=document.getElementById('coqueHint'); if(!hint) return;
   const q=+(document.getElementById('f_qte')?.value)||0;
-  hint.innerHTML = `🟤 1 macaron = <b>2 coques</b> → ce batch produira <b>${qty(q*COQUES_PAR_MACARON)} coques</b> (pour ${qty(q)} macarons).`;
+  const coques = q*COQUES_PAR_MACARON;
+  let base = `🟤 1 macaron = <b>2 coques</b> → ce batch produira <b>${qty(coques)} coques</b> (pour ${qty(q)} macarons).`;
+  // [v1441] Rappel bicolore — voir _bicoloreRappelHtml. Repli silencieux si la recette est
+  // introuvable (form pas encore prêt, id vide…) : la note de base reste affichée sans lui.
+  try{
+    const rid = +(document.getElementById('f_rec')?.value)||0;
+    const rec = rid ? await db.recipes.get(rid).catch(()=>null) : null;
+    base += _bicoloreRappelHtml(rec, q);
+  }catch(e){ swallow(e,'prodUpdateCoqueHint bicolore'); }
+  hint.innerHTML = base;
 }
 // Aperçu live de la DLC : désormais informatif (l'emplacement est choisi à la fin).
 // Quand on change de recette, recale les deux quantités sur le rendement de la recette.
@@ -15489,6 +15523,11 @@ async function ficheRecetteProduction(recipeId, nbMacarons, composant, lot){
     }
   }
   const compLabel = composant==='coques'?'🟤 Coques':composant==='ganache'?'🍫 Ganache':'🍩 Complet';
+  // [v1441] Rappel bicolore ICI aussi (pas seulement dans le formulaire de lancement) : cette
+  // fiche s'affiche TOUJOURS après le lancement (voir lancerBatchAvecFiche, point 4) — c'est
+  // l'endroit le plus sûr pour que Ben le voie, même s'il avait manqué la note du formulaire.
+  // Absent pour 'ganache' seule : pas de coques dans ce composant, rien à diviser.
+  const rappelBicolore = (composant!=='ganache') ? _bicoloreRappelHtml(rec, nbMacarons) : '';
   // Total par matière (pour afficher « crème : 150 g » quand elle est répartie sur plusieurs lignes).
   const totParMat = {};
   items.forEach(it=>{ const d=dispOf(it.materialId); const q=round3((+it.qteParBatch||0)*d.f*facteur);
@@ -15507,6 +15546,7 @@ async function ficheRecetteProduction(recipeId, nbMacarons, composant, lot){
   openModal(`<h3>📋 Fiche de production</h3>
     <p style="margin-bottom:4px"><b>${esc(rec.produitNom)}</b> · ${compLabel} · lot <b>${esc(lot||'—')}</b></p>
     <p class="note" style="margin-bottom:12px">Quantités calculées pour <b>${qty(nbMacarons)} macaron(s)</b> (recette de base : ${rendement}/batch). Suis ces grammages pour produire.</p>
+    ${rappelBicolore}
     <div class="table-wrap"><table><thead><tr><th>Ingrédient</th><th style="text-align:right">Quantité</th></tr></thead><tbody>${rows}${totals?`<tr><td colspan="2" style="padding:2px"></td></tr>${totals}`:''}</tbody></table></div>
     ${instructionsVoletHtml(rec.instructions, 'prod'+recipeId)}
     <p class="note" style="margin-top:10px">La production est <b>démarrée</b>. Tu choisiras l'emplacement de rangement à la fin (✓ Terminer dans la liste).</p>
@@ -15519,10 +15559,32 @@ async function ficheRecetteProduction(recipeId, nbMacarons, composant, lot){
 // mode opératoire) d'un batch DÉJÀ lancé, à partir de son id. Permet de consulter le détail
 // pendant qu'on produit, sans repasser par les fiches recettes. Reconstitue le nombre de
 // macarons selon le composant (les coques sont stockées en nombre de coques).
+// [v1442] MERINGUE MUTUALISÉE : Ben — « je dois pouvoir accéder à la recette donnant la quantité
+// totale de meringue mutualisée au même titre que le reste de la recette […] disponible à tout
+// moment à l'intérieur de ce bouton-là présent en haut de la page fabrication ». Avant ce fix, la
+// fiche combinée (base commune + détail propre de CHAQUE parfum, ficheMeringueProduction) ne
+// s'affichait qu'UNE fois, juste après le lancement du duo — ensuite, cliquer « Voir la recette »
+// sur un des sous-lots ne montrait QUE ce parfum, jamais la base commune ni l'autre parfum. Fix :
+// un batch relié à une fournée (meringueBatchId) rouvre désormais la fiche COMBINÉE, peu importe
+// quand — le même bouton, le même endroit, à tout moment de la production.
 async function ficheRecetteProductionFromBatch(prodId){
   const p = await db.productions.get(prodId);
   if(!p){ toast('Production introuvable'); return; }
   if(p.libre || p.recipeId==null){ toast('Production libre : pas de fiche recette associée'); return; }
+  if(p.meringueBatchId){
+    const freres = await db.productions.where('meringueBatchId').equals(p.meringueBatchId).toArray().catch(()=>[]);
+    if(freres.length>=2){
+      const parts = freres.map(f=>({
+        rid: f.recipeId,
+        // Même repli qu'ailleurs (atFichePesee, ligne ~15652) : facteurQte n'est pas persisté sur
+        // la fiche, qteTheorique/COQUES_PAR_MACARON donne le même résultat pour un batch coques.
+        q: (f.facteurQte!=null) ? +f.facteurQte : round3((+f.qteTheorique||0)/COQUES_PAR_MACARON),
+        lot: f.lotProduction||''
+      }));
+      await ficheMeringueProduction(parts, p.meringueBatchId);
+      return;
+    }
+  }
   const comp = prodComposant(p);
   // qteTheorique des coques est en COQUES → on revient au nombre de macarons pour la fiche.
   let nbMac = +p.qteTheorique || +p.qteProduite || 0;
@@ -61634,9 +61696,20 @@ function prodBoardMutToggle(rid){
 // déjà : `_atPicker` + un nouveau rendu, exactement ce que fait `atTogglePicker()` pour le panneau
 // flottant. Ici on FORCE l'ouverture (pas un bascule) : le bouton dédié « lancer » doit toujours
 // afficher la liste, jamais la refermer sous le clic.
-function prodBoardLaunch(){
+// [FIX v1439b] Le fix ci-dessus corrigeait bien le plantage, mais Ben a signalé « plus rien ne se
+// passe » : la liste s'ouvre EFFECTIVEMENT (même mécanisme que le bouton ▼ « Voir toutes les
+// tâches », qui lui a toujours marché), mais plus bas dans l'écran, après les tâches en cours —
+// sans aucun repère visuel, un clic qui n'entraîne aucun mouvement à l'écran est indiscernable
+// d'un clic qui ne fait rien. Idem si `_atPicker` était déjà à `true` d'un essai précédent (il
+// n'est jamais remis à `false` par un rechargement de vue, seulement par un pick ou un ▲ explicite) :
+// rouvrir un panneau déjà ouvert ne change visuellement RIEN. Fix : on attend le rendu puis on fait
+// défiler la liste dans le cadre — un clic sur ce bouton a maintenant TOUJOURS un effet visible,
+// que le sélecteur vienne de s'ouvrir ou qu'il l'était déjà.
+async function prodBoardLaunch(){
   _atPicker = true;
-  if(typeof prodRenderBoard==='function') prodRenderBoard();
+  if(typeof prodRenderBoard==='function') await prodRenderBoard();
+  const cible = document.querySelector('#prodBoardHost .at-list') || document.querySelector('#prodBoardHost .pb-sugg');
+  if(cible && typeof cible.scrollIntoView==='function') cible.scrollIntoView({behavior:'smooth', block:'start'});
 }
 // Durée courte lisible (ex. « 1 h 20 », « 14 min »).
 function prodDurShort(ms){

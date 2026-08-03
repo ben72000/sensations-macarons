@@ -150,7 +150,9 @@ const SUITES = [
   'v1436-location-pyramide-service.test.js',  // v1436 · la location de pyramide remonte en prestation de service même sans ligne prestation séparée — montantServiceLigne, point de vérité unique
   'v1437-fiche-client-copilote.test.js',      // v1437 · fiche client intelligente : indicateurs à seuil de silence, état relatif au rythme du client, recos argumentées, ouverture universelle
   'v1438-activeTx-course.test.js',            // v1438 · dexie.min.js : _activeTx (transaction en cours) était un champ PARTAGÉ, réutilisable par erreur par un appel concurrent — _txStore vérifie désormais qu'elle est vivante ET porte la bonne table avant de la réutiliser
-  'v1439-prodboard-launch.test.js'            // v1439 · le bouton « ＋ Lancer une tâche » de l'atelier complet appelait prodTaskPicker(), jamais définie — pointé vers le vrai mécanisme (_atPicker + prodRenderBoard)
+  'v1439-prodboard-launch.test.js',           // v1439/v1440 · le bouton « ＋ Lancer une tâche » appelait prodTaskPicker(), jamais définie — pointé vers le vrai mécanisme (_atPicker + prodRenderBoard), puis rendu visible à coup sûr (scrollIntoView)
+  'v1441-bicolore-rappel.test.js',            // v1441 · rappel de division bicolore (praliné = marron foncé + blanc) dans le formulaire de lancement (mode complet inclus) et la fiche de production toujours affichée après lancement
+  'v1442-meringue-fiche-combinee.test.js'     // v1442 · la fiche meringue mutualisée (base commune + détail par parfum) accessible à tout moment via « Voir la recette », pas seulement juste après le lancement du duo
 ];
 
 let allOk = true;

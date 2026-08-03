@@ -3592,4 +3592,124 @@ le corps réel de `prodBoardLaunch` ne la référence plus et pose bien `_atPick
 appelé exactement une fois) ; preuve par réintroduction (l'ancien appel reproduit lève le
 `ReferenceError` exact vu par Ben).
 
+---
+
+## 2026-08-03 — RÉPARÉ MAIS INVISIBLE  (v1439 → **v1440**)
+
+Suite directe de la vague précédente. Une fois le plantage réparé, Ben a signalé : « maintenant le
+bouton ne renvoie plus de message d'erreur, en revanche il ne fonctionne plus. Lorsque je clique
+dessus plus rien ne se passe ».
+
+### Le sélecteur s'ouvrait — mais nulle part où on pouvait le voir
+Deux causes, cumulatives :
+1. La liste de tâches s'affiche **après** les cartes de tâches en cours, dans le bloc suggestion —
+   sans aucun mouvement à l'écran, un clic qui ouvre quelque chose hors du cadre visible est
+   indiscernable d'un clic sans effet.
+2. `_atPicker` n'est **jamais remis à `false` par un simple rechargement de vue** — seulement par un
+   choix de tâche ou une fermeture explicite. Si le sélecteur était déjà ouvert d'un essai
+   précédent, cliquer de nouveau sur « ＋ Lancer une tâche » ne changeait littéralement rien à
+   l'écran : le rendu était identique avant/après.
+
+### Le fix
+`prodBoardLaunch()` **attend** désormais le rendu (elle est devenue `async`) puis fait défiler la
+liste ouverte dans le cadre (`scrollIntoView`), avec repli sur le bloc suggestion si la liste est
+vide. Le clic a maintenant un effet visible **à tous les coups**, que le sélecteur vienne de
+s'ouvrir ou qu'il l'était déjà.
+
+### Suite v1439 amendée : 14 assertions (`tests/v1439-prodboard-launch.test.js`)
+Ajoutées à la suite du wave précédent : le défilement a bien lieu dans le cas normal (D) ; il a
+**aussi** lieu quand `_atPicker` était déjà `true` avant le clic — le cas exact signalé par Ben (D2)
+; repli sur `.pb-sugg` sans planter si `.at-list` est absent (D3) ; preuve par réintroduction du
+symptôme précis de ce second rapport — la version v1439 seule (sans `scrollIntoView`) ne défile
+jamais, même quand la liste existe (E2).
+
+---
+
+## 2026-08-03 — RAPPEL DE DIVISION BICOLORE  (v1440 → **v1441**)
+
+**Demandé par Ben** :
+> « Quand je lance une production bicolore le système ne me permet pas de faire la division de
+> meringue, je suis obligé d'aller dans meringue mutualisée et de simuler 2 parfums différents afin
+> d'avoir la possibilité de sélectionner mes deux couleurs. C'est le cas par exemple pour le parfum
+> praliné qui doit produire des coques marrons et des coques blanches. »
+
+### Ce qui existait déjà, et ce qui manquait
+La couleur d'une recette bicolore (2 couleurs distinctes, ex. praliné = marron foncé + blanc) est
+définie une fois pour toutes sur la fiche recette (`recCoqueColors`, `recEstBicolore`) et pilote
+déjà correctement le sélecteur de second lot à l'**assemblage**. Ce qui manquait, c'est un rappel
+au moment de la **production** : le formulaire de lancement, en mode « Batch complet » (le mode par
+défaut, le plus emprunté), n'affichait **aucune** information de couleur. Le seul endroit qui en
+montrait une était le mode « duo » (2-3 parfums, meringue commune) — conçu pour combiner des
+recettes **différentes**, pas pour diviser la meringue d'une **seule** recette bicolore. D'où le
+contournement de Ben : simuler un faux 2ᵉ parfum juste pour voir apparaître un sélecteur de
+couleurs qui n'avait rien à faire là.
+
+### La décision, prise par Ben
+Deux questions posées avant de coder (le choix change complètement l'implémentation) :
+1. **Un seul lot de coques** (comme aujourd'hui — rien ne change au modèle de données ni au stock),
+   avec un rappel clair — plutôt que deux lots séparés et traçables individuellement.
+2. **Toujours 50/50** — plutôt qu'un curseur de répartition ajustable.
+
+### Le fix
+Nouvelle fonction pure `_bicoloreRappelHtml(rec, nbMacarons)` : si la recette est bicolore, calcule
+le nombre de coques de **chaque** couleur (toujours un entier exact — `COQUES_PAR_MACARON=2`
+garantit un total pair) et rend un bandeau visuel. Branché à **deux** endroits :
+- Le formulaire de lancement (`prodCompSwitch`/`prodUpdateCoqueHint`), désormais aussi en mode
+  « Batch complet », pas seulement « Par composants → Coques ».
+- La fiche de production (`ficheRecetteProduction`), **toujours** affichée après le lancement
+  (`lancerBatchAvecFiche`, point 4) — l'endroit le plus sûr pour que Ben le voie, même s'il avait
+  manqué la note du formulaire. Absente pour le composant « ganache » seul (pas de coques dedans).
+
+Exemple affiché : « 🎨 Praliné est bicolore : divise ta meringue en 2 portions égales — 60 coques
+marron foncé + 60 coques blanches. »
+
+### Suite v1441 : 15 assertions (`tests/v1441-bicolore-rappel.test.js`)
+Rappel présent et split exact 50/50 pour une recette bicolore (A) ; split toujours entier même à
+quantité impaire de macarons (B) ; aucun rappel pour une recette monochrome (C) ou sans couleurs
+renseignées, sans jamais planter (D) ; `prodCompSwitch` couvre désormais le mode complet, sans
+régresser sur composant+coques (E) ; `ficheRecetteProduction` appelle bien le rappel, exclu pour
+« ganache » seul (F) ; preuve par réintroduction — l'ancienne condition ne couvrait pas le mode
+complet, exactement le trou signalé par Ben (G).
+
+---
+
+## 2026-08-03 — LA FICHE MERINGUE MUTUALISÉE, ACCESSIBLE À TOUT MOMENT  (v1441 → **v1442**)
+
+**Demandé par Ben** :
+> « Dans le cadre d'une meringue mutualisée je dois pouvoir accéder à [la] recette donnant la
+> quantité totale de meringue mutualisée au même titre que le reste de la recette, c'est à dire
+> indiquer de manière séparée mais sur la même vue le détail et poids des ingrédients qui suivent
+> pour chaque recette (coques chocolat et praliné par exemple). Voici l'exemple : avoir ce visuel
+> supplémentaire disponible à tout moment à l'intérieur de ce bouton-là présent en haut de la page
+> fabrication. »
+
+### Ce qui existait déjà, et ce qui manquait
+Le calcul demandé par Ben **existait déjà**, exact, depuis la v1379/v1380 :
+`ficheMeringueProduction()` affiche la base meringue commune (cumulée, mise à l'échelle du total)
+**et**, séparément mais sur la **même vue**, le tant-pour-tant et les ajouts propres de **chaque**
+parfum. Le trou : cette fiche ne s'affichait **qu'une fois**, automatiquement, juste après le
+lancement d'un batch en mode « duo ». Une fois cette popup fermée, le bouton « Voir la recette »
+d'un sous-lot (dans « N production(s) en cours », en haut de la page Fabrication) rouvrait
+`ficheRecetteProduction` — qui ne montre que **ce** parfum, jamais la base commune ni l'autre
+parfum. La vue combinée que Ben avait vue une fois n'était donc plus jamais accessible.
+
+### Le fix
+`ficheRecetteProductionFromBatch(prodId)` — appelée par CE bouton — détecte désormais si le batch
+cliqué porte un `meringueBatchId` (fournée de meringue commune). Si oui, elle retrouve tous les
+sous-lots de la même fournée (`db.productions.where('meringueBatchId').equals(...)`,  reconstruit
+leurs quantités en macarons, et rouvre `ficheMeringueProduction()` — **la même fiche combinée**,
+avec **tous** les parfums de la fournée, pas seulement celui cliqué. Repli sur la fiche simple si
+un seul sous-lot subsiste (ex. l'autre a été supprimé) : jamais de plantage, jamais de silence.
+
+### Suite v1442 : 15 assertions (`tests/v1442-meringue-fiche-combinee.test.js`)
+Statique : la fonction vérifie bien `meringueBatchId`, interroge `where('meringueBatchId')`, route
+vers la fiche combinée et conserve le repli simple (A). Comportemental, sur une vraie (fausse)
+IndexedDB : cliquer sur UN sous-lot ouvre la fiche combinée avec les DEUX parfums, quantités et
+lots exacts reconstruits pour chacun — pas seulement celui cliqué (B) ; non-régression sur un batch
+sans meringueBatchId, comportement d'avant inchangé (C) ; cas limite d'un seul sous-lot restant en
+base — repli propre sur la fiche simple, sans plantage (D).
+
+
+
+
 
