@@ -42,6 +42,8 @@ function makeFakeDocument(recette){
     f_qte:   { value: '60' },
     f_rec:   { value: String(recette.id) },
     f_mode:  { value: 'composant' },
+    f_date:  { value: '2026-08-03' },
+    f_lotWrap: { style: {} },
     coqueHint: { innerHTML: '', style: {} },
   };
   const compRadio = { value: 'coques', checked: true };
@@ -89,9 +91,20 @@ async function run(){
     extractFunction('coqueCouleurLabel'),
     extractFunction('coqueCouleurHex'),
     extractFunction('coqueCouleurPastille'),
+    extractObjectConst('COQUE_COULEUR_CODES'),
+    extractFunction('coqueCouleurCode'),
     extractFunction('recCoqueColors'),
     extractFunction('recEstBicolore'),
     extractFunction('_bicoloreRappelHtml'),
+    extractFunction('lotDateJJMMAA'),
+    extractConstLine('LOT_ALPHABET'),
+    extractObjectConst('FLAVOR_CODES'),
+    extractFunction('normTxt'),
+    extractFunction('flavorCode'),
+    extractFunction('flavorCodeFor'),
+    extractFunction('flavorCodeRec'),
+    'function swallow(e){ /* test : erreurs visibles, pas avalées */ if(e) throw e; }',
+    "function today(){ return '2026-08-03'; }",
     extractFunction('prodUpdateCoqueHint'),
   ].join('\n');
 
@@ -99,25 +112,21 @@ async function run(){
   check('A. la case reste cochée après un second rendu déclenché par la quantité (cas exact de Ben)', resteCoche === true);
 
   // ---- B. Preuve par réintroduction : sans la mémorisation de dejaCoche, la case se décoche
-  // toute seule. On reconstruit fidèlement l'ancien texte : l'attribut `checked` de l'<input>
-  // disparaît, et l'état lu pour le texte redevient une lecture EN DIRECT du DOM (qui, à cet
-  // instant précis — avant que l'innerHTML ne soit réassigné — reflète encore l'ancienne case,
-  // donc rien ne le distingue à l'écran ; c'est la case RECRÉÉE, elle, qui perd l'état). ----
+  // toute seule. Remplace TOUT usage de l'identifiant (pas seulement 1 ligne) par une lecture EN
+  // DIRECT du DOM — fidèle à l'ancien code, robuste aux ajouts ultérieurs (v1448) qui réutilisent
+  // aussi `dejaCoche` ailleurs dans la fonction. ----
   const srcAncien = src
     .replace(
       "const dejaCoche = document.getElementById('f_bicoloreDiviser')?.checked || false;\n      ",
       ''
     )
+    .replace(/\bdejaCoche\b/g, "(document.getElementById('f_bicoloreDiviser')?.checked || false)")
     .replace(
-      'const texteEtat = dejaCoche\n',
-      "const texteEtat = (document.getElementById('f_bicoloreDiviser')?.checked || false)\n"
-    )
-    .replace(
-      '<input type="checkbox" id="f_bicoloreDiviser" ${dejaCoche?\'checked\':\'\'} style="margin-top:3px" onchange="prodUpdateCoqueHint()">',
+      '<input type="checkbox" id="f_bicoloreDiviser" ${(document.getElementById(\'f_bicoloreDiviser\')?.checked || false)?\'checked\':\'\'} style="margin-top:3px" onchange="prodUpdateCoqueHint()">',
       '<input type="checkbox" id="f_bicoloreDiviser" style="margin-top:3px" onchange="prodUpdateCoqueHint()">'
     );
   check('B. préparation de la réintroduction : le texte source a bien changé (sinon le test B ne prouve rien)',
-    srcAncien !== src && !srcAncien.includes('dejaCoche ='));
+    srcAncien !== src && !srcAncien.includes('const dejaCoche ='));
   const resteCocheAncien = await testSequence(srcAncien);
   check('B. réintroduction : SANS le correctif, la case se décoche bien toute seule (bug reproduit)',
     resteCocheAncien === false);

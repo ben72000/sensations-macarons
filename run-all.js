@@ -156,7 +156,8 @@ const SUITES = [
   'v1443-duo-qte-sync.test.js',               // v1443 · en mode duo, « Macarons Pn » suit désormais le rendement du parfum choisi (ne restait plus bloqué sur l'ancienne valeur au changement de parfum)
   'v1444-ca-graphique-glissant.test.js',      // v1444 · graphique du CA zoomable (jour/semaine/mois/année) et glissant, chaque barre cliquable — avec réconciliation mois par mois contre caDuMois
   'v1445-bicolore-divise.test.js',            // v1445 · un parfum bicolore peut être divisé en 2 lots réels séparés (comme une meringue mutualisée) — couleur explicite prioritaire sur la recette dans les 3 moteurs de couleur, réconciliation dissymétrique contre la double-division
-  'v1445b-checkbox-reset.test.js'             // v1445b · la case « diviser en 2 lots » se décochait toute seule dès qu'on touchait la quantité (prodUpdateCoqueHint reconstruisait l'input sans mémoriser son état)
+  'v1445b-checkbox-reset.test.js',            // v1445b · la case « diviser en 2 lots » se décochait toute seule dès qu'on touchait la quantité (prodUpdateCoqueHint reconstruisait l'input sans mémoriser son état)
+  'v1448-lot-duo-preview.test.js'             // v1448 · le champ « N° lot de production » était masqué en duo/bicolore-divisé (jamais lu par la sauvegarde réelle, affichait un code d'une autre recette) et remplacé par un aperçu réconcilié avec la vraie formule de lot
 ];
 
 let allOk = true;

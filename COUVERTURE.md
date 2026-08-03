@@ -3933,3 +3933,42 @@ Code du blanc vérifié à « BLA » ; absence de collision sur l'ensemble des 1
 (vérifié en boucle, pas seulement sur une paire) ; repli algorithmique pour une couleur inconnue,
 sans plantage. **Sensibilité confirmée par réintroduction réelle** : revenir à l'ancien calcul
 (table vide) fait échouer les 3 assertions, dont celle qui détecte spécifiquement les collisions.
+
+---
+
+## 2026-08-03 — LE CHAMP « N° LOT DE PRODUCTION » MENTAIT EN MODE DUO  (v1447 → **v1448**)
+
+**Signalé par Ben**, capture à l'appui : lançant une meringue commune Chocolat passion + Pistache,
+le champ « N° lot de production » affichait **030826RAF** — ni CHP (Chocolat passion), ni PIS
+(Pistache), mais RAF (Coco Rafaello, une tout autre recette).
+
+### La cause, en deux couches
+La branche `_mode==='duo'` de `saveProd()` ne lit **jamais** ce champ : chaque parfum reçoit son
+propre numéro de lot, calculé indépendamment (`flavorCodeRec` + date). Le champ affiché venait de
+`prodRefreshLot()`, qui lit **toujours** la recette du sélecteur unique (`f_rec`) — or `f_rec`
+reste présente dans la page en mode duo (juste **masquée**, jamais vidée), avec la valeur de la
+**dernière recette affichée** avant le passage en duo (le premier recette de la liste, à
+l'ouverture du formulaire, dans le cas de Ben). Un champ qui affiche une valeur fausse **et** n'a
+aucun effet réel est pire qu'un champ absent — c'est le principe qui guide le fix.
+
+Même défaut, plus discret : la case « diviser en 2 lots » d'un parfum bicolore (v1445/v1446)
+partage le même champ, et `prodLancerBicoloreDivise()` ne le lit pas non plus — il calcule ses 2
+propres codes, un par couleur.
+
+### Le fix
+Le champ est désormais **masqué** dans les deux cas (mode duo ; case bicolore cochée), et
+**remplacé** par un aperçu des vrais numéros de lot :
+- En duo, dans le récapitulatif de répartition déjà affiché (« ⚖️ Répartition ») : un parfum → son
+  vrai code, calculé avec la **formule identique** à `saveProd`.
+- Pour la division bicolore, dans son propre encart, même principe.
+
+Dans les deux cas, le calcul n'est **jamais dupliqué** : c'est la même expression
+(`(baseD + flavorCodeRec(r)).toUpperCase().replace(/\s+/g,'')+'-CO'`) que celle réellement
+exécutée à la sauvegarde — un aperçu qui divergerait du réel serait pire qu'un aperçu absent.
+
+### Suite v1448 : 12 assertions (`tests/v1448-lot-duo-preview.test.js`)
+Ni la branche duo de `saveProd` ni `prodLancerBicoloreDivise` ne lisent `f_lot` (A) ; `f_lotWrap`
+masqué exactement quand le mode est duo, comportement vérifié en isolation, y compris le
+réaffichage en repassant en mode complet (B, C) ; **réconciliation** — l'aperçu affiché dans
+`prodDuoApercu` pour Chocolat passion + Pistache donne bien `030826CHP-CO` et `030826PIS-CO`,
+jamais `RAF` — le symptôme exact de Ben (D) ; preuve par réintroduction (E).

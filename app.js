@@ -5,8 +5,9 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1447'; // suite : voir tests/v1445-bicolore-divise.test.js (section A amendée)
-const APP_MAJ = 'CODES COULEUR DES LOTS : EXPLICITES, PLUS ALGORITHMIQUES. Ben : « je veux que le code pour la coque blanche dise BLA et pas BAN ». Le code court utilisé dans les numéros de lot (ex. 030826PRAMAR-CO) était calculé automatiquement à partir du libellé de la couleur, avec un filtre qui retire les lettres I/L/O — pour « Blanc », ça retire le L et donne « BAN ». En creusant plus loin que la seule demande de Ben : ce calcul automatique faisait aussi atterrir les 4 marrons de la palette sur le même code « MAR », les 2 rouges sur « RUG », les 2 verts sur « VER » et les 2 jaunes sur « JAU » — deux couleurs différentes, un même code de lot, silencieusement indiscernables. FIX : une table explicite (même principe que FLAVOR_CODES pour les parfums) donne à chacune des 14 couleurs un code lisible et unique — blanc → BLA comme demandé, plus aucune collision entre les 14. Une couleur future non cataloguée retombe sur l\u2019ancien calcul automatique. Suite v1445 amendée (section A) : code du blanc vérifié, absence de collision vérifiée sur les 14 couleurs, repli pour couleur inconnue — sensibilité confirmée par réintroduction réelle de l\u2019ancien calcul.';
+const APP_VERSION = 'v1448'; // suite : voir tests/v1448-lot-duo-preview.test.js
+const APP_MAJ = 'LE CHAMP « N° LOT DE PRODUCTION » MENTAIT EN MODE DUO. Ben, capture à l\u2019appui : lançant Chocolat passion + Pistache en meringue commune, le champ affichait « 030826RAF » — ni CHP ni PIS, mais RAF (Coco Rafaello, une tout autre recette). CAUSE : la branche duo de saveProd() ne lit JAMAIS ce champ — chaque parfum reçoit son propre lot, calculé indépendamment. Sa valeur affichée venait de prodRefreshLot(), qui lit TOUJOURS la recette unique (f_rec) — or f_rec reste dans la page (juste masquée) en duo, avec la valeur de la DERNIÈRE recette affichée avant le passage en duo. Un champ qui ment ET n\u2019a aucun effet réel est pire qu\u2019un champ absent. Même défaut, plus discret, sur la case « diviser en 2 lots » (v1445/v1446) : cochée, ce champ n\u2019est pas plus lu par le lancement réel. FIX : le champ est désormais masqué dans ces deux cas ; à la place, les VRAIS numéros de lot qui seront utilisés sont prévisualisés — en mode duo dans le récapitulatif de répartition, et pour la division bicolore dans son propre encart — calculés avec EXACTEMENT la même formule que la sauvegarde réelle, jamais un second calcul qui pourrait diverger. Suite v1448 : 12 assertions (tests/v1448-lot-duo-preview.test.js), dont une réconciliation qui rejoue la vraie formule de sauvegarde et vérifie que l\u2019aperçu affiche bien 030826CHP-CO et 030826PIS-CO — jamais RAF.';
+const _APP_MAJ_v1447_ARCHIVE_INUTILISEE = 'CODES COULEUR DES LOTS : EXPLICITES, PLUS ALGORITHMIQUES. Ben : « je veux que le code pour la coque blanche dise BLA et pas BAN ». Le code court utilisé dans les numéros de lot (ex. 030826PRAMAR-CO) était calculé automatiquement à partir du libellé de la couleur, avec un filtre qui retire les lettres I/L/O — pour « Blanc », ça retire le L et donne « BAN ». En creusant plus loin que la seule demande de Ben : ce calcul automatique faisait aussi atterrir les 4 marrons de la palette sur le même code « MAR », les 2 rouges sur « RUG », les 2 verts sur « VER » et les 2 jaunes sur « JAU » — deux couleurs différentes, un même code de lot, silencieusement indiscernables. FIX : une table explicite (même principe que FLAVOR_CODES pour les parfums) donne à chacune des 14 couleurs un code lisible et unique — blanc → BLA comme demandé, plus aucune collision entre les 14. Une couleur future non cataloguée retombe sur l\u2019ancien calcul automatique. Suite v1445 amendée (section A) : code du blanc vérifié, absence de collision vérifiée sur les 14 couleurs, repli pour couleur inconnue — sensibilité confirmée par réintroduction réelle de l\u2019ancien calcul.';
 const _APP_MAJ_v1446_ARCHIVE_INUTILISEE = 'LA CASE « DIVISER EN 2 LOTS » SE DÉCOCHAIT TOUTE SEULE. Ben, captures à l\u2019appui : une fiche « Chocolat passion » montrant un seul lot (« 030826CHP-CO », sans suffixe de couleur) avec le simple rappel v1441, alors qu\u2019il pensait avoir demandé la division en 2 lots. CAUSE : `prodUpdateCoqueHint()` reconstruit ENTIÈREMENT la case à cocher à chaque appel — y compris depuis le champ Quantité, qui appelle cette fonction à chaque frappe depuis la v1441. Le nouvel `<input>` ne portait jamais l\u2019état précédent : cocher la case puis toucher la quantité (l\u2019ordre naturel d\u2019usage — la quantité est pré-remplie par défaut, on la corrige souvent après avoir repéré le rappel bicolore) redessinait une case DÉCOCHÉE en silence, sans aucun message d\u2019erreur. Lancer la production retombait alors sur l\u2019ancien chemin à un seul lot. FIX : l\u2019état de la case est lu AVANT d\u2019être détruite et reporté sur la nouvelle. Suite v1445 amendée : 3 assertions (tests/v1445b-checkbox-reset.test.js), dont la preuve par réintroduction du symptôme exact de Ben.';
 const _APP_MAJ_v1445_ARCHIVE_INUTILISEE = 'DIVISER UN PARFUM BICOLORE EN 2 LOTS, COMME UNE MERINGUE MUTUALISÉE. Suite de la v1441 : Ben a essayé le simple rappel et signalé que ça ne suffisait pas — « Praliné ne se divise pas en 2 comme souhaité. Je veux que le comportement des coques bicolore soit identique à une meringue mutualisée […] Ainsi je dois avoir d\u2019un côté une couleur de coque puis de l\u2019autre côté la deuxième couleur. […] la même chose que si je décidais de scinder ma meringue en 2 pour faire vanille et chocolat au lait (coques marrons et blanches). » CE QUI EST FAIT : le formulaire de lancement (en mode Composant → Coques) propose désormais, pour une recette bicolore, de diviser en 2 LOTS RÉELS et séparés — chacun sa quantité, sa DLC, son suivi de stock propre — reliés comme une fournée de meringue commune, exactement le mécanisme déjà utilisé pour 2 parfums différents, appliqué ici à UN parfum divisé en ses 2 couleurs. Toujours 50/50. Absent en mode « Batch complet » (le mode duo lui-même ne gère que les coques ; diviser y laisserait la garniture non produite). SOUS LE CAPOT : un lot peut désormais porter une couleur EXPLICITE qui prime sur les 2 couleurs de sa recette — les trois moteurs qui lisent la couleur d\u2019un lot (stock potentiel, suggestions d\u2019assemblage, suggestions de dégustation) la respectent, pour qu\u2019un lot déjà divisé ne se retrouve jamais re-divisé virtuellement une seconde fois. Suite v1445 : 31 assertions (tests/v1445-bicolore-divise.test.js), dont 2 réconciliations dissymétriques (100 marron / 140 blanc) qui distinguent vraiment un calcul correct d\u2019une double-division — vérifiées sensibles par mutation réelle de app.js, à 3 endroits séparés.';
 const _APP_MAJ_v1444_ARCHIVE_INUTILISEE = 'GRAPHIQUE DU CA ZOOMABLE ET GLISSANT (modèle : l\u2019app Santé d\u2019iPhone). Ben : « je veux que [le graphique] sur l\u2019accueil puisse être dezoomable pour changer l\u2019affichage du CA pour montrer une tranche d\u20191 an plutôt que 6 mois. Ou zoomer pour afficher [\u2026] 1 mois, 1 semaine etc. Et qu\u2019on puisse scroller à l\u2019horizontal pour que la période affichée soit glissante. [\u2026] tout résultat affiché reste cliquable et renvoie à la période en question. Pour les périodes je veux jour semaine mois année. » CE QUI EST FAIT : le graphique de l\u2019accueil (6 mois figés, non défilables) devient une bande défilante avec 4 onglets — Jour / Semaine / Mois / Année. L\u2019onglet choisit la largeur d\u2019UNE barre ; le défilement horizontal fait glisser la fenêtre dans le temps à granularité constante, et s\u2019ouvre sur la période la plus récente. L\u2019onglet « Mois » montre 12 barres, soit exactement la tranche d\u20191 an citée en exemple. Chaque barre reste cliquable et ouvre le détail des encaissements de SA période (le clic sur un mois ouvre l\u2019écran mensuel habituel, inchangé). Une période sans vente reste une barre à zéro, jamais une barre absente. LIMITE DÉCLARÉE : un encaissement porte une date, jamais une heure — la barre la plus fine possible est donc le JOUR ; il n\u2019y a pas de vue heure par heure, et en fabriquer une inventerait une précision que la base n\u2019a pas. Au passage, l\u2019accueil ne lance plus 6 requêtes caDuMois par rendu : les encaissements sont chargés en un seul passage puis regroupés. Suite v1444 : 35 assertions (tests/v1444-ca-graphique-glissant.test.js), dont la réconciliation mois par mois avec caDuMois — la source unique de vérité — pour que la barre et le détail au clic ne puissent jamais afficher deux chiffres différents.';
@@ -15292,7 +15293,7 @@ async function prodForm(prefill){  const recipes = await db.recipes.toArray();
    <div class="field" id="f_qtereelWrap"><label>Quantité réelle produite <span style="color:#9a8a82;font-weight:400">— stock produits finis (modifiable en fin de production)</span></label>
      <input type="number" id="f_qtereel" value="${recSel.rendement}" min="0" oninput="_prodReelTouched=true;prodUpdateEcartHint()">
      <p class="note" id="ecartHint" style="margin-top:4px;display:none"></p></div>
-   <div class="field"><label>N° lot de production <span style="color:#9a8a82;font-weight:400">— la lettre d'emplacement s'ajoutera à la fin</span></label><input id="f_lot" value="${lotDateJJMMAA()}${flavorCode(recSel.produitNom)}" oninput="this.dataset.touched='1'"></div>
+   <div class="field" id="f_lotWrap"><label>N° lot de production <span style="color:#9a8a82;font-weight:400">— la lettre d'emplacement s'ajoutera à la fin</span></label><input id="f_lot" value="${lotDateJJMMAA()}${flavorCode(recSel.produitNom)}" oninput="this.dataset.touched='1'"></div>
    <p class="note" id="dlcHint">La production démarre au statut <b>« démarrée »</b>. Tu choisiras l'<b>emplacement de rangement</b> au moment de la <b>fin de production</b> (« ✓ Terminer »), et la DLC (<b>+7 j</b> frigo, <b>+4 mois</b> congélateur) ne courra qu'à ce moment-là.</p>
    <p class="note">Les <b>matières premières</b> sont déduites sur la base de la <b>quantité théorique</b> (DLC la plus proche d'abord). Le <b>stock de produits finis</b> est calé sur la <b>quantité réelle</b>. L'écart est historisé. Si le stock matières est insuffisant, <b>rien</b> n'est enregistré.</p>
    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn gold" onclick="saveProd()">Lancer la production</button></div>`);
@@ -15332,6 +15333,16 @@ function prodModeSwitch(mode){
   // a sa quantité propre, gérée au « Terminer ») et n'est PAS enregistrée par saveProd en mode duo.
   // On masque donc ce bloc en duo pour ne pas afficher un écart trompeur calculé sur f_qte (masqué).
   const qteReelWrap=document.getElementById('f_qtereelWrap'); if(qteReelWrap) qteReelWrap.style.display = mode==='duo'?'none':'block';
+  // [FIX v1448] BUG SIGNALÉ PAR BEN (capture à l'appui) : « N° lot de production » restait
+  // affiché en mode duo, mais n'est JAMAIS lu par la branche `_mode==='duo'` de saveProd — chaque
+  // parfum reçoit son propre lot, calculé indépendamment (flavorCodeRec + date). Pire : sa valeur
+  // provenait de prodRefreshLot(), qui lit TOUJOURS f_rec — or f_rec reste cachée mais PAS vidée
+  // en duo (recField ci-dessus), donc le champ affichait le code d'une recette n'ayant plus rien
+  // à voir avec la sélection en cours (ex. « 030826RAF » alors que les parfums choisis étaient
+  // Chocolat passion + Pistache). Un champ qui affiche une valeur fausse ET n'a aucun effet réel
+  // est pire qu'un champ absent : masqué en duo, remplacé par les vrais codes dans l'aperçu
+  // (prodDuoApercu, calculés avec EXACTEMENT la même formule que la sauvegarde réelle).
+  const lotWrap=document.getElementById('f_lotWrap'); if(lotWrap) lotWrap.style.display = mode==='duo'?'none':'block';
   // Affiche/masque et remplit l'aperçu des ingrédients de la garniture.
   if(mode==='garniture'){ prodSyncTheorique(); prodApercuGarniture(); prodRefreshLot(); }
   else { const z=document.getElementById('f_garnitureApercu'); if(z){ z.style.display='none'; z.innerHTML=''; } prodRefreshLot(); }
@@ -15358,6 +15369,20 @@ async function prodDuoApercu(){
   let r1=null, r2=null, r3=null;
   try{ [r1, r2, r3] = await Promise.all([rid1?db.recipes.get(rid1):null, rid2?db.recipes.get(rid2):null, (p3actif?db.recipes.get(rid3):null)]); }catch(e){swallow(e,'prodDuoApercu')}
   const gf1=!!(r1&&r1.grandFormat), gf2=!!(r2&&r2.grandFormat), gf3=!!(r3&&r3.grandFormat);
+  // [FIX v1448] Remplace le champ « N° lot de production » (masqué en duo, voir prodModeSwitch —
+  // il n'était jamais lu par la sauvegarde réelle et affichait un code d'une AUTRE recette). Les
+  // codes ci-dessous sont calculés avec la MÊME formule que saveProd (baseD + flavorCodeRec + date),
+  // jamais un second calcul : ce que Ben voit ici est garanti être ce qui sera réellement écrit.
+  let lotsHtml = '';
+  try{
+    const dateD = document.getElementById('f_date')?.value || today();
+    const baseD = lotDateJJMMAA(dateD);
+    const lotDe = r => r ? (baseD+flavorCodeRec(r)).toUpperCase().replace(/\s+/g,'')+'-CO' : '';
+    const paires = [[nom1,r1],[nom2,r2]].concat(p3actif?[[nom3,r3]]:[]);
+    if(paires.every(([,r])=>r)){
+      lotsHtml = `<div style="font-size:.78rem;color:#9a8a82;margin-top:2px">🏷️ Lots : ${paires.map(([n,r])=>`${esc(n)} → <b>${esc(lotDe(r))}</b>`).join(' · ')}</div>`;
+    }
+  }catch(e){ console.error('prodDuoApercu lots', e); }
   const ligneParfum = (nom, q, coq, gf) => {
     const eq = Math.round(coq * (gf?GF_COQUE_RATIO:1));
     const detail = gf ? `${qty(coq)} coques GF <span style="color:#9a8a82">(${qty(eq)} std éq.)</span>` : `${qty(coq)} coques`;
@@ -15370,7 +15395,8 @@ async function prodDuoApercu(){
     `<div style="display:flex;justify-content:space-between;font-weight:600"><span>⚖️ Répartition</span><b>${repartLbl}</b></div>`+
     ligneParfum(nom1, q1, coq1, gf1)+
     ligneParfum(nom2, q2, coq2, gf2)+
-    (p3actif?ligneParfum(nom3, q3, coq3, gf3):'');
+    (p3actif?ligneParfum(nom3, q3, coq3, gf3):'')+
+    lotsHtml;
   try{
     // Capacité meringue en ÉQUIVALENT-COQUES STANDARD (1 coque GF = GF_COQUE_RATIO coques std).
     const eq1 = coq1 * (gf1?GF_COQUE_RATIO:1);
@@ -15598,8 +15624,23 @@ async function prodUpdateCoqueHint(){
       // backtick est indiscernable, pour l'extracteur de tests (tests/_extract.js), de la
       // fermeture du template extérieur — ça faisait dérailler le comptage d'accolades sur
       // CETTE fonction précise (jamais extraite avant ce correctif). Rien ne change à l'affichage.
+      // [FIX v1448] Coché, prodLancerBicoloreDivise calcule SES PROPRES 2 numéros de lot (un par
+      // couleur) — le champ « N° lot de production » (f_lot) n'est alors jamais lu, exactement
+      // comme en mode duo (même bug racine, voir prodModeSwitch). Masqué quand coché ; les VRAIS
+      // codes qui seront utilisés sont prévisualisés ici, avec la MÊME formule que le lancement
+      // réel (jamais un second calcul qui pourrait diverger).
+      const lotWrap = document.getElementById('f_lotWrap');
+      if(lotWrap) lotWrap.style.display = dejaCoche ? 'none' : 'block';
+      let apercuLots = '';
+      if(dejaCoche){
+        const dateD = document.getElementById('f_date')?.value || today();
+        const baseD = lotDateJJMMAA(dateD), flavCode = flavorCodeRec(rec);
+        const lot1 = (baseD+flavCode+coqueCouleurCode(c1)).toUpperCase().replace(/\s+/g,'')+'-CO';
+        const lot2 = (baseD+flavCode+coqueCouleurCode(c2)).toUpperCase().replace(/\s+/g,'')+'-CO';
+        apercuLots = `<br>Numéros de lot : <b>${esc(lot1)}</b> et <b>${esc(lot2)}</b>.`;
+      }
       const texteEtat = dejaCoche
-        ? `Coché : au lancement, 2 lots de coques seront créés — <b>${qty(half1)} ${esc(coqueCouleurLabel(c1).toLowerCase())}</b> et <b>${qty(half2)} ${esc(coqueCouleurLabel(c2).toLowerCase())}</b> (toujours 50/50), reliés comme une fournée de meringue commune.`
+        ? `Coché : au lancement, 2 lots de coques seront créés — <b>${qty(half1)} ${esc(coqueCouleurLabel(c1).toLowerCase())}</b> et <b>${qty(half2)} ${esc(coqueCouleurLabel(c2).toLowerCase())}</b> (toujours 50/50), reliés comme une fournée de meringue commune.${apercuLots}`
         : `Décoché : un seul lot (comme aujourd'hui) — divise ta meringue en 2 portions égales toi-même, <b>${qty(half1)} ${esc(coqueCouleurLabel(c1).toLowerCase())}</b> et <b>${qty(half2)} ${esc(coqueCouleurLabel(c2).toLowerCase())}</b>.`;
       if(diviserHost) diviserHost.innerHTML = `
         <div class="field" style="margin:4px 0 10px;border:2px solid #e5d8c8;border-radius:12px;padding:10px;background:#fdfaf6">
@@ -15611,6 +15652,10 @@ async function prodUpdateCoqueHint(){
         </div>`;
     } else {
       if(diviserHost) diviserHost.innerHTML = '';
+      // Le champ redevient pertinent hors de ce chemin (mode/composant/recette changés) : on le
+      // rétablit au cas où il aurait été masqué par un état précédent (case cochée puis abandonnée).
+      const lotWrap = document.getElementById('f_lotWrap');
+      if(lotWrap) lotWrap.style.display = 'block';
       // Mode 'complet' + recette bicolore : le rappel simple (v1441) reste seul disponible ici.
       if(rec && recEstBicolore(rec) && !modeDivisible) base += _bicoloreRappelHtml(rec, q);
     }
