@@ -3709,6 +3709,39 @@ lots exacts reconstruits pour chacun — pas seulement celui cliqué (B) ; non-r
 sans meringueBatchId, comportement d'avant inchangé (C) ; cas limite d'un seul sous-lot restant en
 base — repli propre sur la fiche simple, sans plantage (D).
 
+---
+
+## 2026-08-03 — « MACARONS Pn » NE SUIVAIT PAS LE PARFUM CHOISI  (v1442 → **v1443**)
+
+**Signalé par Ben**, capture à l'appui : en mode duo (« 2 parfums, meringue commune »), il choisit
+« Coco citron vert (100/batch) » en Parfum 2 — le champ « Macarons P2 » reste affiché à **60**.
+« 100/batch » est écrit juste au-dessus du champ, « 60 » dedans : la valeur n'avait jamais suivi le
+changement de parfum. Lancer la production sans corriger à la main aurait produit la mauvaise
+quantité de ce parfum.
+
+### La cause
+Les sélecteurs « Parfum 1/2/3 » du mode duo n'appelaient, au changement, que `prodRefreshLot()`
+(le numéro de lot) et `prodDuoApercu()` (l'aperçu texte) — **jamais** de resynchronisation de la
+quantité elle-même. Le mode **mono-parfum** avait déjà ce réflexe (`prodSyncTheorique()`
+resynchronise `f_qte` sur `rendement` à chaque changement de recette) ; il manquait, purement et
+simplement, sur les 3 emplacements du mode duo/trio — un oubli lors de l'ajout du mode duo, jamais
+comblé depuis.
+
+### Le fix
+Nouvelle fonction `prodDuoSyncQte(slot)`, branchée sur les 3 sélecteurs de parfum : lit le
+`rendement` du parfum nouvellement choisi (le même `data-rend` déjà utilisé par
+`prodSyncTheorique`), l'écrit dans la case « Macarons Pn » correspondante, puis appelle
+`prodDuoQteChange()` pour que le total de coques et le curseur de répartition se recalculent
+aussitôt à partir des 3 quantités réelles. Choisir « — aucun — » en Parfum 3 remet sa quantité à 0
+(sinon une valeur fantôme resterait affichée sous un sélecteur qui dit « aucun »).
+
+### Suite v1443 : 9 assertions (`tests/v1443-duo-qte-sync.test.js`)
+Cas exact de Ben : Parfum 2 passe de 60/batch à 100/batch, le champ suit (A) ; symétrie côté
+Parfum 1 (B) ; Parfum 3 facultatif suit aussi quand un vrai parfum est choisi (C) et se remet à 0
+sur « — aucun — » (D) ; câblage réel vérifié — les 3 sélecteurs du formulaire appellent bien
+`prodDuoSyncQte` (E).
+
+
 
 
 

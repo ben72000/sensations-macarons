@@ -152,7 +152,8 @@ const SUITES = [
   'v1438-activeTx-course.test.js',            // v1438 · dexie.min.js : _activeTx (transaction en cours) était un champ PARTAGÉ, réutilisable par erreur par un appel concurrent — _txStore vérifie désormais qu'elle est vivante ET porte la bonne table avant de la réutiliser
   'v1439-prodboard-launch.test.js',           // v1439/v1440 · le bouton « ＋ Lancer une tâche » appelait prodTaskPicker(), jamais définie — pointé vers le vrai mécanisme (_atPicker + prodRenderBoard), puis rendu visible à coup sûr (scrollIntoView)
   'v1441-bicolore-rappel.test.js',            // v1441 · rappel de division bicolore (praliné = marron foncé + blanc) dans le formulaire de lancement (mode complet inclus) et la fiche de production toujours affichée après lancement
-  'v1442-meringue-fiche-combinee.test.js'     // v1442 · la fiche meringue mutualisée (base commune + détail par parfum) accessible à tout moment via « Voir la recette », pas seulement juste après le lancement du duo
+  'v1442-meringue-fiche-combinee.test.js',    // v1442 · la fiche meringue mutualisée (base commune + détail par parfum) accessible à tout moment via « Voir la recette », pas seulement juste après le lancement du duo
+  'v1443-duo-qte-sync.test.js'                // v1443 · en mode duo, « Macarons Pn » suit désormais le rendement du parfum choisi (ne restait plus bloqué sur l'ancienne valeur au changement de parfum)
 ];
 
 let allOk = true;
