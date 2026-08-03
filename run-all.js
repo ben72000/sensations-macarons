@@ -157,7 +157,8 @@ const SUITES = [
   'v1444-ca-graphique-glissant.test.js',      // v1444 · graphique du CA zoomable (jour/semaine/mois/année) et glissant, chaque barre cliquable — avec réconciliation mois par mois contre caDuMois
   'v1445-bicolore-divise.test.js',            // v1445 · un parfum bicolore peut être divisé en 2 lots réels séparés (comme une meringue mutualisée) — couleur explicite prioritaire sur la recette dans les 3 moteurs de couleur, réconciliation dissymétrique contre la double-division
   'v1445b-checkbox-reset.test.js',            // v1445b · la case « diviser en 2 lots » se décochait toute seule dès qu'on touchait la quantité (prodUpdateCoqueHint reconstruisait l'input sans mémoriser son état)
-  'v1448-lot-duo-preview.test.js'             // v1448 · le champ « N° lot de production » était masqué en duo/bicolore-divisé (jamais lu par la sauvegarde réelle, affichait un code d'une autre recette) et remplacé par un aperçu réconcilié avec la vraie formule de lot
+  'v1448-lot-duo-preview.test.js',            // v1448 · le champ « N° lot de production » était masqué en duo/bicolore-divisé (jamais lu par la sauvegarde réelle, affichait un code d'une autre recette) et remplacé par un aperçu réconcilié avec la vraie formule de lot
+  'v1449-bicolore-duo.test.js'                 // v1449 · un parfum bicolore combiné à d'autres (mode duo/trio) se divise aussi par couleur — moteur partagé _sousLotsCoques, case à cocher supprimée, reproduction exacte du scénario chiffré de Ben (Pistache 120 + Chocolat passion 60/60)
 ];
 
 let allOk = true;

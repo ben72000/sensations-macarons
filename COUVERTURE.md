@@ -3972,3 +3972,53 @@ masqué exactement quand le mode est duo, comportement vérifié en isolation, y
 réaffichage en repassant en mode complet (B, C) ; **réconciliation** — l'aperçu affiché dans
 `prodDuoApercu` pour Chocolat passion + Pistache donne bien `030826CHP-CO` et `030826PIS-CO`,
 jamais `RAF` — le symptôme exact de Ben (D) ; preuve par réintroduction (E).
+
+---
+
+## 2026-08-03 — UN PARFUM BICOLORE COMBINÉ À D'AUTRES SE DIVISE AUSSI  (v1448 → **v1449**)
+
+**Ben, en réaction à v1445/v1448** :
+> « T'as pas compris. Si c'est un parfum bicolore la partie de la meringue dédiée à cette couleur
+> doit être divisée ! Ainsi si j'ai 240 coques et que je souhaite mutualiser la meringue à part
+> égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat
+> passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s'ajuster en
+> conséquence. »
+
+### Ce qui manquait
+La division bicolore (v1445) ne gérait qu'**un seul** parfum, lancé à part, et restait une
+**option** qu'on cochait. Le mode duo/trio (meringue commune entre 2-3 parfums différents), lui,
+traitait chaque parfum sélectionné comme produisant exactement **un** lot — sans jamais se
+demander si CE parfum était lui-même bicolore. Combiner les deux (un parfum bicolore parmi
+d'autres dans une même fournée) n'était tout simplement pas prévu.
+
+### Le fix : un moteur, pas une case à cocher
+Nouvelle fonction partagée `_sousLotsCoques(rid, rec, qMac, baseD)` : pour **n'importe quel**
+parfum entrant dans un lancement de coques (seul, en duo, ou en trio), elle décide s'il produit
+**1 sous-lot** (mono-couleur, sa quantité entière) ou **2** (bicolore, toujours 50/50 — jamais un
+choix, jamais un curseur). C'est **le seul et même moteur**, réutilisé partout :
+- Lancement solo (Composant → Coques) : la case à cocher a **disparu**. Ce n'est plus une option,
+  c'est un comportement automatique dès que la recette choisie est bicolore.
+- Mode duo/trio (`saveProd`) : chaque parfum sélectionné passe par ce même moteur. Un parfum
+  bicolore combiné à d'autres se divise **exactement comme s'il était seul** — la quantité qui lui
+  revient après répartition entre parfums sert de base à sa propre division par couleur.
+- Aperçu (`prodDuoApercu`) : répartition, numéros de lot prévisualisés et détail des ingrédients
+  de la meringue reflètent désormais les **vrais sous-lots**, pas les parfums sélectionnés — un
+  trio où chaque parfum serait bicolore afficherait jusqu'à 6 lignes, pas 3.
+
+### Un piège d'outillage retrouvé au passage
+En réécrivant `prodDuoApercu`, la même impasse d'extraction que `prodUpdateCoqueHint` (v1446) —
+un backtick imbriqué dans un `${...}` d'un autre backtick, cette fois dans la construction de
+l'aperçu des lots. Même remède : sortir le texte du template imbriqué, pas toucher
+`tests/_extract.js`.
+
+### Suite v1449 : 28 assertions (`tests/v1449-bicolore-duo.test.js`)
+`_sousLotsCoques` en isolation : 1 sous-lot mono-couleur, 2 sous-lots bicolore toujours 50/50 exact
+même à quantité impaire, lots distingués (A). **Le test qui compte** : reproduction EXACTE du
+scénario chiffré de Ben — `saveProd` (branche duo) produit bien 3 lots (Pistache 120 coques,
+Chocolat passion 60 marron + 60 orange), un seul `meringueBatchId`, une fiche à 3 parts (B) ;
+`prodDuoApercu` affiche les mêmes 3 sous-lots, jamais divergents du réel (C) ; preuve par
+réintroduction — sans l'expansion, seulement 2 lots, Chocolat passion jamais divisé (D).
+
+**Sensibilité vérifiée par mutation réelle de `app.js`** : revenir à l'ancien calcul 1-lot-par-def
+dans la branche duo fait échouer 7 assertions de la section B, exactement celles qui portent sur
+la division de Chocolat passion.

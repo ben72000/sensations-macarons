@@ -32,7 +32,7 @@ function extractObjectConst(name){
   throw new Error('Accolades non équilibrées: '+name);
 }
 
-// ---- A. saveProd (duo) et prodLancerBicoloreDivise ne lisent JAMAIS f_lot — vérifie que le
+// ---- A. saveProd (duo) et prodLancerCoquesParfum ne lisent JAMAIS f_lot — vérifie que le
 // diagnostic tient toujours, garde anti-réintroduction si quelqu'un branchait f_lot dessus par
 // erreur plus tard sans mettre à jour l'aperçu. ----
 {
@@ -41,8 +41,8 @@ function extractObjectConst(name){
   const iDuo = srcSaveDuo.indexOf("if(_mode==='duo')");
   const brancheDuo = srcSaveDuo.slice(iDuo, iDuo + 2000);
   check("A. la branche duo de saveProd ne lit pas val('f_lot')", !brancheDuo.includes("val('f_lot')"));
-  const srcDivise = extractFunction('prodLancerBicoloreDivise');
-  check('A. prodLancerBicoloreDivise ne lit pas non plus f_lot (calcule ses propres codes)',
+  const srcDivise = extractFunction('prodLancerCoquesParfum');
+  check('A. prodLancerCoquesParfum ne lit pas non plus f_lot (calcule ses propres codes)',
     !srcDivise.includes('f_lot'));
 }
 
@@ -91,13 +91,15 @@ function makeFakeDocument(overrides){
 
 // ---- D. RÉCONCILIATION — les codes de lot prévisualisés dans prodDuoApercu sont calculés avec
 // EXACTEMENT la formule utilisée par la vraie sauvegarde (saveProd, branche duo). C'est le test
-// qui compte : un aperçu qui ment est pire qu'une absence d'aperçu. ----
+// qui compte : un aperçu qui ment est pire qu'une absence d'aperçu. Couvre aussi le cas mixte
+// (un parfum mono-couleur + un parfum bicolore) — voir tests/v1449-bicolore-duo.test.js pour la
+// réconciliation complète du scénario de Ben (Pistache + Chocolat passion). ----
 async function testReconciliationDuo(){
   const srcFormuleReelle = extractFunction('saveProd');
   const iDuo = srcFormuleReelle.indexOf("if(_mode==='duo')");
   const brancheDuo = srcFormuleReelle.slice(iDuo, iDuo+2000);
-  const mFormule = brancheDuo.match(/const base\s*=\s*\(baseD \+ flavorCodeRec\(r\)\)\.toUpperCase\(\)\.replace\(\/\\s\+\/g,''\);/);
-  check("D. la formule de lot réelle (saveProd, duo) est bien celle attendue — sinon la réconciliation ne prouve rien", !!mFormule);
+  check('D. la branche duo utilise bien _sousLotsCoques (le moteur partagé, pas un second calcul)',
+    /_sousLotsCoques/.test(brancheDuo));
 
   const registry = {
     f_duoQte1: { value:'60' }, f_duoQte2: { value:'60' }, f_duoQte3: { value:'0' },
@@ -108,6 +110,8 @@ async function testReconciliationDuo(){
     f_duoApercu: { innerHTML:'' },
   };
   const doc = { getElementById: id => registry[id] || null };
+  // Chocolat passion : MONOCHROME dans ce test (pas de coqueColors bicolore) — cas de base sans
+  // division, pour vérifier que le lot simple reste correct une fois le moteur généralisé.
   const chocolatPassion = { id:1, produitNom:'Chocolat passion', rendement:60, grandFormat:false };
   const pistache = { id:2, produitNom:'Pistache', rendement:60, grandFormat:false };
   const db = {
@@ -123,6 +127,14 @@ async function testReconciliationDuo(){
     extractConstLine('round3'),
     extractConstLine('esc'),
     extractConstLine('qty'),
+    extractObjectConst('COQUE_COULEURS'),
+    extractFunction('coqueCouleurLabel'),
+    extractFunction('coqueCouleurHex'),
+    extractFunction('coqueCouleurPastille'),
+    extractObjectConst('COQUE_COULEUR_CODES'),
+    extractFunction('coqueCouleurCode'),
+    extractFunction('recCoqueColors'),
+    extractFunction('recEstBicolore'),
     extractFunction('lotDateJJMMAA'),
     extractFunction('genLotCode'),
     extractConstLine('LOT_ALPHABET'),
@@ -131,6 +143,7 @@ async function testReconciliationDuo(){
     extractFunction('flavorCode'),
     extractFunction('flavorCodeFor'),
     extractFunction('flavorCodeRec'),
+    extractFunction('_sousLotsCoques'),
     extractFunction('_meringueCommuneCalc'),
     extractFunction('prodDuoApercu'),
   ].join('\n');

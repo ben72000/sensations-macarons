@@ -1,17 +1,14 @@
 'use strict';
-// v1445b — LA CASE « DIVISER EN 2 LOTS » SE DÉCOCHAIT TOUTE SEULE. Signalé par Ben, captures à
-// l'appui (fiche « Chocolat passion » montrant UN SEUL lot « 030826CHP-CO » — sans suffixe de
-// couleur — avec le simple rappel v1441, alors que la recette est bicolore). La preuve était dans
-// le numéro de lot lui-même : un partage réussi aurait donné 2 lots avec des codes couleur
-// distincts (ex. 030826CHPMAR-CO / 030826CHPORA-CO), pas un seul lot au format d'avant v1445.
+// v1445b — ORIGINALEMENT : la case « diviser en 2 lots » se décochait toute seule dès qu'on
+// touchait la quantité (prodUpdateCoqueHint reconstruisait l'input sans mémoriser son état).
 //
-// CAUSE : prodUpdateCoqueHint() reconstruit ENTIÈREMENT la case à cocher (innerHTML) à chaque
-// appel — y compris depuis le champ Quantité, qui appelle cette fonction à CHAQUE frappe depuis
-// la v1441. Le nouvel <input> ne portait jamais l'état précédent : cocher la case puis ne
-// serait-ce que toucher au champ quantité (très probable dans l'ordre normal d'usage — la
-// quantité est pré-remplie par défaut, on la change souvent après avoir repéré le rappel
-// bicolore) redessinait une case DÉCOCHÉE en silence. Le clic sur « Lancer » retombait alors sur
-// l'ancien chemin à un seul lot, sans aucun message d'erreur.
+// [v1449] LA CASE N'EXISTE PLUS. Ben a demandé que la division bicolore devienne automatique
+// (systématique dès qu'un parfum bicolore produit des coques), pas une option qu'on coche —
+// voir v1449-bicolore-duo.test.js pour le nouveau comportement. Le bug original (un état perdu
+// entre deux rendus) ne peut plus se produire : il n'y a plus d'état utilisateur à perdre, le
+// bloc bicolore est une fonction PURE de (recette, mode, composant, quantité). Ce fichier garde
+// une garde de non-régression : la case ne doit jamais revenir, et re-rendre plusieurs fois de
+// suite (comme le ferait la frappe dans le champ Quantité) doit produire un résultat identique.
 const { extractFunction, extractConstLine, APP, stripComments } = require('./_extract');
 
 let pass = 0, fail = 0;
@@ -34,9 +31,13 @@ function extractObjectConst(name){
   throw new Error('Accolades non équilibrées: '+name);
 }
 
-// Fausse case à cocher : simule fidèlement ce qu'un vrai navigateur fait quand on assigne
-// innerHTML — le <input> est DÉTRUIT et RECRÉÉ à partir du markup. Son état `checked` ne vient
-// QUE de l'attribut `checked` littéralement présent dans la chaîne, jamais d'une mémoire.
+// ---- A. Garde anti-réintroduction : la case ne doit jamais revenir dans le code source ----
+{
+  check('A. aucune trace de f_bicoloreDiviser (la case) dans app.js', !APP.includes('f_bicoloreDiviser'));
+}
+
+// ---- B. Re-rendus successifs (simulant la frappe dans le champ Quantité) produisent un résultat
+// STRICTEMENT identique — rien à perdre puisqu'il n'y a plus d'état à mémoriser. ----
 function makeFakeDocument(recette){
   const registry = {
     f_qte:   { value: '60' },
@@ -47,17 +48,8 @@ function makeFakeDocument(recette){
     coqueHint: { innerHTML: '', style: {} },
   };
   const compRadio = { value: 'coques', checked: true };
-  const diviserHost = {
-    _html: '',
-    get innerHTML(){ return this._html; },
-    set innerHTML(html){
-      this._html = html;
-      const m = html.match(/<input[^>]*id="f_bicoloreDiviser"[^>]*>/);
-      if(m){ registry['f_bicoloreDiviser'] = { type:'checkbox', checked: /\bchecked\b/.test(m[0]) }; }
-      else { delete registry['f_bicoloreDiviser']; }
-    }
-  };
-  registry['coqueBicoloreDiviser'] = diviserHost;
+  const diviserHost = { innerHTML: '' };
+  registry.coqueBicoloreDiviser = diviserHost;
   const doc = {
     getElementById: id => registry[id] || null,
     querySelector: sel => (sel.includes('f_comp') ? compRadio : null),
@@ -65,23 +57,7 @@ function makeFakeDocument(recette){
   return { doc, registry };
 }
 
-async function testSequence(src){
-  const recette = { id:1, produitNom:'Chocolat passion', rendement:60, coqueColors:['marron_fonce','orange'], grandFormat:false };
-  const { doc, registry } = makeFakeDocument(recette);
-  const db = { recipes: { get: async (id) => (id===recette.id ? recette : null) } };
-  const fn = new Function('document', 'db', `
-    return (async () => {
-      ${src}
-      await prodUpdateCoqueHint();                         // 1er rendu : recette choisie
-      document.getElementById('f_bicoloreDiviser').checked = true;   // Ben coche la case
-      await prodUpdateCoqueHint();                          // Ben modifie ensuite la quantité
-      return document.getElementById('f_bicoloreDiviser').checked;
-    })();
-  `);
-  return fn(doc, db);
-}
-
-async function run(){
+async function testStabilite(){
   const src = [
     extractConstLine('round3'),
     extractConstLine('esc'),
@@ -103,36 +79,33 @@ async function run(){
     extractFunction('flavorCode'),
     extractFunction('flavorCodeFor'),
     extractFunction('flavorCodeRec'),
-    'function swallow(e){ /* test : erreurs visibles, pas avalées */ if(e) throw e; }',
+    "function swallow(e){ if(e) throw e; }",
     "function today(){ return '2026-08-03'; }",
     extractFunction('prodUpdateCoqueHint'),
   ].join('\n');
 
-  const resteCoche = await testSequence(src);
-  check('A. la case reste cochée après un second rendu déclenché par la quantité (cas exact de Ben)', resteCoche === true);
-
-  // ---- B. Preuve par réintroduction : sans la mémorisation de dejaCoche, la case se décoche
-  // toute seule. Remplace TOUT usage de l'identifiant (pas seulement 1 ligne) par une lecture EN
-  // DIRECT du DOM — fidèle à l'ancien code, robuste aux ajouts ultérieurs (v1448) qui réutilisent
-  // aussi `dejaCoche` ailleurs dans la fonction. ----
-  const srcAncien = src
-    .replace(
-      "const dejaCoche = document.getElementById('f_bicoloreDiviser')?.checked || false;\n      ",
-      ''
-    )
-    .replace(/\bdejaCoche\b/g, "(document.getElementById('f_bicoloreDiviser')?.checked || false)")
-    .replace(
-      '<input type="checkbox" id="f_bicoloreDiviser" ${(document.getElementById(\'f_bicoloreDiviser\')?.checked || false)?\'checked\':\'\'} style="margin-top:3px" onchange="prodUpdateCoqueHint()">',
-      '<input type="checkbox" id="f_bicoloreDiviser" style="margin-top:3px" onchange="prodUpdateCoqueHint()">'
-    );
-  check('B. préparation de la réintroduction : le texte source a bien changé (sinon le test B ne prouve rien)',
-    srcAncien !== src && !srcAncien.includes('const dejaCoche ='));
-  const resteCocheAncien = await testSequence(srcAncien);
-  check('B. réintroduction : SANS le correctif, la case se décoche bien toute seule (bug reproduit)',
-    resteCocheAncien === false);
-
-  console.log(`\n${pass} passed, ${fail} failed`);
-  if(fail){ failures.forEach(f => console.log('  ✗ ' + f)); process.exitCode = 1; }
+  const recette = { id:1, produitNom:'Chocolat passion', rendement:60, coqueColors:['marron_fonce','orange'], grandFormat:false };
+  const { doc, registry } = makeFakeDocument(recette);
+  const db = { recipes: { get: async (id) => (id===recette.id ? recette : null) } };
+  const fn = new Function('document', 'db', `
+    return (async () => {
+      ${src}
+      await prodUpdateCoqueHint();
+      const premier = document.getElementById('coqueBicoloreDiviser').innerHTML;
+      await prodUpdateCoqueHint();
+      const second = document.getElementById('coqueBicoloreDiviser').innerHTML;
+      await prodUpdateCoqueHint();
+      const troisieme = document.getElementById('coqueBicoloreDiviser').innerHTML;
+      return { premier, second, troisieme, lotWrapDisplay: document.getElementById('f_lotWrap').style.display };
+    })();
+  `);
+  const { premier, second, troisieme, lotWrapDisplay } = await fn(doc, db);
+  check('B. le bloc bicolore est identique après 3 rendus successifs (rien à perdre)', premier===second && second===troisieme);
+  check('B. le bloc annonce bien 2 lots automatiques (comportement v1449, pas de case)', /2 lots séparés seront créés automatiquement/.test(premier));
+  check('B. le champ de lot (f_lotWrap) reste masqué de façon stable (jamais réaffiché par erreur)', lotWrapDisplay==='none');
 }
 
-run().catch(e => { console.error('ERREUR SUITE', e); process.exitCode = 1; });
+testStabilite().then(() => {
+  console.log(`\n${pass} passed, ${fail} failed`);
+  if(fail){ failures.forEach(f => console.log('  ✗ ' + f)); process.exitCode = 1; }
+}).catch(e => { console.error('ERREUR SUITE', e); process.exitCode = 1; });

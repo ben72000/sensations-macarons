@@ -226,11 +226,13 @@ check('A. repli algorithmique pour une couleur future, non cataloguée (pas de p
     totAsym === 100);
 }
 
-// ---- F. prodLancerBicoloreDivise — logique de lancement. enregistrerProduction est STUBBÉE
-// (enregistreur d'appels) plutôt que rejouée en entier : sa propre justesse (FIFO, décrément de
-// stock…) est déjà couverte ailleurs — le mode duo l'utilise déjà telle quelle depuis la v1379.
-// Ce qu'on vérifie ICI, c'est ce que prodLancerBicoloreDivise, LUI, décide : combien d'appels, avec
-// quelles couleurs, quelles quantités, quels lots, reliés par quel meringueBatchId. ----
+// ---- F. prodLancerCoquesParfum (v1449, ex-prodLancerBicoloreDivise) — logique de lancement.
+// enregistrerProduction est STUBBÉE (enregistreur d'appels) plutôt que rejouée en entier : sa
+// propre justesse (FIFO, décrément de stock…) est déjà couverte ailleurs — le mode duo l'utilise
+// telle quelle depuis la v1379. Ce qu'on vérifie ICI, c'est ce que la fonction, ELLE, décide :
+// combien d'appels, avec quelles couleurs, quelles quantités, quels lots — pour un parfum
+// bicolore ET pour un parfum mono-couleur, puisque c'est désormais LE MÊME point d'entrée pour
+// tout lancement « Composant → Coques » (plus de case à cocher, v1449). ----
 async function testLancement(){
   const srcLancer = [
     extractConstLine('COQUES_PAR_MACARON'),
@@ -239,6 +241,7 @@ async function testLancement(){
     extractConstLine('qty'),
     extractObjectConst('COQUE_COULEURS'),
     extractFunction('recCoqueColors'),
+    extractFunction('recEstBicolore'),
     extractConstLine('LOT_ALPHABET'),
     extractObjectConst('COQUE_COULEUR_CODES'),
     extractFunction('coqueCouleurCode'),
@@ -250,13 +253,14 @@ async function testLancement(){
     extractFunction('flavorCodeRec'),
     extractObjectConst('FLAVOR_CODES'),
     extractFunction('normTxt'),
-    extractFunction('prodLancerBicoloreDivise'),
+    extractFunction('_sousLotsCoques'),
+    extractFunction('prodLancerCoquesParfum'),
   ].join('\n');
 
   async function lancer(rec, qMac){
     const appelsEnreg = [];
     const appelsTache = [];
-    let ficheAppelee = null;
+    let ficheMeringueAppelee = null, ficheSoloAppelee = null;
     const db = { recipes: { get: async (id) => (id===rec.id ? rec : null) }, productions: { update: async()=>{} } };
     const enregistrerProduction = async (recipeId, qteTh, qteRe, date, lot, dlc, emp, meta) => {
       appelsEnreg.push({ recipeId, qteTh, qteRe, date, lot, meta });
@@ -264,66 +268,72 @@ async function testLancement(){
     };
     const prodTaskStartForBatch = (o) => { appelsTache.push(o); return 900+appelsTache.length; };
     const runner = new Function('db', 'closeModal', 'renderProductions', 'toast', 'ficheMeringueProduction',
-      'prodTaskStartForBatch', 'swallow', 'enregistrerProduction', `
+      'ficheRecetteProduction', 'prodTaskStartForBatch', 'swallow', 'enregistrerProduction', `
       return (async () => {
         ${srcLancer}
-        await prodLancerBicoloreDivise(${rec.id}, ${qMac}, '2026-08-03');
+        await prodLancerCoquesParfum(${rec.id}, ${qMac}, '2026-08-03');
       })();
     `);
     await runner(db, ()=>{}, ()=>{}, ()=>{},
-      (parts, mbid) => { ficheAppelee = { parts, mbid }; },
+      (parts, mbid) => { ficheMeringueAppelee = { parts, mbid }; },
+      (rid, q, comp, lot) => { ficheSoloAppelee = { rid, q, comp, lot }; },
       prodTaskStartForBatch, ()=>{}, enregistrerProduction);
-    return { appelsEnreg, appelsTache, ficheAppelee };
+    return { appelsEnreg, appelsTache, ficheMeringueAppelee, ficheSoloAppelee };
   }
 
   const praline = { id:1, produitNom:'Praliné', rendement:60, coqueColors:['marron_fonce','blanc'], grandFormat:false };
-  const { appelsEnreg, appelsTache, ficheAppelee } = await lancer(praline, 120);
+  const { appelsEnreg, appelsTache, ficheMeringueAppelee, ficheSoloAppelee } = await lancer(praline, 120);
 
-  check('F. exactement 2 appels à enregistrerProduction (2 lots, pas 1, pas 3)', appelsEnreg.length===2);
+  check('F. bicolore : exactement 2 appels à enregistrerProduction (2 lots, pas 1, pas 3)', appelsEnreg.length===2);
   const eMarron = appelsEnreg.find(a=>a.meta.couleur==='marron_fonce');
   const eBlanc  = appelsEnreg.find(a=>a.meta.couleur==='blanc');
-  check('F. un appel marron et un appel blanc, tous deux présents', !!eMarron && !!eBlanc);
-  check('F. split 50/50 exact en COQUES (120 macarons → 120 coques chacun, ×2 par macaron)',
+  check('F. bicolore : un appel marron et un appel blanc, tous deux présents', !!eMarron && !!eBlanc);
+  check('F. bicolore : split 50/50 exact en COQUES (120 macarons → 120 coques chacun, ×2 par macaron)',
     eMarron && eBlanc && eMarron.qteTh===120 && eBlanc.qteTh===120);
-  check('F. facteurQte (macarons) transmis à 60 de chaque côté', eMarron && eBlanc && eMarron.meta.facteurQte===60 && eBlanc.meta.facteurQte===60);
-  check('F. composant coques sur les 2 appels (jamais complet — voir la restriction de mode)',
-    eMarron && eBlanc && eMarron.meta.composant==='coques' && eBlanc.meta.composant==='coques');
-  check('F. les 2 appels partagent le MÊME meringueBatchId (fournée commune)',
+  check('F. bicolore : facteurQte (macarons) transmis à 60 de chaque côté', eMarron && eBlanc && eMarron.meta.facteurQte===60 && eBlanc.meta.facteurQte===60);
+  check('F. bicolore : composant coques sur les 2 appels', eMarron && eBlanc && eMarron.meta.composant==='coques' && eBlanc.meta.composant==='coques');
+  check('F. bicolore : les 2 appels partagent le MÊME meringueBatchId (fournée commune)',
     eMarron && eBlanc && eMarron.meta.meringueBatchId && eMarron.meta.meringueBatchId===eBlanc.meta.meringueBatchId);
-  check('F. les 2 lots ont des numéros DIFFÉRENTS malgré la même recette (distingués par couleur)',
+  check('F. bicolore : les 2 lots ont des numéros DIFFÉRENTS malgré la même recette (distingués par couleur)',
     eMarron && eBlanc && eMarron.lot !== eBlanc.lot);
-  check('F. 2 tâches atelier démarrées, une par couleur', appelsTache.length===2);
-  check('F. la fiche combinée est appelée avec les 2 parts et le meringueBatchId partagé',
-    ficheAppelee && ficheAppelee.parts.length===2 && ficheAppelee.mbid===eMarron.meta.meringueBatchId);
-  check('F. les 2 parts de la fiche portent chacune leur couleur (pour l\'affichage distinct)',
-    ficheAppelee && ficheAppelee.parts.every(p=>!!p.couleur) &&
-    new Set(ficheAppelee.parts.map(p=>p.couleur)).size===2);
+  check('F. bicolore : 2 tâches atelier démarrées, une par couleur', appelsTache.length===2);
+  check('F. bicolore : la fiche COMBINÉE est appelée (pas la fiche solo) avec les 2 parts et le meringueBatchId partagé',
+    !ficheSoloAppelee && ficheMeringueAppelee && ficheMeringueAppelee.parts.length===2 && ficheMeringueAppelee.mbid===eMarron.meta.meringueBatchId);
+  check('F. bicolore : les 2 parts de la fiche portent chacune leur couleur (pour l\'affichage distinct)',
+    ficheMeringueAppelee && ficheMeringueAppelee.parts.every(p=>!!p.couleur) &&
+    new Set(ficheMeringueAppelee.parts.map(p=>p.couleur)).size===2);
 
-  // Quantité impaire de macarons : le split doit rester exact malgré tout (61 → 31/30 ou 30/31,
-  // jamais de moitié de macaron ni de coque orpheline).
+  // Quantité impaire de macarons : le split doit rester exact malgré tout, jamais de moitié de
+  // macaron ni de coque orpheline.
   const { appelsEnreg: aImpair } = await lancer(praline, 61);
   const sommeImpair = aImpair.reduce((s,a)=>s+a.meta.facteurQte, 0);
-  check('F. quantité impaire : la somme des 2 moitiés reste exacte (61 macarons, aucun perdu)', sommeImpair===61);
-  check('F. quantité impaire : chaque moitié est un macaron ENTIER (jamais de .5)',
+  check('F. bicolore, quantité impaire : la somme des 2 moitiés reste exacte (61 macarons, aucun perdu)', sommeImpair===61);
+  check('F. bicolore, quantité impaire : chaque moitié est un macaron ENTIER (jamais de .5)',
     aImpair.every(a=>Number.isInteger(a.meta.facteurQte)));
 
-  // Contre-épreuve : recette monochrome → doit refuser, pas diviser en 2 lots identiques.
+  // [v1449] Recette MONOCHROME : passe par LE MÊME point d'entrée (plus de case à cocher, plus de
+  // refus) — produit 1 SEUL lot, sans meringueBatchId, et ouvre la fiche SOLO (ficheRecetteProduction),
+  // pas la fiche combinée. C'est le comportement d'avant v1445 pour ce cas, inchangé.
   const vanille = { id:2, produitNom:'Vanille', rendement:60, coqueColors:['blanc','blanc'], grandFormat:false };
-  let msg = 'ok';
-  try{ await lancer(vanille, 60); } catch(e){ msg = e.message; }
-  check('F. contre-épreuve : une recette monochrome est refusée (message mentionne "bicolore")', /bicolore/i.test(msg));
+  const mono = await lancer(vanille, 60);
+  check('F. monochrome : exactement 1 appel à enregistrerProduction (pas de division inutile)', mono.appelsEnreg.length===1);
+  check('F. monochrome : aucune couleur explicite sur ce lot', mono.appelsEnreg[0].meta.couleur===undefined);
+  check('F. monochrome : aucun meringueBatchId (rien à partager avec un seul lot)', !mono.appelsEnreg[0].meta.meringueBatchId);
+  check('F. monochrome : la fiche SOLO est appelée (pas la fiche combinée)',
+    !mono.ficheMeringueAppelee && mono.ficheSoloAppelee && mono.ficheSoloAppelee.rid===2 && mono.ficheSoloAppelee.q===60);
 }
 
-// ---- G. Câblage réel : la case n'apparaît qu'en mode composant+coques, jamais en "complet" ----
+// ---- G. Câblage réel : plus de case à cocher — tout lancement composant+coques est inconditionnel ----
 {
   const srcHint = extractFunction('prodUpdateCoqueHint');
-  check('G. la case de division est gatée par un test de mode (pas montrée inconditionnellement)',
+  check('G. le bloc bicolore ne référence plus de case à cocher (f_bicoloreDiviser)', !srcHint.includes('f_bicoloreDiviser'));
+  check('G. reste gaté par le mode (composant → coques uniquement, pas "complet")',
     /modeDivisible/.test(srcHint) && /composant.*coques|coques.*composant/.test(srcHint.replace(/\s+/g,' ')));
   const srcSave = extractFunction('saveProd');
-  check('G. saveProd route vers prodLancerBicoloreDivise quand la case est cochée',
-    /prodLancerBicoloreDivise/.test(srcSave));
-  check('G. le routage est conditionné à composant==="coques" (jamais "complet")',
-    /composant\s*===\s*'coques'\s*&&\s*document\.getElementById\('f_bicoloreDiviser'\)/.test(srcSave));
+  check('G. saveProd route INCONDITIONNELLEMENT vers prodLancerCoquesParfum dès composant==="coques"',
+    /if\(composant\s*===\s*'coques'\s*\)\s*\{/.test(srcSave.replace(/\s+/g,' ').replace(/if\(composant === 'coques'\) \{/,"if(composant==='coques'){")) ||
+    /if\(composant==='coques'\)\{/.test(srcSave));
+  check('G. plus aucune dépendance à une case à cocher dans saveProd', !srcSave.includes('f_bicoloreDiviser'));
 }
 
 // ---- H. enregistrerProduction persiste bien la couleur quand fournie ----

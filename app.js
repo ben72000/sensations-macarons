@@ -5,8 +5,9 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1448'; // suite : voir tests/v1448-lot-duo-preview.test.js
-const APP_MAJ = 'LE CHAMP « N° LOT DE PRODUCTION » MENTAIT EN MODE DUO. Ben, capture à l\u2019appui : lançant Chocolat passion + Pistache en meringue commune, le champ affichait « 030826RAF » — ni CHP ni PIS, mais RAF (Coco Rafaello, une tout autre recette). CAUSE : la branche duo de saveProd() ne lit JAMAIS ce champ — chaque parfum reçoit son propre lot, calculé indépendamment. Sa valeur affichée venait de prodRefreshLot(), qui lit TOUJOURS la recette unique (f_rec) — or f_rec reste dans la page (juste masquée) en duo, avec la valeur de la DERNIÈRE recette affichée avant le passage en duo. Un champ qui ment ET n\u2019a aucun effet réel est pire qu\u2019un champ absent. Même défaut, plus discret, sur la case « diviser en 2 lots » (v1445/v1446) : cochée, ce champ n\u2019est pas plus lu par le lancement réel. FIX : le champ est désormais masqué dans ces deux cas ; à la place, les VRAIS numéros de lot qui seront utilisés sont prévisualisés — en mode duo dans le récapitulatif de répartition, et pour la division bicolore dans son propre encart — calculés avec EXACTEMENT la même formule que la sauvegarde réelle, jamais un second calcul qui pourrait diverger. Suite v1448 : 12 assertions (tests/v1448-lot-duo-preview.test.js), dont une réconciliation qui rejoue la vraie formule de sauvegarde et vérifie que l\u2019aperçu affiche bien 030826CHP-CO et 030826PIS-CO — jamais RAF.';
+const APP_VERSION = 'v1449'; // suite : voir tests/v1449-bicolore-duo.test.js
+const APP_MAJ = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
+const _APP_MAJ_v1448_ARCHIVE_INUTILISEE = 'LE CHAMP « N° LOT DE PRODUCTION » MENTAIT EN MODE DUO. Ben, capture à l\u2019appui : lançant Chocolat passion + Pistache en meringue commune, le champ affichait « 030826RAF » — ni CHP ni PIS, mais RAF (Coco Rafaello, une tout autre recette). CAUSE : la branche duo de saveProd() ne lit JAMAIS ce champ — chaque parfum reçoit son propre lot, calculé indépendamment. Sa valeur affichée venait de prodRefreshLot(), qui lit TOUJOURS la recette unique (f_rec) — or f_rec reste dans la page (juste masquée) en duo, avec la valeur de la DERNIÈRE recette affichée avant le passage en duo. Un champ qui ment ET n\u2019a aucun effet réel est pire qu\u2019un champ absent. Même défaut, plus discret, sur la case « diviser en 2 lots » (v1445/v1446) : cochée, ce champ n\u2019est pas plus lu par le lancement réel. FIX : le champ est désormais masqué dans ces deux cas ; à la place, les VRAIS numéros de lot qui seront utilisés sont prévisualisés — en mode duo dans le récapitulatif de répartition, et pour la division bicolore dans son propre encart — calculés avec EXACTEMENT la même formule que la sauvegarde réelle, jamais un second calcul qui pourrait diverger. Suite v1448 : 12 assertions (tests/v1448-lot-duo-preview.test.js), dont une réconciliation qui rejoue la vraie formule de sauvegarde et vérifie que l\u2019aperçu affiche bien 030826CHP-CO et 030826PIS-CO — jamais RAF.';
 const _APP_MAJ_v1447_ARCHIVE_INUTILISEE = 'CODES COULEUR DES LOTS : EXPLICITES, PLUS ALGORITHMIQUES. Ben : « je veux que le code pour la coque blanche dise BLA et pas BAN ». Le code court utilisé dans les numéros de lot (ex. 030826PRAMAR-CO) était calculé automatiquement à partir du libellé de la couleur, avec un filtre qui retire les lettres I/L/O — pour « Blanc », ça retire le L et donne « BAN ». En creusant plus loin que la seule demande de Ben : ce calcul automatique faisait aussi atterrir les 4 marrons de la palette sur le même code « MAR », les 2 rouges sur « RUG », les 2 verts sur « VER » et les 2 jaunes sur « JAU » — deux couleurs différentes, un même code de lot, silencieusement indiscernables. FIX : une table explicite (même principe que FLAVOR_CODES pour les parfums) donne à chacune des 14 couleurs un code lisible et unique — blanc → BLA comme demandé, plus aucune collision entre les 14. Une couleur future non cataloguée retombe sur l\u2019ancien calcul automatique. Suite v1445 amendée (section A) : code du blanc vérifié, absence de collision vérifiée sur les 14 couleurs, repli pour couleur inconnue — sensibilité confirmée par réintroduction réelle de l\u2019ancien calcul.';
 const _APP_MAJ_v1446_ARCHIVE_INUTILISEE = 'LA CASE « DIVISER EN 2 LOTS » SE DÉCOCHAIT TOUTE SEULE. Ben, captures à l\u2019appui : une fiche « Chocolat passion » montrant un seul lot (« 030826CHP-CO », sans suffixe de couleur) avec le simple rappel v1441, alors qu\u2019il pensait avoir demandé la division en 2 lots. CAUSE : `prodUpdateCoqueHint()` reconstruit ENTIÈREMENT la case à cocher à chaque appel — y compris depuis le champ Quantité, qui appelle cette fonction à chaque frappe depuis la v1441. Le nouvel `<input>` ne portait jamais l\u2019état précédent : cocher la case puis toucher la quantité (l\u2019ordre naturel d\u2019usage — la quantité est pré-remplie par défaut, on la corrige souvent après avoir repéré le rappel bicolore) redessinait une case DÉCOCHÉE en silence, sans aucun message d\u2019erreur. Lancer la production retombait alors sur l\u2019ancien chemin à un seul lot. FIX : l\u2019état de la case est lu AVANT d\u2019être détruite et reporté sur la nouvelle. Suite v1445 amendée : 3 assertions (tests/v1445b-checkbox-reset.test.js), dont la preuve par réintroduction du symptôme exact de Ben.';
 const _APP_MAJ_v1445_ARCHIVE_INUTILISEE = 'DIVISER UN PARFUM BICOLORE EN 2 LOTS, COMME UNE MERINGUE MUTUALISÉE. Suite de la v1441 : Ben a essayé le simple rappel et signalé que ça ne suffisait pas — « Praliné ne se divise pas en 2 comme souhaité. Je veux que le comportement des coques bicolore soit identique à une meringue mutualisée […] Ainsi je dois avoir d\u2019un côté une couleur de coque puis de l\u2019autre côté la deuxième couleur. […] la même chose que si je décidais de scinder ma meringue en 2 pour faire vanille et chocolat au lait (coques marrons et blanches). » CE QUI EST FAIT : le formulaire de lancement (en mode Composant → Coques) propose désormais, pour une recette bicolore, de diviser en 2 LOTS RÉELS et séparés — chacun sa quantité, sa DLC, son suivi de stock propre — reliés comme une fournée de meringue commune, exactement le mécanisme déjà utilisé pour 2 parfums différents, appliqué ici à UN parfum divisé en ses 2 couleurs. Toujours 50/50. Absent en mode « Batch complet » (le mode duo lui-même ne gère que les coques ; diviser y laisserait la garniture non produite). SOUS LE CAPOT : un lot peut désormais porter une couleur EXPLICITE qui prime sur les 2 couleurs de sa recette — les trois moteurs qui lisent la couleur d\u2019un lot (stock potentiel, suggestions d\u2019assemblage, suggestions de dégustation) la respectent, pour qu\u2019un lot déjà divisé ne se retrouve jamais re-divisé virtuellement une seconde fois. Suite v1445 : 31 assertions (tests/v1445-bicolore-divise.test.js), dont 2 réconciliations dissymétriques (100 marron / 140 blanc) qui distinguent vraiment un calcul correct d\u2019une double-division — vérifiées sensibles par mutation réelle de app.js, à 3 endroits séparés.';
@@ -5644,6 +5645,30 @@ function lotDateJJMMAA(d){
   const aa = String(dt.getFullYear()).slice(-2);
   return jj+mm+aa;
 }
+// [v1449] UN SEUL MOTEUR pour « combien de sous-lots de coques un parfum produit-il, et
+// lesquels » — réutilisé PARTOUT où un parfum peut faire partie d'une fournée de meringue : seul
+// (mode composant → coques) ou combiné à d'autres (duo/trio). Ben : « si j'ai 240 coques et que
+// je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion […] Pistache
+// = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit
+// s'ajuster en conséquence. » Un parfum MONOCHROME produit TOUJOURS 1 sous-lot (sa quantité
+// entière). Un parfum BICOLORE produit TOUJOURS 2 sous-lots — sa quantité divisée 50/50 entre ses
+// 2 couleurs (COQUES_PAR_MACARON=2 garantit un total de coques pair, donc chaque moitié est un
+// macaron entier). Ce n'est plus une case à cocher (v1445/v1446) : dès qu'un parfum est bicolore,
+// SA part de la meringue se divise — que ce parfum soit seul ou mélangé à d'autres.
+function _sousLotsCoques(rid, rec, qMac, baseD){
+  const qTot = Math.max(0, Math.round(+qMac||0));
+  const flavCode = flavorCodeRec(rec);
+  if(rec && recEstBicolore(rec)){
+    const [c1,c2] = recCoqueColors(rec);
+    const q1 = Math.round(qTot/2), q2 = qTot-q1;
+    return [{couleur:c1,q:q1},{couleur:c2,q:q2}].filter(x=>x.q>0).map(x=>{
+      const base=(baseD+flavCode+coqueCouleurCode(x.couleur)).toUpperCase().replace(/\s+/g,'');
+      return { rid, couleur:x.couleur, q:x.q, lot:base+'-CO', base, nom:(rec&&rec.produitNom)||'', rec };
+    });
+  }
+  const base=(baseD+flavCode).toUpperCase().replace(/\s+/g,'');
+  return qTot>0 ? [{ rid, couleur:undefined, q:qTot, lot:base+'-CO', base, nom:(rec&&rec.produitNom)||'', rec }] : [];
+}
 // Construit le numéro de lot : JJMMAA + CODE (+ numéro si doublon du jour).
 // Le 1er lot du jour pour ce parfum n'a pas de numéro ; les suivants : 2, 3, …
 // existants = liste des lotBase déjà utilisés ce jour pour CE parfum (pour calculer le rang).
@@ -10196,7 +10221,7 @@ function assemblySuggestions(prods, recName){
   const poolByColor = {};
   coqueLots.forEach(p=>{
     // [v1445] Passe par coqueColorProfile (pas _recColors seule) : un lot déjà divisé en une
-    // couleur EXPLICITE (moitié d'un bicolore, prodLancerBicoloreDivise) ne doit pas se refaire
+    // couleur EXPLICITE (moitié d'un bicolore, prodLancerCoquesParfum) ne doit pas se refaire
     // re-diviser 50/50 par-dessus une division déjà réelle — double-division silencieuse sinon.
     const _profil = coqueColorProfile(p, _recById);
     const colors = _profil ? _profil.colors : [];
@@ -15369,40 +15394,43 @@ async function prodDuoApercu(){
   let r1=null, r2=null, r3=null;
   try{ [r1, r2, r3] = await Promise.all([rid1?db.recipes.get(rid1):null, rid2?db.recipes.get(rid2):null, (p3actif?db.recipes.get(rid3):null)]); }catch(e){swallow(e,'prodDuoApercu')}
   const gf1=!!(r1&&r1.grandFormat), gf2=!!(r2&&r2.grandFormat), gf3=!!(r3&&r3.grandFormat);
+  // [v1449] UN PARFUM BICOLORE COMBINÉ À D'AUTRES SE DIVISE AUSSI. Ben : « si j'ai 240 coques et
+  // que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion […]
+  // Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la
+  // recette doit s'ajuster en conséquence. » Chaque parfum se développe en 1 sous-lot (mono-
+  // couleur) ou 2 (bicolore, 50/50) via _sousLotsCoques — LE MÊME moteur que le lancement solo et
+  // que la sauvegarde réelle plus bas (saveProd, branche duo) : cet aperçu ne peut pas diverger
+  // de ce qui sera vraiment créé.
+  const dateD = document.getElementById('f_date')?.value || today();
+  const baseD = lotDateJJMMAA(dateD);
+  const slots = [];
+  if(rid1 && r1) slots.push(..._sousLotsCoques(rid1, r1, q1, baseD).map(L=>({...L, gf:gf1})));
+  if(rid2 && r2) slots.push(..._sousLotsCoques(rid2, r2, q2, baseD).map(L=>({...L, gf:gf2})));
+  if(p3actif && r3) slots.push(..._sousLotsCoques(rid3, r3, q3, baseD).map(L=>({...L, gf:gf3})));
+  const labelSlot = L => L.couleur ? `${esc(L.nom)} ${esc(coqueCouleurLabel(L.couleur).toLowerCase())}` : esc(L.nom);
+  const ligneParfum = L => {
+    const coq = L.q*COQUES_PAR_MACARON;
+    const eq = Math.round(coq * (L.gf?GF_COQUE_RATIO:1));
+    const detail = L.gf ? `${qty(coq)} coques GF <span style="color:#9a8a82">(${qty(eq)} std éq.)</span>` : `${qty(coq)} coques`;
+    return `<div style="display:flex;justify-content:space-between;font-size:.84rem;color:#7a6a62"><span>${labelSlot(L)}</span><span>${qty(L.q)} mac. → ${detail}</span></div>`;
+  };
   // [FIX v1448] Remplace le champ « N° lot de production » (masqué en duo, voir prodModeSwitch —
   // il n'était jamais lu par la sauvegarde réelle et affichait un code d'une AUTRE recette). Les
-  // codes ci-dessous sont calculés avec la MÊME formule que saveProd (baseD + flavorCodeRec + date),
-  // jamais un second calcul : ce que Ben voit ici est garanti être ce qui sera réellement écrit.
-  let lotsHtml = '';
-  try{
-    const dateD = document.getElementById('f_date')?.value || today();
-    const baseD = lotDateJJMMAA(dateD);
-    const lotDe = r => r ? (baseD+flavorCodeRec(r)).toUpperCase().replace(/\s+/g,'')+'-CO' : '';
-    const paires = [[nom1,r1],[nom2,r2]].concat(p3actif?[[nom3,r3]]:[]);
-    if(paires.every(([,r])=>r)){
-      lotsHtml = `<div style="font-size:.78rem;color:#9a8a82;margin-top:2px">🏷️ Lots : ${paires.map(([n,r])=>`${esc(n)} → <b>${esc(lotDe(r))}</b>`).join(' · ')}</div>`;
-    }
-  }catch(e){ console.error('prodDuoApercu lots', e); }
-  const ligneParfum = (nom, q, coq, gf) => {
-    const eq = Math.round(coq * (gf?GF_COQUE_RATIO:1));
-    const detail = gf ? `${qty(coq)} coques GF <span style="color:#9a8a82">(${qty(eq)} std éq.)</span>` : `${qty(coq)} coques`;
-    return `<div style="display:flex;justify-content:space-between;font-size:.84rem;color:#7a6a62"><span>${esc(nom)}</span><span>${qty(q)} mac. → ${detail}</span></div>`;
-  };
+  // codes ci-dessous viennent des MÊMES sous-lots que la répartition ci-dessus (donc la même
+  // formule que saveProd) : ce que Ben voit ici est garanti être ce qui sera réellement écrit.
+  const lotsHtml = slots.length
+    ? `<div style="font-size:.78rem;color:#9a8a82;margin-top:2px">🏷️ Lots : ${slots.map(L=>labelSlot(L)+' → <b>'+esc(L.lot)+'</b>').join(' · ')}</div>`
+    : '';
   const repartLbl = p3actif
     ? `${pct1} % / ${totCoq>0?Math.round(coq2/totCoq*100):0} % / ${totCoq>0?Math.round(coq3/totCoq*100):0} %`
     : `${pct1} % / ${100-pct1} %`;
   let html =
     `<div style="display:flex;justify-content:space-between;font-weight:600"><span>⚖️ Répartition</span><b>${repartLbl}</b></div>`+
-    ligneParfum(nom1, q1, coq1, gf1)+
-    ligneParfum(nom2, q2, coq2, gf2)+
-    (p3actif?ligneParfum(nom3, q3, coq3, gf3):'')+
+    slots.map(ligneParfum).join('')+
     lotsHtml;
   try{
     // Capacité meringue en ÉQUIVALENT-COQUES STANDARD (1 coque GF = GF_COQUE_RATIO coques std).
-    const eq1 = coq1 * (gf1?GF_COQUE_RATIO:1);
-    const eq2 = coq2 * (gf2?GF_COQUE_RATIO:1);
-    const eq3 = p3actif ? coq3 * (gf3?GF_COQUE_RATIO:1) : 0;
-    const eqTotal = round3(eq1+eq2+eq3);
+    const eqTotal = round3(slots.reduce((s,L)=>s+L.q*COQUES_PAR_MACARON*(L.gf?GF_COQUE_RATIO:1), 0));
     const capCoques = MACARONS_PAR_MERINGUE * COQUES_PAR_MACARON; // 240 coques std / meringue
     const nbMeringues = capCoques>0 ? Math.ceil(eqTotal/capCoques) : 1;
     const pct = capCoques>0 ? Math.round(eqTotal/capCoques*100) : 0;
@@ -15411,15 +15439,20 @@ async function prodDuoApercu(){
     if(nbMeringues>1){
       html += `<div style="color:#d98324;font-size:.8rem;margin-top:2px">⚠ Cela dépasse une meringue : il en faudrait <b>${nbMeringues}</b>. Réduis les quantités pour tenir sur une seule fournée.</div>`;
     }
-    const gfs=[gf1,gf2].concat(p3actif?[gf3]:[]);
+    const gfs = slots.map(L=>L.gf);
     if(gfs.some(Boolean) && !gfs.every(Boolean)){
       html += `<div style="color:#8a6d3b;font-size:.78rem;margin-top:2px">ℹ Tu mélanges un <b>grand format</b> et un <b>standard</b> : c'est la même meringue, pochée en deux tailles. La capacité est comptée en équivalent-coques standard.</div>`;
     }
-    // FICHE INGRÉDIENTS MERINGUE détaillée : conservée pour 2 parfums (le cas le plus courant).
-    if(rid1 && rid2 && !meme && !p3actif){
-      const [it1, it2, mats] = await Promise.all([
-        db.recipeItems.where('recipeId').equals(rid1).toArray().catch(()=>[]),
-        db.recipeItems.where('recipeId').equals(rid2).toArray().catch(()=>[]),
+    // FICHE INGRÉDIENTS MERINGUE détaillée : disponible dès que 2 sous-lots ou plus sont réels —
+    // 2-3 parfums distincts, ou un seul parfum bicolore (2 sous-lots de la MÊME recette, chacun
+    // sa couleur). [v1449] Plus limité à « exactement 2 parfums » : _meringueCommuneCalc traite
+    // déjà n'importe quel nombre d'entrées positionnellement (voir v1442), la restriction à 2
+    // n'était qu'un choix d'affichage antérieur, pas une limite du moteur.
+    if(slots.length>=2 && !meme){
+      const ridsUniques = [...new Set(slots.map(L=>L.rid))];
+      const [itemsParRid, mats] = await Promise.all([
+        Promise.all(ridsUniques.map(rid=>db.recipeItems.where('recipeId').equals(rid).toArray().catch(()=>[])))
+          .then(arr=>{ const m={}; ridsUniques.forEach((rid,i)=>m[rid]=arr[i]); return m; }),
         db.materials.toArray().catch(()=>[])
       ]);
       const matName=id=>(mats.find(m=>m.id===id)||{}).nom||'(matière ?)';
@@ -15428,37 +15461,33 @@ async function prodDuoApercu(){
       const coqueItems = arr => { const tagged=arr.filter(it=>it.partie==='coque'); return tagged.length?tagged:arr.filter(it=>!it.partie); };
       // [v1379] Le calcul passe par LE moteur commun (_meringueCommuneCalc) : la base est
       // dimensionnée sur le TOTAL std-éq (GF converti), plus jamais sur les seuls parfums
-      // porteurs ; les ajouts propres (noisettes, colorants…) restent PAR PARFUM.
-      const calc = _meringueCommuneCalc([
-        { nom:nom1, qMac:q1, gf:gf1, rend:+(r1&&r1.rendement)||1, items:coqueItems(it1) },
-        { nom:nom2, qMac:q2, gf:gf2, rend:+(r2&&r2.rendement)||1, items:coqueItems(it2) }
-      ], dispOf, matName);
+      // porteurs ; les ajouts propres (noisettes, colorants…) restent PAR SOUS-LOT.
+      const parfumsCalc = slots.map(L => ({
+        nom: L.couleur ? `${L.nom} — ${coqueCouleurLabel(L.couleur)}` : L.nom,
+        qMac: L.q, gf: L.gf, rend: +(L.rec&&L.rec.rendement)||1,
+        items: coqueItems(itemsParRid[L.rid]||[])
+      }));
+      const calc = _meringueCommuneCalc(parfumsCalc, dispOf, matName);
       const idsCommun=Object.keys(calc.baseCommune);
-      const pf1=calc.parParfum[0], pf2=calc.parParfum[1];
-      const idsB1=Object.keys(pf1.propres); const idsB2=Object.keys(pf2.propres);
-      const aQuelqueChose = idsCommun.length || idsB1.length || idsB2.length;
+      const blocs = calc.parParfum.map((pf,i)=>({ nom:parfumsCalc[i].nom, ids:Object.keys(pf.propres), propres:pf.propres }));
+      const aQuelqueChose = idsCommun.length || blocs.some(b=>b.ids.length);
       if(aQuelqueChose){
         const ligne = (id,q)=>{ const d=dispOf(+id); return `<div style="display:flex;justify-content:space-between;font-size:.82rem"><span>${esc(matName(+id))}</span><b>${qty(round3(q))} ${esc(d.u)}</b></div>`; };
+        const videPf = '<div style="font-size:.8rem;color:#9a8a82">— rien en propre (partage la base commune)</div>';
         let pb='';
-        if(idsB1.length || idsB2.length){
-          const videPf = '<div style="font-size:.8rem;color:#9a8a82">— rien en propre (partage la base commune)</div>';
-          pb += `<div style="font-size:.74rem;color:#9a8a82;margin:2px 0 1px"><b>${esc(nom1)}</b></div>`;
-          pb += (idsB1.length ? idsB1.map(id=>ligne(id, pf1.propres[id])).join('') : videPf);
-          pb += `<div style="font-size:.74rem;color:#9a8a82;margin:4px 0 1px"><b>${esc(nom2)}</b></div>`;
-          pb += (idsB2.length ? idsB2.map(id=>ligne(id, pf2.propres[id])).join('') : videPf);
+        if(blocs.some(b=>b.ids.length)){
+          pb = blocs.map(b => `<div style="font-size:.74rem;color:#9a8a82;margin:2px 0 1px"><b>${esc(b.nom)}</b></div>` + (b.ids.length ? b.ids.map(id=>ligne(id,b.propres[id])).join('') : videPf)).join('');
         }
         let cm='';
         if(idsCommun.length){
-          cm = `<div style="font-size:.74rem;color:#9a8a82;margin:6px 0 1px">Base commune (cumulée) — <b>dimensionnée pour ${qty(Math.round(calc.eqTotal))} coques std éq.</b> (mutualisée sur les 2 parfums)</div>` + idsCommun.map(id=>ligne(id, calc.baseCommune[id])).join('');
+          cm = `<div style="font-size:.74rem;color:#9a8a82;margin:6px 0 1px">Base commune (cumulée) — <b>dimensionnée pour ${qty(Math.round(calc.eqTotal))} coques std éq.</b> (mutualisée sur les ${blocs.length} sous-lots)</div>` + idsCommun.map(id=>ligne(id, calc.baseCommune[id])).join('');
         } else if(calc.eqTotal > 0){
           cm = `<div style="color:#b3261e;font-size:.8rem;margin:6px 0 1px">⛔ Aucun parfum ne porte de base meringue étiquetée : les grammages ci-dessus ne couvrent PAS les ${qty(Math.round(calc.eqTotal))} coques annoncées. Ne pèse pas cette fiche en l'état.</div>`;
         }
-        html += `<div style="border-top:1px solid #e8dccd;margin-top:6px;padding-top:6px"><div style="font-size:.78rem;color:#7a6a62;font-weight:600;margin-bottom:3px">🧾 Meringue à préparer</div>${pb}${cm}<p class="note" style="margin-top:4px;font-size:.72rem">Poudre d'amande & sucre glace pesées <b>par parfum</b> (coloration / ajouts propres). Le reste est mutualisé.</p></div>`;
+        html += `<div style="border-top:1px solid #e8dccd;margin-top:6px;padding-top:6px"><div style="font-size:.78rem;color:#7a6a62;font-weight:600;margin-bottom:3px">🧾 Meringue à préparer</div>${pb}${cm}<p class="note" style="margin-top:4px;font-size:.72rem">Poudre d'amande & sucre glace pesées <b>par sous-lot</b> (coloration / ajouts propres). Le reste est mutualisé.</p></div>`;
       } else {
         html += `<div style="font-size:.78rem;color:#8a6d3b;margin-top:6px">Aucun ingrédient « coque » étiqueté dans ces recettes — renseigne la partie coque dans Recettes pour obtenir le rappel de meringue.</div>`;
       }
-    } else if(p3actif){
-      html += `<div style="font-size:.76rem;color:#7a6a62;margin-top:6px;border-top:1px solid #e8dccd;padding-top:6px">🧾 Avec 3 parfums : la poudre d'amande & le sucre glace se pèsent <b>par parfum</b>, le reste de la meringue est commun. Le détail chiffré par ingrédient est affiché pour 2 parfums.</div>`;
     }
   }catch(e){ console.error('prodDuoApercu', e); }
   if(meme){ html += `<div style="color:#b3261e;font-size:.8rem;margin-top:2px">⚠ Deux parfums identiques — choisis des parfums différents.</div>`; }
@@ -15589,72 +15618,45 @@ async function prodUpdateCoqueHint(){
   const coques = q*COQUES_PAR_MACARON;
   let base = `🟤 1 macaron = <b>2 coques</b> → ce batch produira <b>${qty(coques)} coques</b> (pour ${qty(q)} macarons).`;
   const diviserHost = document.getElementById('coqueBicoloreDiviser');
-  // [v1445] Le partage en 2 lots réels (prodLancerBicoloreDivise) ne produit QUE des coques —
-  // exactement comme le mode duo dont il reprend le mécanisme (lui non plus ne gère pas la
-  // garniture). En mode « Batch complet », diviser silencieusement laisserait la garniture non
-  // produite : la case à cocher n'apparaît donc QUE quand le composant choisi est « Coques »
-  // seules. En « Batch complet », le rappel simple (v1441, un seul lot) reste affiché.
+  // [v1449] PLUS DE CASE À COCHER. Ben : « je dois avoir d'un côté une couleur de coque puis de
+  // l'autre côté la deuxième couleur […] Ainsi la recette doit s'ajuster en conséquence » — ce
+  // n'est plus une option qu'on choisit (v1445/v1446), c'est ce que fait le moteur dès qu'un
+  // parfum bicolore produit des coques (voir prodLancerCoquesParfum / _sousLotsCoques). Ce bloc
+  // devient une confirmation, pas un choix : 2 lots séparés, toujours, avec leurs vrais numéros
+  // de lot prévisualisés (même formule que le lancement réel — jamais un second calcul).
+  // Comme avant : uniquement en mode « Composant → Coques » — le mode duo lui-même (dont ce
+  // mécanisme est extrait) ne gère pas la garniture ; en « Batch complet », le rappel simple
+  // (v1441, un seul lot) reste la seule option, faute de pouvoir diviser la garniture avec.
   const mode = document.getElementById('f_mode')?.value||'complet';
   const comp = (document.querySelector('input[name="f_comp"]:checked')||{}).value||'coques';
   const modeDivisible = (mode==='composant' && comp==='coques');
   try{
     const rid = +(document.getElementById('f_rec')?.value)||0;
     const rec = rid ? await db.recipes.get(rid).catch(()=>null) : null;
+    const lotWrap = document.getElementById('f_lotWrap');
     if(rec && recEstBicolore(rec) && modeDivisible){
-      // [v1445] Ben : « je dois avoir d'un côté une couleur de coque puis de l'autre côté la
-      // deuxième couleur […] le même comportement que si je décidais de scinder ma meringue en 2
-      // pour faire vanille et chocolat au lait ». La v1441 (rappel seul, un lot unique) ne
-      // suffisait pas : offre maintenant le VRAI mécanisme de la meringue mutualisée, appliqué à
-      // UN parfum divisé en ses 2 couleurs plutôt qu'à 2 parfums différents. Coché = 2 lots
-      // séparés et traçables (chacun sa quantité, sa DLC, son suivi de stock propre) — décoché
-      // (par défaut) = comportement v1441 inchangé, un seul lot avec juste le rappel.
       const [c1,c2] = recCoqueColors(rec);
-      base = '';   // le bloc ci-dessous remplace le simple rappel : plus actionnable, même info.
+      base = '';   // le bloc ci-dessous remplace le simple rappel : plus informatif, même info.
       const half1 = Math.round(coques/2), half2 = coques-half1;
-      // [FIX v1445b] BUG SIGNALÉ PAR BEN (captures à l'appui) : cocher la case puis modifier la
-      // quantité (le champ f_qte appelle prodUpdateCoqueHint() à chaque frappe depuis la v1441)
-      // reconstruisait la case à cocher EN ENTIER — un nouveau <input> sans `checked`, donc
-      // décochée en silence. Résultat : lancer la production retombait sur l'ancien chemin à un
-      // seul lot, avec le simple rappel v1441, exactement ce que montraient ses captures (lot
-      // « 030826CHP-CO » sans suffixe de couleur — la preuve que le partage n'avait pas eu lieu).
-      // Fix : on lit l'état AVANT de détruire l'élément, et on le reporte sur le nouveau.
-      const dejaCoche = document.getElementById('f_bicoloreDiviser')?.checked || false;
-      // [FIX v1445b, suite] Le texte d'état est calculé À PART plutôt qu'en template imbriqué
-      // dans le gros bloc HTML ci-dessous : un backtick imbriqué dans un ${...} d'un autre
-      // backtick est indiscernable, pour l'extracteur de tests (tests/_extract.js), de la
-      // fermeture du template extérieur — ça faisait dérailler le comptage d'accolades sur
-      // CETTE fonction précise (jamais extraite avant ce correctif). Rien ne change à l'affichage.
-      // [FIX v1448] Coché, prodLancerBicoloreDivise calcule SES PROPRES 2 numéros de lot (un par
-      // couleur) — le champ « N° lot de production » (f_lot) n'est alors jamais lu, exactement
-      // comme en mode duo (même bug racine, voir prodModeSwitch). Masqué quand coché ; les VRAIS
-      // codes qui seront utilisés sont prévisualisés ici, avec la MÊME formule que le lancement
-      // réel (jamais un second calcul qui pourrait diverger).
-      const lotWrap = document.getElementById('f_lotWrap');
-      if(lotWrap) lotWrap.style.display = dejaCoche ? 'none' : 'block';
-      let apercuLots = '';
-      if(dejaCoche){
-        const dateD = document.getElementById('f_date')?.value || today();
-        const baseD = lotDateJJMMAA(dateD), flavCode = flavorCodeRec(rec);
-        const lot1 = (baseD+flavCode+coqueCouleurCode(c1)).toUpperCase().replace(/\s+/g,'')+'-CO';
-        const lot2 = (baseD+flavCode+coqueCouleurCode(c2)).toUpperCase().replace(/\s+/g,'')+'-CO';
-        apercuLots = `<br>Numéros de lot : <b>${esc(lot1)}</b> et <b>${esc(lot2)}</b>.`;
-      }
-      const texteEtat = dejaCoche
-        ? `Coché : au lancement, 2 lots de coques seront créés — <b>${qty(half1)} ${esc(coqueCouleurLabel(c1).toLowerCase())}</b> et <b>${qty(half2)} ${esc(coqueCouleurLabel(c2).toLowerCase())}</b> (toujours 50/50), reliés comme une fournée de meringue commune.${apercuLots}`
-        : `Décoché : un seul lot (comme aujourd'hui) — divise ta meringue en 2 portions égales toi-même, <b>${qty(half1)} ${esc(coqueCouleurLabel(c1).toLowerCase())}</b> et <b>${qty(half2)} ${esc(coqueCouleurLabel(c2).toLowerCase())}</b>.`;
+      // f_lot n'est jamais lu quand ce parfum est bicolore (2 lots générés automatiquement,
+      // chacun son propre code) — masqué en permanence dans ce cas, comme en mode duo (v1448).
+      if(lotWrap) lotWrap.style.display = 'none';
+      const dateD = document.getElementById('f_date')?.value || today();
+      const baseD = lotDateJJMMAA(dateD), flavCode = flavorCodeRec(rec);
+      const lot1 = (baseD+flavCode+coqueCouleurCode(c1)).toUpperCase().replace(/\s+/g,'')+'-CO';
+      const lot2 = (baseD+flavCode+coqueCouleurCode(c2)).toUpperCase().replace(/\s+/g,'')+'-CO';
       if(diviserHost) diviserHost.innerHTML = `
-        <div class="field" style="margin:4px 0 10px;border:2px solid #e5d8c8;border-radius:12px;padding:10px;background:#fdfaf6">
-          <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
-            <input type="checkbox" id="f_bicoloreDiviser" ${dejaCoche?'checked':''} style="margin-top:3px" onchange="prodUpdateCoqueHint()">
-            <span>🎨 <b>${esc(rec.produitNom||'Ce parfum')}</b> est <b>bicolore</b> (${coqueCouleurPastille(c1)}${esc(coqueCouleurLabel(c1))} + ${coqueCouleurPastille(c2)}${esc(coqueCouleurLabel(c2))}) — diviser en <b>2 lots séparés</b>, comme une meringue mutualisée à 2 parfums (chacun sa quantité, sa DLC, son suivi de stock propre) ?</span>
-          </label>
-          <p class="note" style="margin:6px 0 0 26px">${texteEtat}</p>
+        <div class="field" style="margin:4px 0 10px;border:2px solid #cfe3d4;border-radius:12px;padding:10px;background:#f4faf5">
+          <div style="display:flex;align-items:flex-start;gap:8px">
+            <span>🎨</span>
+            <span><b>${esc(rec.produitNom||'Ce parfum')}</b> est <b>bicolore</b> (${coqueCouleurPastille(c1)}${esc(coqueCouleurLabel(c1))} + ${coqueCouleurPastille(c2)}${esc(coqueCouleurLabel(c2))}) — 2 lots séparés seront créés automatiquement, comme une meringue mutualisée : <b>${qty(half1)} ${esc(coqueCouleurLabel(c1).toLowerCase())}</b> et <b>${qty(half2)} ${esc(coqueCouleurLabel(c2).toLowerCase())}</b> (toujours 50/50).</span>
+          </div>
+          <p class="note" style="margin:6px 0 0 26px">Numéros de lot : <b>${esc(lot1)}</b> et <b>${esc(lot2)}</b>.</p>
         </div>`;
     } else {
       if(diviserHost) diviserHost.innerHTML = '';
       // Le champ redevient pertinent hors de ce chemin (mode/composant/recette changés) : on le
-      // rétablit au cas où il aurait été masqué par un état précédent (case cochée puis abandonnée).
-      const lotWrap = document.getElementById('f_lotWrap');
+      // rétablit au cas où il aurait été masqué par un état précédent.
       if(lotWrap) lotWrap.style.display = 'block';
       // Mode 'complet' + recette bicolore : le rappel simple (v1441) reste seul disponible ici.
       if(rec && recEstBicolore(rec) && !modeDivisible) base += _bicoloreRappelHtml(rec, q);
@@ -15743,50 +15745,47 @@ function prodUpdateEcartHint(){
   const pct = th? (e/th*100):0;
   hint.textContent = `Écart : ${e>0?'+':''}${qty(e)} pièce(s) (${e>0?'+':''}${Math.round(pct)}%) — ${e<0?'perte / casse':'surplus de rendement'}. Sans impact sur les matières.`;
 }
-// [v1445] DIVISER UN PARFUM BICOLORE EN 2 LOTS, COMME UNE MERINGUE MUTUALISÉE. Ben : « je dois
-// avoir d'un côté une couleur de coque puis de l'autre côté la deuxième couleur […] le même
-// comportement que si je décidais de scinder ma meringue en 2 pour faire vanille et chocolat au
-// lait ». Reprend EXACTEMENT le mécanisme du mode duo (saveProd, branche 'duo' juste plus bas) —
-// 2 sous-lots reliés par un meringueBatchId partagé, chacun sa quantité, son lot, sa DLC propre —
-// sauf qu'ici les 2 « parfums » sont LE MÊME recipeId, distingués par leur `couleur` explicite
-// plutôt que par leur recipeId. Toujours 50/50 (COQUES_PAR_MACARON=2 garantit un total de coques
-// pair, donc chaque moitié est un macaron entier — jamais de moitié de macaron à produire).
-async function prodLancerBicoloreDivise(rid, qMac, dateD){
+// [v1449] LANCE LES COQUES D'UN PARFUM — 1 lot s'il est mono-couleur, 2 automatiquement s'il est
+// bicolore (voir _sousLotsCoques). Remplace prodLancerBicoloreDivise (v1445), qui ne gérait QUE
+// le cas bicolore et nécessitait de cocher une case. Ben : « je dois avoir d'un côté une couleur
+// de coque puis de l'autre côté la deuxième couleur […] Ainsi la recette doit s'ajuster en
+// conséquence » — plus une décision ponctuelle, un comportement systématique du moteur : dès
+// qu'un parfum bicolore produit des coques, SA part se divise, qu'il soit seul (ici) ou combiné à
+// d'autres (saveProd, branche duo/trio, juste plus bas). Toujours 50/50.
+async function prodLancerCoquesParfum(rid, qMac, dateD){
   const rec = await db.recipes.get(rid).catch(()=>null);
   if(!rec) throw new Error('Recette introuvable');
-  const [c1,c2] = recCoqueColors(rec);
-  if(!c1 || !c2 || c1===c2) throw new Error('Ce parfum n\'est pas bicolore');
-  const qTot = Math.max(0, Math.round(+qMac||0));
-  const q1 = Math.round(qTot/2), q2 = qTot - q1;   // toujours exact : qTot est un entier de macarons
-  const meringueBatchId = 'MER-' + lotDateJJMMAA(dateD) + '-' + genLotCode(3);
   const baseD = lotDateJJMMAA(dateD);
-  const flavCode = flavorCodeRec(rec);
-  const lance = [
-    { couleur:c1, q:q1 },
-    { couleur:c2, q:q2 },
-  ].filter(x=>x.q>0).map(x=>{
-    const base = (baseD + flavCode + coqueCouleurCode(x.couleur)).toUpperCase().replace(/\s+/g,'');
-    return { rid, couleur:x.couleur, q:x.q, lot:base+'-CO', base, nom:rec.produitNom, rec };
-  });
-  if(lance.length<2) throw new Error('Quantité trop faible pour diviser en 2 lots (au moins 1 macaron par couleur)');
+  const lance = _sousLotsCoques(rid, rec, qMac, baseD);
+  if(!lance.length) throw new Error('Quantité théorique invalide');
+  // Une fournée de meringue commune n'a de sens QUE s'il y a 2+ sous-lots (un parfum bicolore
+  // divisé) — un seul sous-lot (mono-couleur) n'a personne avec qui « partager » sa meringue.
+  const meringueBatchId = lance.length>=2 ? ('MER-' + baseD + '-' + genLotCode(3)) : null;
   for(const L of lance){
     const prodId = await enregistrerProduction(
       L.rid, L.q*COQUES_PAR_MACARON, L.q*COQUES_PAR_MACARON, dateD, L.lot, '', '',
-      { composant:'coques', lotBase:L.base, facteurQte:L.q, meringueBatchId, couleur:L.couleur }
+      { composant:'coques', lotBase:L.base, facteurQte:L.q, meringueBatchId:meringueBatchId||undefined, couleur:L.couleur }
     );
     try{
-      const taskId = prodTaskStartForBatch({recipeId:L.rid, composant:'coques', lotBase:L.base, parfumNom:`${L.nom} — ${coqueCouleurLabel(L.couleur)}`});
+      const parfumNom = L.couleur ? `${L.nom} — ${coqueCouleurLabel(L.couleur)}` : L.nom;
+      const taskId = prodTaskStartForBatch({recipeId:L.rid, composant:'coques', lotBase:L.base, parfumNom});
       if(prodId!=null && taskId) await db.productions.update(prodId, {atelierTaskId:taskId});
-    }catch(e){ console.error('atelier bicolore divisé', e); }
+    }catch(e){ console.error('atelier lancement coques', e); }
   }
   closeModal();
   renderProductions();
   const totalCoques = lance.reduce((s,L)=>s+L.q,0)*COQUES_PAR_MACARON;
-  toast(`🎨 ${esc(rec.produitNom)} divisé en 2 lots ✓ — ${qty(totalCoques)} coques (${lance.map(L=>coqueCouleurLabel(L.couleur)).join(' + ')})`);
-  await ficheMeringueProduction(
-    lance.map(L=>({ rid:L.rid, q:L.q, lot:L.lot, rec:L.rec, couleur:L.couleur })),
-    meringueBatchId
-  );
+  if(lance.length>=2){
+    toast(`🎨 ${esc(rec.produitNom)} divisé en ${lance.length} lots ✓ — ${qty(totalCoques)} coques (${lance.map(L=>coqueCouleurLabel(L.couleur)).join(' + ')})`);
+    await ficheMeringueProduction(
+      lance.map(L=>({ rid:L.rid, q:L.q, lot:L.lot, rec:L.rec, couleur:L.couleur })),
+      meringueBatchId
+    );
+  } else {
+    const L = lance[0];
+    toast(`${esc(rec.produitNom)} — Coques démarrée ✓ (${qty(totalCoques)} coques pour ${qty(L.q)} macarons)`);
+    await ficheRecetteProduction(L.rid, L.q, 'coques', L.lot);
+  }
 }
 async function saveProd(){
   // [ÉTAPE 2b] Mode « garniture séparée » : production réelle d'un composant catalogue
@@ -15848,20 +15847,23 @@ async function saveProd(){
     catch(e){ toast('Recette introuvable'); return; }
     if(recsAll.some(r=>!r)){ toast('Recette introuvable'); return; }
     const baseD = lotDateJJMMAA(dateD);
-    // Construit un lot par parfum : JJMMAA + code parfum + suffixe -CO (coques).
-    const lance = defs.map((d,i)=>{
-      const r=recsAll[i];
-      const base=(baseD + flavorCodeRec(r)).toUpperCase().replace(/\s+/g,'');
-      return { rid:d.rid, q:d.q, lot:base+'-CO', base, nom:r.produitNom, rec:r };
-    });
+    // [v1449] Chaque parfum se développe en 1 sous-lot (mono-couleur) ou 2 (bicolore, 50/50) —
+    // MÊME moteur que le lancement solo (_sousLotsCoques). Ben : « si j'ai 240 coques […]
+    // Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange » — un
+    // parfum bicolore combiné à d'autres dans la même fournée se divise EXACTEMENT comme s'il
+    // était seul, la quantité qui lui revient (après répartition entre parfums) servant de base
+    // à SA propre division par couleur.
+    const lance = defs.flatMap((d,i) => _sousLotsCoques(d.rid, recsAll[i], d.q, baseD));
+    if(!lance.length){ toast('Quantité théorique invalide'); return; }
     try{
       for(const L of lance){
         const prodId = await enregistrerProduction(
           L.rid, L.q*COQUES_PAR_MACARON, L.q*COQUES_PAR_MACARON, dateD, L.lot, '', '',
-          { composant:'coques', lotBase:L.base, facteurQte:L.q, meringueBatchId }
+          { composant:'coques', lotBase:L.base, facteurQte:L.q, meringueBatchId, couleur:L.couleur }
         );
         try{
-          const taskId = prodTaskStartForBatch({recipeId:L.rid, composant:'coques', lotBase:L.base, parfumNom:L.nom});
+          const parfumNom = L.couleur ? `${L.nom} — ${coqueCouleurLabel(L.couleur)}` : L.nom;
+          const taskId = prodTaskStartForBatch({recipeId:L.rid, composant:'coques', lotBase:L.base, parfumNom});
           if(prodId!=null && taskId) await db.productions.update(prodId, {atelierTaskId:taskId});
         }catch(e){ console.error('atelier meringue', e); }
       }
@@ -15873,9 +15875,10 @@ async function saveProd(){
     closeModal();
     renderProductions();
     const totalCoques = lance.reduce((s,L)=>s+L.q,0)*COQUES_PAR_MACARON;
-    toast(`🥣 Meringue commune lancée ✓ — ${qty(totalCoques)} coques (${lance.map(L=>esc(L.nom)).join(' + ')})`);
+    const libelles = lance.map(L => L.couleur ? `${esc(L.nom)} ${coqueCouleurLabel(L.couleur).toLowerCase()}` : esc(L.nom));
+    toast(`🥣 Meringue commune lancée ✓ — ${qty(totalCoques)} coques (${libelles.join(' + ')})`);
     await ficheMeringueProduction(
-      lance.map(L=>({ rid:L.rid, q:L.q, lot:L.lot, rec:L.rec })),
+      lance.map(L=>({ rid:L.rid, q:L.q, lot:L.lot, rec:L.rec, couleur:L.couleur })),
       meringueBatchId
     );
     return;
@@ -15888,20 +15891,21 @@ async function saveProd(){
   const mode=document.getElementById('f_mode')?.value||'complet';
   const comp=(document.querySelector('input[name="f_comp"]:checked')||{}).value||'coques';
   const composant = mode==='composant' ? comp : 'complet';
-  // [v1445] Case « diviser en 2 lots séparés » cochée (uniquement possible en composant=coques,
-  // voir prodUpdateCoqueHint) : on quitte le chemin normal pour le mécanisme de la meringue
-  // mutualisée appliqué à CE parfum, divisé en ses 2 couleurs plutôt qu'à 2 parfums différents.
-  if(composant==='coques' && document.getElementById('f_bicoloreDiviser')?.checked){
+  // [v1449] Tout lancement « Coques seules » passe désormais par le moteur unique : mono-couleur
+  // → 1 lot (comportement inchangé), bicolore → 2 lots automatiquement (plus de case à cocher,
+  // voir prodLancerCoquesParfum). 'complet' et 'ganache' continuent par le chemin ci-dessous,
+  // inchangé — un batch complet produit AUSSI la garniture, hors du périmètre de ce moteur.
+  if(composant==='coques'){
     const rid = +val('f_rec');
     const qMac = +val('f_qte');
     if(!rid){ toast('Choisis un parfum'); return; }
     if(!qMac||qMac<=0){ toast('Quantité théorique invalide'); return; }
     const dateD = val('f_date')||today();
     try{
-      await prodLancerBicoloreDivise(rid, qMac, dateD);
+      await prodLancerCoquesParfum(rid, qMac, dateD);
     }catch(err){
-      console.error('saveProd bicolore divisé', err);
-      toast(err.message || 'Erreur au lancement (division bicolore)');
+      console.error('saveProd coques', err);
+      toast(err.message || 'Erreur au lancement');
     }
     return;
   }
@@ -16395,7 +16399,7 @@ async function enregistrerProduction(recipeId, qteTheorique, qteReelle, dateProd
         composant: meta.composant||'complet',   // 'complet' | 'coques' | 'ganache' | 'assemble'
         garnitureType: meta.garnitureType||undefined,  // sous-type si garniture : 'ganache' | 'cremeux'
         meringueBatchId: meta.meringueBatchId||undefined,  // fournée de meringue COMMUNE à 2 parfums (coques mutualisées)
-        couleur: meta.couleur||undefined,        // [v1445] moitié d'un parfum BICOLORE divisé en 2 — voir prodLancerBicoloreDivise. Absent = comportement d'avant (2 couleurs virtuelles 50/50 issues de la recette)
+        couleur: meta.couleur||undefined,        // [v1445/v1449] moitié d'un parfum BICOLORE divisé en 2 — voir prodLancerCoquesParfum / _sousLotsCoques. Absent = comportement d'avant (2 couleurs virtuelles 50/50 issues de la recette)
         lotBase: meta.lotBase||'',               // n° de lot commun (relie coques/ganache/assemblé)
         qteTheorique, qteReelle, ecart,
         // STOCK PRODUITS FINIS : calé sur la quantité réelle
