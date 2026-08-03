@@ -3796,3 +3796,71 @@ commande qui doit compter au mois du **paiement** (G).
 **Sensibilité vérifiée par mutation** : en retirant le filtre « marché clos » de `_caLignesToutes`,
 la réconciliation part de 82,75 € à 1 082,75 € et 3 assertions passent au rouge. Le test échoue
 bien quand le code est faux.
+
+---
+
+## 2026-08-03 — DIVISER UN PARFUM BICOLORE EN 2 LOTS, COMME UNE MERINGUE MUTUALISÉE  (v1444 → **v1445**)
+
+**Suite directe de la v1441.** Ben a essayé le simple rappel et signalé que ça ne suffisait pas :
+> « Praliné ne se divise pas en 2 comme souhaité. Je veux que le comportement des coques bicolore
+> soit identique à une meringue mutualisée car au final c'est le même principe. Ainsi je dois avoir
+> d'un côté une couleur de coque puis de l'autre côté la deuxième couleur. Pour le praliné ça
+> reviendrait au même comportement que si je décidais de scinder ma meringue en 2 pour faire
+> vanille et chocolat au lait (coques marrons et blanches). »
+
+### Ce que la v1441 offrait, et pourquoi ça ne suffisait pas
+La v1441 ajoutait un **rappel** (« divise ta meringue en 2 portions égales ») mais gardait UN SEUL
+lot de coques en base — décision prise avec Ben à l'époque, pour rester au plus simple. À l'usage,
+ça ne donnait pas ce qu'il voulait : pas de DLC séparée, pas de suivi de stock séparé par couleur,
+rien qui ressemble au mode « 2 parfums, meringue commune » qu'il utilise déjà pour de vrais
+parfums différents.
+
+### Le fix
+Le formulaire de lancement, en mode **Composant → Coques**, propose désormais — pour une recette
+bicolore — de diviser en **2 lots réels et séparés**, reliés par un `meringueBatchId` partagé
+(fournée de meringue commune) : chacun sa quantité, sa DLC, son suivi de stock propre. C'est
+**exactement** le mécanisme déjà en place pour 2 parfums différents (`saveProd`, mode duo),
+appliqué ici à UN SEUL parfum divisé en ses 2 couleurs plutôt qu'à 2 parfums. Toujours 50/50 (pas
+de curseur, conforme à la décision initiale de Ben sur ce point précis).
+
+Absent en mode « Batch complet » : le mode duo lui-même ne gère que les coques (jamais la
+garniture) — l'y autoriser aurait silencieusement laissé la garniture non produite. La case
+n'apparaît donc que quand le composant choisi est « Coques » seules.
+
+### Sous le capot : une couleur EXPLICITE, prioritaire sur la recette
+Un lot de production peut désormais porter un champ `couleur`. Quand il est présent, il **prime**
+sur les 2 couleurs de la recette : ce lot ne contient QUE cette couleur, même si sa recette en
+porte deux. Absent (comportement par défaut, tous les lots existants) : rien ne change, un lot
+bicolore reste virtuellement 50/50 comme avant.
+
+**Trois moteurs** lisent la couleur d'un lot pour des raisons différentes — stock potentiel
+(`computeStockPotentiel`), suggestions d'assemblage (`assemblySuggestions`), suggestions de
+dégustation (`degustationSuggestions`) — et **les trois** passaient, avant ce correctif, par la
+recette directement plutôt que par un point commun. Les trois ont été repointés vers
+`coqueColorProfile()`, la même fonction que le sélecteur d'assemblage utilisait déjà : un seul
+moteur de vérité sur « quelle couleur contient ce lot », pas trois implémentations qui auraient pu
+diverger.
+
+### Le piège du test à 50/50, et comment il a été évité
+Une première version des tests de réconciliation utilisait un split 50/50 parfaitement égal — qui,
+par coïncidence arithmétique, donne le MÊME total qu'une double-division virtuelle du bug (la
+moyenne de deux moitiés égales reste la moitié). Vérifié par mutation réelle de `app.js` : ce
+premier test restait vert même le correctif désactivé. Remplacé par un scénario **dissymétrique**
+(100 coques marron / 140 blanc) où le calcul correct (100, limité par la couleur la plus rare) et
+le calcul buggé (120, moyenne des deux) divergent clairement.
+
+### Suite v1445 : 31 assertions (`tests/v1445-bicolore-divise.test.js`)
+Code court de couleur pour les lots (A) ; `coqueColorProfile` respecte la couleur explicite, avec
+repli sur la recette si absente ou invalide, non-régression sur les recettes monochromes (B) ; le
+sélecteur d'assemblage (`coquesPourCouleur`) respecte aussi la couleur explicite (C) ;
+réconciliation `computeStockPotentiel`, dont la contre-épreuve dissymétrique (D) ; même
+réconciliation pour `assemblySuggestions` (E) ; `prodLancerBicoloreDivise` — 2 appels
+`enregistrerProduction`, split 50/50 exact même à quantité impaire de macarons, `meringueBatchId`
+partagé, lots distingués par couleur, refus net d'une recette monochrome (F) ; câblage réel de la
+case à cocher restreinte au mode composant+coques (G) ; persistance du champ `couleur` (H).
+
+**Sensibilité vérifiée par mutation réelle de `app.js`**, à 3 endroits séparés : désactiver la
+priorité de la couleur explicite dans `coqueColorProfile` fait échouer B, C, D et E ; revenir
+individuellement à l'ancien appel direct dans `computeStockPotentiel` fait échouer D seule ; idem
+dans `assemblySuggestions` pour E seule — chaque point de correction est couvert par une assertion
+qui lui est propre, pas seulement par la fonction centrale.

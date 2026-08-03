@@ -154,7 +154,8 @@ const SUITES = [
   'v1441-bicolore-rappel.test.js',            // v1441 · rappel de division bicolore (praliné = marron foncé + blanc) dans le formulaire de lancement (mode complet inclus) et la fiche de production toujours affichée après lancement
   'v1442-meringue-fiche-combinee.test.js',    // v1442 · la fiche meringue mutualisée (base commune + détail par parfum) accessible à tout moment via « Voir la recette », pas seulement juste après le lancement du duo
   'v1443-duo-qte-sync.test.js',               // v1443 · en mode duo, « Macarons Pn » suit désormais le rendement du parfum choisi (ne restait plus bloqué sur l'ancienne valeur au changement de parfum)
-  'v1444-ca-graphique-glissant.test.js'       // v1444 · graphique du CA zoomable (jour/semaine/mois/année) et glissant, chaque barre cliquable — avec réconciliation mois par mois contre caDuMois
+  'v1444-ca-graphique-glissant.test.js',      // v1444 · graphique du CA zoomable (jour/semaine/mois/année) et glissant, chaque barre cliquable — avec réconciliation mois par mois contre caDuMois
+  'v1445-bicolore-divise.test.js'             // v1445 · un parfum bicolore peut être divisé en 2 lots réels séparés (comme une meringue mutualisée) — couleur explicite prioritaire sur la recette dans les 3 moteurs de couleur, réconciliation dissymétrique contre la double-division
 ];
 
 let allOk = true;
