@@ -49,6 +49,7 @@ const srcColor = [
   extractFunction('coqueCouleurLabel'),
   extractFunction('coqueCouleurHex'),
   extractFunction('coqueCouleurPastille'),
+  extractObjectConst('COQUE_COULEUR_CODES'),
   extractFunction('coqueCouleurCode'),
   extractFunction('recCoqueColors'),
   extractFunction('recEstBicolore'),
@@ -57,14 +58,31 @@ const srcColor = [
 ].join('\n');
 const Color = new Function(`
   ${srcColor}
-  return { recCoqueColors, recEstBicolore, coqueColorProfile, coqueCouleurCode, coquesPourCouleur, coqueCouleurLabel };
+  return { recCoqueColors, recEstBicolore, coqueColorProfile, coqueCouleurCode, coquesPourCouleur, coqueCouleurLabel, COQUE_COULEURS };
 `)();
 
-// ---- A. coqueCouleurCode : code court, style flavorCode ----
-check('A. code court pour "Marron foncé"', Color.coqueCouleurCode('marron_fonce') === 'MAR');
-check('A. code court pour "Blanc" (L retiré, ambigu avec 1/I — même règle que flavorCode)', Color.coqueCouleurCode('blanc') === 'BAN');
+// ---- A. coqueCouleurCode : code court explicite, style FLAVOR_CODES ----
+// [v1447] Ben : le code du blanc donnait "BAN" (filtre anti-ambiguïté I/L/O de l'ancien calcul
+// algorithmique, qui retirait le L de BLANC) — il voulait "BLA". En creusant, l'algorithme ne
+// collisionnait pas QUE sur le blanc : les 4 marrons donnaient tous "MAR", les 2 rouges "RUG",
+// les 2 verts "VER", les 2 jaunes "JAU" — deux couleurs différentes, un même code de lot. Passage
+// à une table explicite (comme FLAVOR_CODES pour les parfums) : corrige la demande de Ben ET
+// élimine les 4 collisions qu'il n'avait pas signalées.
+check('A. code du blanc = "BLA" (demande explicite de Ben, pas "BAN")', Color.coqueCouleurCode('blanc') === 'BLA');
+check('A. code court pour "Marron foncé"', Color.coqueCouleurCode('marron_fonce') === 'MAF');
 check('A. deux couleurs différentes donnent des codes différents (distinction du lot garantie)',
   Color.coqueCouleurCode('marron_fonce') !== Color.coqueCouleurCode('blanc'));
+check('A. AUCUNE collision sur l\'ensemble des 14 couleurs cataloguées (chaque code est unique)', (() => {
+  const vus = new Set();
+  for(const k of Object.keys(Color.COQUE_COULEURS)){
+    const c = Color.coqueCouleurCode(k);
+    if(vus.has(c)) return false;
+    vus.add(c);
+  }
+  return vus.size === Object.keys(Color.COQUE_COULEURS).length;
+})());
+check('A. repli algorithmique pour une couleur future, non cataloguée (pas de plantage)',
+  Color.coqueCouleurCode('couleur_inconnue_pas_encore_ajoutee').length > 0);
 
 // ---- B. coqueColorProfile : la couleur EXPLICITE prime sur celles de la recette ----
 {
@@ -222,6 +240,7 @@ async function testLancement(){
     extractObjectConst('COQUE_COULEURS'),
     extractFunction('recCoqueColors'),
     extractConstLine('LOT_ALPHABET'),
+    extractObjectConst('COQUE_COULEUR_CODES'),
     extractFunction('coqueCouleurCode'),
     extractFunction('coqueCouleurLabel'),
     extractFunction('lotDateJJMMAA'),

@@ -3901,3 +3901,35 @@ backticks, extraction propre, affichage strictement identique. `tests/_extract.j
 ### Suite v1445 amendée : 3 assertions (`tests/v1445b-checkbox-reset.test.js`)
 La case reste cochée après un second rendu déclenché par la quantité — le cas exact de Ben (A) ;
 preuve par réintroduction — sans le correctif, la case se décoche bien toute seule (B).
+
+---
+
+## 2026-08-03 — CODES COULEUR DES LOTS : EXPLICITES, PLUS ALGORITHMIQUES  (v1446 → **v1447**)
+
+**Demandé par Ben** : « je veux que le code pour la coque blanche dise BLA et pas BAN. »
+
+### La demande, et ce qu'elle a révélé en creusant
+`coqueCouleurCode()` (introduite en v1445 pour distinguer par le numéro de lot les 2 moitiés d'un
+parfum bicolore) dérivait le code automatiquement du libellé de la couleur, avec le même filtre
+anti-ambiguïté que `flavorCode()` (retire les lettres I/L/O). Pour « Blanc », ce filtre retire le
+L et donne « BAN ».
+
+En vérifiant la demande sur l'ensemble de la palette plutôt que sur le seul blanc : le même calcul
+faisait aussi atterrir les **4 marrons** (foncé, clair, intermédiaire, intermédiaire café) sur le
+code « MAR », les **2 rouges** (rouge, rouge bourgogne) sur « RUG », les **2 verts** (pastel,
+pistache) sur « VER », et les **2 jaunes** (jaune, jaune pâle) sur « JAU ». Dix des quatorze
+couleurs de la palette collisionnaient deux à deux — deux couleurs réellement différentes se
+seraient retrouvées avec le **même** numéro de lot, silencieusement indiscernables. Un bug que Ben
+n'avait pas signalé, découvert en vérifiant sa demande plus largement qu'à la lettre.
+
+### Le fix
+Une table explicite, `COQUE_COULEUR_CODES` — le même principe que `FLAVOR_CODES` pour les
+parfums — donne à chacune des 14 couleurs cataloguées un code à 3 lettres choisi à la main,
+lisible et garanti unique (blanc → BLA, comme demandé). Une couleur future, pas encore ajoutée à
+la table, retombe sur l'ancien calcul algorithmique — aucune régression sur ce cas.
+
+### Suite v1445 amendée (section A)
+Code du blanc vérifié à « BLA » ; absence de collision sur l'ensemble des 14 couleurs cataloguées
+(vérifié en boucle, pas seulement sur une paire) ; repli algorithmique pour une couleur inconnue,
+sans plantage. **Sensibilité confirmée par réintroduction réelle** : revenir à l'ancien calcul
+(table vide) fait échouer les 3 assertions, dont celle qui détecte spécifiquement les collisions.
