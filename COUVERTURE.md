@@ -3741,8 +3741,58 @@ Parfum 1 (B) ; Parfum 3 facultatif suit aussi quand un vrai parfum est choisi (C
 sur « — aucun — » (D) ; câblage réel vérifié — les 3 sélecteurs du formulaire appellent bien
 `prodDuoSyncQte` (E).
 
+---
 
+## 2026-08-03 — GRAPHIQUE DU CA ZOOMABLE ET GLISSANT  (v1443 → **v1444**)
 
+**Demandé par Ben**, capture de l'app Santé d'iPhone à l'appui :
+> « Je veux que [le graphique] sur l'accueil puisse être dezoomable pour changer l'affichage du CA
+> pour montrer une tranche d'1 an par exemple plutôt que 6 mois. Ou zoomer pour afficher [...] 1
+> mois, 1 semaine etc. Et qu'on puisse scroller à l'horizontal pour que la période affichée soit
+> glissante. Bien entendu tout résultat affiché reste cliquable et renvoie à la période en
+> question. [...] Pour les périodes je veux jour semaine mois année. »
 
+### Ce qui existait
+Le graphique de l'accueil était **figé** : 6 barres mensuelles, calculées par 6 appels
+`caDuMois()`, sans onglet ni défilement. Impossible de voir plus loin que 6 mois en arrière, ni de
+descendre sous le mois.
 
+### Ce qui est fait
+Bande **défilante** avec 4 onglets — Jour / Semaine / Mois / Année. L'onglet choisit la largeur
+d'**une barre** ; le défilement horizontal fait glisser la fenêtre dans le temps **à granularité
+constante**, et le graphique s'ouvre sur la période la plus récente (comme l'app Santé). L'onglet
+« Mois » affiche 12 barres — soit exactement la tranche d'1 an citée en exemple par Ben. Chaque
+barre reste cliquable et ouvre le détail des encaissements de **sa** période ; le clic sur un mois
+ouvre l'écran mensuel habituel (`caMonthDetail`, inchangé) plutôt qu'un second écran concurrent.
+Une période sans vente reste une **barre à zéro**, jamais une barre absente — sinon le graphique
+mentirait par omission.
 
+Effet de bord favorable : l'accueil ne lance plus 6 requêtes `caDuMois` par rendu. Les
+encaissements sont chargés en **un seul passage** (`_caLignesToutes`) puis regroupés côté client.
+
+### Limite déclarée, pas contournée
+Un encaissement porte une **date**, jamais une **heure** (`paiementsDe` → `p.date`, marchés →
+`k.date`). La barre la plus fine possible est donc **le jour**. Il n'y a pas de vue « heure par
+heure », et en fabriquer une inventerait une précision que la base n'a pas.
+
+### Le risque principal, et ce que la suite prouve
+L'ancien graphique appelait `caDuMois()` — **source unique de vérité** du CA encaissé d'un mois —
+une fois par barre. Le nouveau agrège côté client. Si les deux divergent d'un centime, l'app
+affiche **deux chiffres pour le même mois** : la barre dit une chose, le détail au clic en dit une
+autre. La suite rejoue donc les **deux chemins sur le même jeu de données** et compare mois par
+mois, sur les mêmes règles (reprises exclues, commandes filles sans paiement propre, marchés clos
+au CA net uniquement).
+
+### Suite v1444 : 35 assertions (`tests/v1444-ca-graphique-glissant.test.js`)
+Les 4 périodes demandées existent et « Mois » vaut bien 12 barres = 1 an (A) ; clés de
+regroupement par granularité, dont la semaine ISO lundi→dimanche, un dimanche appartenant à la
+semaine du lundi précédent (B) ; bornes de période, dont février 28 **et** 29 jours en bissextile
+(C) ; suite continue franchissant le changement d'année, sans trou (D) ; plafond de barres gardant
+les périodes les plus **récentes** (E) ; agrégation par jour/semaine/mois/année (F) ;
+**réconciliation avec `caDuMois` mois par mois**, plus les exclusions vérifiées explicitement —
+reprise d'historique, marché non clos, paiement à 0 €, et un paiement daté d'un autre mois que sa
+commande qui doit compter au mois du **paiement** (G).
+
+**Sensibilité vérifiée par mutation** : en retirant le filtre « marché clos » de `_caLignesToutes`,
+la réconciliation part de 82,75 € à 1 082,75 € et 3 assertions passent au rouge. Le test échoue
+bien quand le code est faux.

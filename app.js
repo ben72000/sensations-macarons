@@ -5,8 +5,9 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1443'; // suite : voir tests/v1443-duo-qte-sync.test.js
-const APP_MAJ = 'LE CHAMP « MACARONS Pn » NE SUIVAIT PAS LE PARFUM CHOISI. Ben, capture à l\u2019appui : en mode duo (« 2 parfums, meringue commune »), il choisit « Coco citron vert (100/batch) » en Parfum 2 — le champ « Macarons P2 » restait affiché à 60, jamais resynchronisé sur le rendement du parfum réellement choisi. « 100/batch » écrit juste au-dessus, « 60 » dedans : trompeur, et lancer sans y toucher aurait produit la mauvaise quantité pour ce parfum. CAUSE : changer de parfum ne faisait que rafraîchir le lot et l\u2019aperçu — jamais la quantité elle-même. Le mode mono-parfum avait déjà ce réflexe (prodSyncTheorique resynchronise sa quantité à chaque changement de recette) ; il manquait en mode duo/trio, sur les 3 emplacements. FIX : nouvelle fonction prodDuoSyncQte(slot), branchée sur les 3 sélecteurs de parfum — la quantité suit désormais le rendement du parfum choisi, et le total/la répartition se recalculent aussitôt. Choisir « — aucun — » en Parfum 3 remet sa quantité à 0. Suite v1443 : 9 assertions (tests/v1443-duo-qte-sync.test.js).';
+const APP_VERSION = 'v1444'; // suite : voir tests/v1444-ca-graphique-glissant.test.js
+const APP_MAJ = 'GRAPHIQUE DU CA ZOOMABLE ET GLISSANT (modèle : l\u2019app Santé d\u2019iPhone). Ben : « je veux que [le graphique] sur l\u2019accueil puisse être dezoomable pour changer l\u2019affichage du CA pour montrer une tranche d\u20191 an plutôt que 6 mois. Ou zoomer pour afficher [\u2026] 1 mois, 1 semaine etc. Et qu\u2019on puisse scroller à l\u2019horizontal pour que la période affichée soit glissante. [\u2026] tout résultat affiché reste cliquable et renvoie à la période en question. Pour les périodes je veux jour semaine mois année. » CE QUI EST FAIT : le graphique de l\u2019accueil (6 mois figés, non défilables) devient une bande défilante avec 4 onglets — Jour / Semaine / Mois / Année. L\u2019onglet choisit la largeur d\u2019UNE barre ; le défilement horizontal fait glisser la fenêtre dans le temps à granularité constante, et s\u2019ouvre sur la période la plus récente. L\u2019onglet « Mois » montre 12 barres, soit exactement la tranche d\u20191 an citée en exemple. Chaque barre reste cliquable et ouvre le détail des encaissements de SA période (le clic sur un mois ouvre l\u2019écran mensuel habituel, inchangé). Une période sans vente reste une barre à zéro, jamais une barre absente. LIMITE DÉCLARÉE : un encaissement porte une date, jamais une heure — la barre la plus fine possible est donc le JOUR ; il n\u2019y a pas de vue heure par heure, et en fabriquer une inventerait une précision que la base n\u2019a pas. Au passage, l\u2019accueil ne lance plus 6 requêtes caDuMois par rendu : les encaissements sont chargés en un seul passage puis regroupés. Suite v1444 : 35 assertions (tests/v1444-ca-graphique-glissant.test.js), dont la réconciliation mois par mois avec caDuMois — la source unique de vérité — pour que la barre et le détail au clic ne puissent jamais afficher deux chiffres différents.';
+const _APP_MAJ_v1443_ARCHIVE_INUTILISEE = 'LE CHAMP « MACARONS Pn » NE SUIVAIT PAS LE PARFUM CHOISI. Ben, capture à l\u2019appui : en mode duo (« 2 parfums, meringue commune »), il choisit « Coco citron vert (100/batch) » en Parfum 2 — le champ « Macarons P2 » restait affiché à 60, jamais resynchronisé sur le rendement du parfum réellement choisi. « 100/batch » écrit juste au-dessus, « 60 » dedans : trompeur, et lancer sans y toucher aurait produit la mauvaise quantité pour ce parfum. CAUSE : changer de parfum ne faisait que rafraîchir le lot et l\u2019aperçu — jamais la quantité elle-même. Le mode mono-parfum avait déjà ce réflexe (prodSyncTheorique resynchronise sa quantité à chaque changement de recette) ; il manquait en mode duo/trio, sur les 3 emplacements. FIX : nouvelle fonction prodDuoSyncQte(slot), branchée sur les 3 sélecteurs de parfum — la quantité suit désormais le rendement du parfum choisi, et le total/la répartition se recalculent aussitôt. Choisir « — aucun — » en Parfum 3 remet sa quantité à 0. Suite v1443 : 9 assertions (tests/v1443-duo-qte-sync.test.js).';
 const _APP_MAJ_v1442_ARCHIVE_INUTILISEE = 'LA FICHE MERINGUE MUTUALISÉE, ACCESSIBLE À TOUT MOMENT. Ben : « je dois pouvoir accéder à la recette donnant la quantité totale de meringue mutualisée au même titre que le reste de la recette […] indiquer de manière séparée mais sur la même vue le détail et poids des ingrédients qui suivent pour chaque recette (coques chocolat et praliné par exemple) […] disponible à tout moment à l\u2019intérieur de ce bouton-là présent en haut de la page fabrication. » CE QUI EXISTAIT DÉJÀ : le calcul complet (base meringue commune cumulée + détail propre de chaque parfum, sur une seule vue) existait depuis la v1379/v1380 — mais ne s\u2019affichait qu\u2019UNE fois, juste après le lancement d\u2019un duo. Ensuite, le bouton « Voir la recette » d\u2019un sous-lot ne montrait plus QUE ce parfum, jamais la base commune ni l\u2019autre parfum : la seule vue combinée disparaissait dès la popup fermée. CE QUI EST FAIT : un batch relié à une fournée de meringue commune rouvre désormais la fiche COMBINÉE (base + chaque parfum séparément) depuis le même bouton « Voir la recette », en haut de la page Fabrication — à tout moment de la production, pas seulement au lancement. Suite v1442 : 15 assertions (tests/v1442-meringue-fiche-combinee.test.js), dont la reconstruction exacte des quantités par parfum sur une vraie base de données factice.';
 const _APP_MAJ_v1441_ARCHIVE_INUTILISEE = 'RAPPEL DE DIVISION BICOLORE. Ben : pour un parfum bicolore (ex. praliné = coques marron foncé + blanc), il devait passer par le mode « duo » (2-3 parfums) et simuler un faux 2e parfum juste pour faire apparaître un sélecteur de couleurs, alors que sa recette est mono-parfum — « je suis obligé de simuler 2 parfums différents afin d\u2019avoir la possibilité de sélectionner mes deux couleurs ». Deux questions posées, deux réponses tranchées : UN SEUL lot de coques (rien ne change au modèle de données ni au stock), toujours 50/50 (pas de curseur). CE QUI EST FAIT : dès qu\u2019une recette bicolore est sélectionnée, un rappel s\u2019affiche — dans le formulaire de lancement (désormais aussi en mode « Batch complet », le mode par défaut, qui n\u2019affichait jusqu\u2019ici aucune information couleur) ET dans la fiche de production TOUJOURS affichée après le lancement (l\u2019endroit le plus sûr pour ne pas le manquer) : « 🎨 Praliné est bicolore : divise ta meringue en 2 portions égales — 60 coques marron foncé + 60 coques blanches. » Le split est toujours un nombre entier exact (2 coques par macaron garantit un total pair). Suite v1441 : 15 assertions (tests/v1441-bicolore-rappel.test.js).';
 const _APP_MAJ_v1440_ARCHIVE_INUTILISEE = 'LE BOUTON « ＋ LANCER UNE TÂCHE », RÉPARÉ MAIS INVISIBLE. Suite directe de v1439 : Ben a signalé que le bouton ne plantait plus, mais que « quand je clique dessus plus rien ne se passe ». CE QUI SE PASSAIT : le sélecteur s\u2019ouvrait BEL ET BIEN (même mécanisme que le bouton ▼ « Voir toutes les tâches », qui fonctionnait déjà), mais plus bas dans l\u2019écran, après les tâches en cours — sans aucun repère visuel. Pire : `_atPicker` n\u2019est jamais remis à `false` par un simple rechargement de vue, seulement par un choix de tâche ou une fermeture explicite — donc si le sélecteur était déjà ouvert d\u2019un essai précédent, cliquer à nouveau ne changeait RIEN à l\u2019écran, exactement le symptôme décrit. FIX : `prodBoardLaunch()` attend désormais le rendu puis fait défiler la liste dans le cadre (repli sur le bloc suggestion si la liste est vide) — un clic sur ce bouton a maintenant TOUJOURS un effet visible, que le sélecteur vienne de s\u2019ouvrir ou qu\u2019il l\u2019était déjà. Suite v1439 amendée : 14 assertions (tests/v1439-prodboard-launch.test.js), dont la preuve par réintroduction du symptôme exact de ce deuxième rapport.';
@@ -7728,6 +7729,232 @@ async function caDuMois(mk){
   return { total: money2(totalCmd+totalMk), totalCmd: money2(totalCmd), totalMk: money2(totalMk), lignesCmd, lignesMk };
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// [v1444] GRAPHIQUE DU CA ZOOMABLE ET GLISSANT (demande de Ben, modèle : app Santé iPhone)
+// « Je veux que [le graphique] sur l'accueil puisse être dezoomable pour changer l'affichage du
+//   CA pour montrer une tranche d'1 an plutôt que 6 mois. Ou zoomer pour afficher [...] 1 mois,
+//   1 semaine etc. Et qu'on puisse scroller à l'horizontal pour que la période affichée soit
+//   glissante. [...] tout résultat affiché reste cliquable et renvoie à la période en question.
+//   Pour les périodes je veux jour semaine mois année. »
+//
+// LIMITE DE DONNÉES, déclarée plutôt que contournée : un encaissement porte une DATE, jamais une
+// HEURE (paiementsDe → p.date = 'AAAA-MM-JJ' ; marchés → k.date). La barre la plus fine possible
+// est donc LE JOUR. Il n'y a pas de vue « heure par heure », et en fabriquer une reviendrait à
+// inventer une précision que la base n'a pas.
+//
+// L'onglet choisit la LARGEUR D'UNE BARRE (jour / semaine / mois / année) ; la largeur visible est
+// calée pour que l'onglet « Mois » montre 12 barres = la tranche d'1 an demandée en exemple.
+// Le défilement horizontal fait glisser la fenêtre dans le temps, à granularité constante.
+//
+// SOURCE UNIQUE DE VÉRITÉ : ces fonctions rejouent EXACTEMENT les règles de caDuMois (reprises
+// exclues, filles sans paiement via paiementsDe, marchés clos au CA net). La suite v1444 le prouve
+// mois par mois contre caDuMois elle-même — deux agrégations qui divergent seraient un troisième
+// chiffre (règle v1339).
+// ════════════════════════════════════════════════════════════════════════════
+const CA_GRANS = ['jour','semaine','mois','annee'];
+const CA_GRAN_LBL = { jour:'Jour', semaine:'Semaine', mois:'Mois', annee:'Année' };
+// Nombre de barres visibles d'un coup (le reste défile). « Mois » → 12 = une tranche d'1 an.
+const CA_GRAN_VISIBLE = { jour:10, semaine:9, mois:12, annee:6 };
+
+// Lundi (clé de semaine) du jour 'AAAA-MM-JJ'. Semaine ISO : lundi = premier jour. PURE.
+// On indexe une semaine par la DATE de son lundi plutôt que par un numéro ISO : pas d'ambiguïté
+// de semaine 53 ni de bascule d'année, et le libellé reste lisible pour Ben.
+function _caLundiDe(ymd){
+  if(!ymd) return '';
+  const [y,m,d] = String(ymd).slice(0,10).split('-').map(Number);
+  if(!y||!m||!d) return '';
+  const dt = new Date(y, m-1, d);
+  if(isNaN(dt)) return '';
+  const jour = (dt.getDay()+6)%7;          // 0 = lundi … 6 = dimanche
+  dt.setDate(dt.getDate()-jour);
+  return ymdLocal(dt);
+}
+// Clé de regroupement d'une date selon la granularité. PURE.
+function _caCleGran(ymd, gran){
+  const s = String(ymd||'').slice(0,10);
+  if(!s) return '';
+  if(gran==='jour')   return s;
+  if(gran==='semaine')return _caLundiDe(s);
+  if(gran==='mois')   return s.slice(0,7);
+  if(gran==='annee')  return s.slice(0,4);
+  return s.slice(0,7);
+}
+// Bornes [debut, fin] (incluses, 'AAAA-MM-JJ') couvertes par une clé de période. PURE.
+function _caPeriodeBornes(cle, gran){
+  const k = String(cle||'');
+  if(gran==='jour')    return { debut:k, fin:k };
+  if(gran==='semaine'){
+    const [y,m,d]=k.split('-').map(Number);
+    const fin=new Date(y,m-1,d+6);
+    return { debut:k, fin:ymdLocal(fin) };
+  }
+  if(gran==='mois'){
+    const [y,m]=k.split('-').map(Number);
+    return { debut:`${k}-01`, fin: ymdLocal(new Date(y, m, 0)) };   // jour 0 du mois suivant = dernier du mois
+  }
+  if(gran==='annee')   return { debut:`${k}-01-01`, fin:`${k}-12-31` };
+  return { debut:k, fin:k };
+}
+// Libellé court d'une barre. PURE.
+function _caLabelGran(cle, gran){
+  const k=String(cle||'');
+  const MOIS=['janv.','févr.','mars','avr.','mai','juin','juil.','août','sept.','oct.','nov.','déc.'];
+  if(gran==='jour' || gran==='semaine'){
+    const [,m,d]=k.split('-');
+    return `${d}/${m}`;
+  }
+  if(gran==='mois'){ const [,m]=k.split('-'); return MOIS[(+m)-1]||k; }
+  if(gran==='annee') return k;
+  return k;
+}
+// Libellé long d'une période (titres de détail). PURE.
+function _caLabelLongGran(cle, gran){
+  if(gran==='mois')  return monthLabel(cle);
+  if(gran==='annee') return `année ${cle}`;
+  const b=_caPeriodeBornes(cle, gran);
+  if(gran==='jour')  return fmtDate(b.debut);
+  return `semaine du ${fmtDate(b.debut)} au ${fmtDate(b.fin)}`;
+}
+// Suite ORDONNÉE et CONTINUE de clés de période entre deux dates (trous inclus : un jour sans
+// vente est une barre à zéro, pas une barre absente — sinon le graphique mentirait par omission).
+// Bornée par securite (garde-fou DOM) : on garde les périodes les plus RÉCENTES. PURE.
+function _caSuiteCles(ymdMin, ymdMax, gran, maxBarres){
+  const out=[];
+  if(!ymdMin || !ymdMax) return out;
+  const cap = maxBarres || 800;
+  const [ay,am,ad]=String(ymdMin).slice(0,10).split('-').map(Number);
+  const [zy,zm,zd]=String(ymdMax).slice(0,10).split('-').map(Number);
+  if(!ay||!zy) return out;
+  let cur, fin=new Date(zy, zm-1, zd);
+  if(gran==='jour')         cur=new Date(ay, am-1, ad);
+  else if(gran==='semaine'){ const l=_caLundiDe(ymdMin).split('-').map(Number); cur=new Date(l[0], l[1]-1, l[2]); }
+  else if(gran==='mois')     cur=new Date(ay, am-1, 1);
+  else                       cur=new Date(ay, 0, 1);
+  let garde=0;
+  while(cur<=fin && garde++<5000){
+    out.push(_caCleGran(ymdLocal(cur), gran));
+    if(gran==='jour')         cur.setDate(cur.getDate()+1);
+    else if(gran==='semaine') cur.setDate(cur.getDate()+7);
+    else if(gran==='mois')    cur.setMonth(cur.getMonth()+1);
+    else                      cur.setFullYear(cur.getFullYear()+1);
+  }
+  return out.length>cap ? out.slice(out.length-cap) : out;
+}
+// Somme des lignes par clé de période. PURE. Renvoie un objet {cle: total arrondi}.
+function _caAgregeLignes(lignes, gran){
+  const acc={};
+  (lignes||[]).forEach(l=>{
+    const k=_caCleGran(l&&l.date, gran);
+    if(!k) return;
+    acc[k]=(acc[k]||0)+(+l.montant||0);
+  });
+  Object.keys(acc).forEach(k=>{ acc[k]=money2(acc[k]); });
+  return acc;
+}
+// TOUTES les lignes de CA encaissé, tous mois confondus, aux règles EXACTES de caDuMois.
+// Un seul passage en base : le graphique glissant peut couvrir des centaines de périodes sans
+// rappeler caDuMois une fois par barre.
+async function _caLignesToutes(){
+  const orders = await db.orders.toArray().catch(()=>[]);
+  const clients = await db.clients.toArray().catch(()=>[]);
+  const clName = id => (clients.find(c=>c.id===id)||{}).nom || '—';
+  const lignes = [];
+  orders.filter(o=>!estReprise(o)).forEach(o=>{
+    paiementsDe(o).forEach(p=>{
+      const m=+p.montant||0; if(!m) return;
+      lignes.push({ date:(p.date||o.date||''), nom:clName(o.clientId), montant:m, moyen:p.moyen||'', oid:o.id, type:'cmd' });
+    });
+  });
+  try{
+    const markets = await db.markets.toArray();
+    markets.forEach(k=>{
+      if(k.statut!=='clos') return;
+      const net = (typeof marketNetCA==='function') ? marketNetCA(k) : 0;
+      if(net>0) lignes.push({ date:k.date||'', nom:k.nom||'Marché', montant:net, type:'mk' });
+    });
+  }catch(e){ swallow(e,'_caLignesToutes'); }
+  lignes.sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
+  return lignes;
+}
+
+
+// ---- [v1444] RENDU DU GRAPHIQUE GLISSANT --------------------------------------------------
+// Granularité courante : confort d'affichage, volontairement NON persisté en base (ce n'est pas
+// une donnée métier ; l'accueil rouvre sur « Mois », la vue de référence de Ben).
+let _caGran = 'mois';
+let _caLignesCache = null;   // lignes chargées une seule fois par rendu d'accueil
+
+function caGranSet(gran){
+  if(CA_GRANS.indexOf(gran)<0) return;
+  _caGran = gran;
+  caChartRender();
+}
+// Redessine le graphique dans son hôte (#caChartHost). Idempotent : rappelable à volonté.
+async function caChartRender(){
+  const host = document.getElementById('caChartHost');
+  if(!host) return;
+  try{
+    if(!_caLignesCache) _caLignesCache = await _caLignesToutes();
+    const lignes = _caLignesCache;
+    const gran = _caGran;
+    const agg = _caAgregeLignes(lignes, gran);
+    const auj = today();
+    // La série va de la 1re rentrée d'argent connue à AUJOURD'HUI. Une période sans vente reste
+    // affichée à zéro : une barre absente laisserait croire que la période n'a pas existé.
+    const premiere = lignes.length ? String(lignes[0].date||'').slice(0,10) : auj;
+    const cles = _caSuiteCles((premiere && premiere<=auj) ? premiere : auj, auj, gran);
+    const max = Math.max(...cles.map(k=>+agg[k]||0), 1);
+    const prive = privacyModeEnabled();
+    const visibles = CA_GRAN_VISIBLE[gran]||10;
+    const largeur = gran==='mois' ? 26 : (gran==='annee' ? 58 : 44);
+    const onglets = CA_GRANS.map(g=>
+      `<button class="ca-gran-tab${g===gran?' on':''}" onclick="caGranSet('${g}')">${CA_GRAN_LBL[g]}</button>`
+    ).join('');
+    const barres = cles.map(k=>{
+      const v = +agg[k]||0;
+      return `<div class="bar-col ca-bar-col" style="width:${largeur}px" onclick="caPeriodeDetail('${gran}','${k}')" title="Voir le détail — ${esc(_caLabelLongGran(k,gran))}">
+        <div class="bar-val">${(!prive&&v>0)?Math.round(v):''}</div>
+        <div class="bar" style="height:${Math.round(v/max*140)}px"></div>
+        <div class="bar-lbl">${esc(_caLabelGran(k,gran))}</div>
+      </div>`;
+    }).join('');
+    const totalVisible = money2(cles.slice(-visibles).reduce((s,k)=>s+(+agg[k]||0),0));
+    const quoi = gran==='jour'?'ce jour':gran==='semaine'?'cette semaine':gran==='mois'?'ce mois':'cette année';
+    host.innerHTML = `
+      <div class="ca-gran-tabs">${onglets}</div>
+      <p class="note" style="margin:6px 0 8px">Fais glisser le graphique horizontalement pour remonter le temps. Touche une barre pour voir le détail de ${quoi}.</p>
+      <div class="bar-wrap ca-bar-scroll" id="caChartScroll">${barres}</div>
+      <div class="note" style="margin-top:6px">${cles.length} période(s) au total${prive?'':` — ${euro(totalVisible)} sur les ${Math.min(visibles,cles.length)} dernières`}</div>`;
+    // Ouvre sur la période LA PLUS RÉCENTE (à droite), comme l'app Santé.
+    const sc = document.getElementById('caChartScroll');
+    if(sc) sc.scrollLeft = sc.scrollWidth;
+  }catch(e){
+    swallow(e,'caChartRender');
+    host.innerHTML = `<p class="note">Graphique indisponible pour le moment.</p>`;
+  }
+}
+// Détail d'UNE période, quelle que soit la granularité. Pour un MOIS, on délègue à caMonthDetail
+// (inchangée) : elle a sa navigation mois précédent/suivant et c'est l'écran que Ben connaît déjà.
+// Deux écrans différents pour le même mois seraient deux vérités concurrentes.
+async function caPeriodeDetail(gran, cle){
+  if(gran==='mois') return caMonthDetail(cle);
+  const b = _caPeriodeBornes(cle, gran);
+  const lignes = (_caLignesCache || await _caLignesToutes())
+    .filter(l=>{ const d=String(l.date||'').slice(0,10); return d>=b.debut && d<=b.fin; })
+    .sort((x,y)=>String(y.date||'').localeCompare(String(x.date||'')));
+  const total = money2(lignes.reduce((s,l)=>s+(+l.montant||0),0));
+  const rows = lignes.length ? lignes.map(l=>`
+    <div class="sum-box" style="${l.oid?'cursor:pointer':''}" ${l.oid?`onclick="closeModal();setTimeout(()=>cmdView(${l.oid}),0)"`:''}>
+      <span><span style="color:#9a8a82">${fmtDate(l.date)}</span> · <b>${esc(l.nom)}</b>${l.type==='mk'?' <span style="color:#2e6b3f;font-size:.72rem">· marché</span>':''}${l.moyen?` <span style="color:#9a8a82;font-size:.76rem">${esc(l.moyen)}</span>`:''}</span>
+      <b>${euro(l.montant)}</b></div>`).join('')
+    : '<p class="note">Aucun encaissement sur cette période.</p>';
+  openModal(`<h3>💶 Encaissements — ${esc(_caLabelLongGran(cle, gran))}</h3>
+    <p class="note">Du ${fmtDate(b.debut)} au ${fmtDate(b.fin)}. Touche une ligne pour ouvrir la commande.</p>
+    ${rows}
+    <div class="sum-box" style="border-top:2px solid var(--bordeaux);margin-top:10px"><span><b>Total encaissé</b></span><b style="color:var(--bordeaux)">${euro(total)}</b></div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+}
+
 // [v1412] Détail d'UNE CATÉGORIE (marchandise ou service) du Bilan URSSAF, pour LE MOIS affiché.
 // Retour de Ben : cliquer sur « Vente de marchandise » ou « Prestation de service » envoyait vers
 // l'écran Commandes en vrac (tout l'historique, non trié) ou vers la Rentabilité par client — ni
@@ -7996,12 +8223,9 @@ async function renderDash(){
   const prodSugg = assemblySuggestions(productions, recName);
 
   const upcoming = events.filter(e=>e.date>=today()).sort((a,b)=>a.date.localeCompare(b.date)).slice(0,4);
-  const months=[]; for(let i=5;i>=0;i--){const d=new Date(y,m-i,1);months.push({k:ymOf(d),l:d.toLocaleDateString('fr-FR',{month:'short'})});}
-  // CA mensuel via la MÊME fonction que la carte et le détail (caDuMois) — source unique de vérité.
-  // Chaque barre = total encaissé du mois (commandes + marchés clos), calculé à l'identique du clic.
-  const _moisCA = await Promise.all(months.map(mo=>caDuMois(mo.k).catch(()=>({total:0}))));
-  const data=months.map((mo,i)=>({...mo, v: money2((_moisCA[i]&&_moisCA[i].total)||0)}));
-  const max=Math.max(...data.map(d=>d.v),1);
+  // [v1444] Les 6 barres fixes (et leurs 6 appels caDuMois par rendu d'accueil) ont disparu :
+  // le graphique glissant charge les encaissements en UN seul passage, puis regroupe côté client
+  // à la granularité choisie. Voir caChartRender / _caLignesToutes.
 
   // [A14] Plan de production pré-calculé AVANT le paint : la carte « À produire » est injectée
   // dans le premier rendu (plus de remplissage différé de #dashProduction, donc plus de saut).
@@ -8057,9 +8281,8 @@ async function renderDash(){
      <div style="font-size:.82rem;color:#7a6a60;padding:4px 2px 0">${privacyModeEnabled()?'•••':euro(caTotal)} <span style="color:#9a8a82">activité globale cumulée</span></div>
      ${(!privacyModeEnabled()&&_caReprises>0)?`<div style="font-size:.76rem;color:#9a8a82;padding:2px 2px 0">dont ${euro(_caFilEau)} au fil de l'app <span style="color:#b8a8c8">·</span> ${euro(_caReprises)} en reprises d'historique <span style="color:#b8a8c8">(hors URSSAF, déjà déclaré)</span></div>`:''}
    </details>
-   <div class="panel"${privacyModeEnabled()?' style="filter:blur(6px);opacity:.45;pointer-events:none;user-select:none"':''}><h2>Chiffre d'affaires — 6 derniers mois</h2>
-     <p class="note" style="margin:-4px 0 8px">Touche une barre pour voir le détail des encaissements du mois.</p>
-     <div class="bar-wrap">${data.map(d=>`<div class="bar-col" onclick="caMonthDetail('${d.k}')" style="cursor:pointer" title="Voir le détail de ${esc(d.l)}"><div class="bar-val">${(!privacyModeEnabled()&&d.v>0)?Math.round(d.v):''}</div><div class="bar" style="height:${d.v/max*140}px"></div><div class="bar-lbl">${d.l}</div></div>`).join('')}</div>
+   <div class="panel"${privacyModeEnabled()?' style="filter:blur(6px);opacity:.45;pointer-events:none;user-select:none"':''}><h2>Chiffre d'affaires</h2>
+     <div id="caChartHost"><p class="note">Chargement du graphique…</p></div>
    </div>
    <div id="dashProduction">${_dashProdHTML}</div><!-- [A14] rempli au premier paint (plan pré-calculé) : plus de réservation de hauteur ni de saut -->
    <div class="dash-2col">
@@ -8092,6 +8315,11 @@ async function renderDash(){
      </div>
    </div>`;
   startHomeClock();
+  // [v1444] Le graphique du CA se remplit juste après le paint. Le cache des lignes est vidé à
+  // CHAQUE rendu d'accueil : sinon un encaissement saisi puis un retour à l'accueil afficherait
+  // encore l'ancienne courbe — un graphique périmé qui a l'air à jour est pire qu'un chargement.
+  _caLignesCache = null;
+  caChartRender();
   // [A14] Plus d'appel différé : #dashProduction est déjà rempli dans le paint ci-dessus.
 }
 

@@ -892,6 +892,18 @@ input:not([type]), select, textarea{ font-size:16px !important; }
 .bar{width:62%;background:linear-gradient(180deg,var(--caramel-2),var(--caramel));border-radius:7px 7px 0 0;transition:.5s;min-height:2px}
 .bar-lbl{font-size:.72rem;color:#9a8a82}
 .bar-val{font-size:.72rem;color:var(--bordeaux);font-weight:600}
+/* [v1444] Graphique du CA zoomable (onglets jour/semaine/mois/année) et glissant (défilement
+   horizontal). Modèle : l'app Santé d'iPhone. Les barres ont une largeur FIXE (posée en ligne
+   par caChartRender selon la granularité) au lieu de se partager la largeur : c'est ce qui rend
+   la bande défilante — sinon 300 barres se comprimeraient toutes dans l'écran. */
+.ca-gran-tabs{display:flex;gap:4px;background:#f1eae0;border-radius:999px;padding:3px;margin:-2px 0 2px}
+.ca-gran-tab{flex:1;border:none;background:transparent;border-radius:999px;padding:7px 4px;
+  font-family:'Outfit',system-ui,sans-serif;font-size:.8rem;font-weight:600;color:#9a8a82;cursor:pointer;transition:.15s}
+.ca-gran-tab.on{background:#fff;color:var(--bordeaux);box-shadow:0 1px 3px rgba(0,0,0,.1)}
+.ca-bar-scroll{overflow-x:auto;overflow-y:hidden;gap:6px;scroll-behavior:auto;
+  -webkit-overflow-scrolling:touch;scrollbar-width:thin;padding-bottom:4px}
+.ca-bar-scroll .ca-bar-col{flex:none;cursor:pointer}
+.ca-bar-scroll .bar-lbl{white-space:nowrap;font-size:.66rem}
 .search{padding:10px 14px;border:1.5px solid #e7dccb;border-radius:var(--r-sm);font-family:'Outfit',system-ui,sans-serif;
   font-size:16px;background:#fff;width:230px;max-width:100%;transition:.15s}
 .search:focus{outline:none;border-color:var(--caramel);box-shadow:0 0 0 3px rgba(170,124,57,.14)}
