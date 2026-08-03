@@ -3864,3 +3864,40 @@ priorité de la couleur explicite dans `coqueColorProfile` fait échouer B, C, D
 individuellement à l'ancien appel direct dans `computeStockPotentiel` fait échouer D seule ; idem
 dans `assemblySuggestions` pour E seule — chaque point de correction est couvert par une assertion
 qui lui est propre, pas seulement par la fonction centrale.
+
+---
+
+## 2026-08-03 — LA CASE « DIVISER EN 2 LOTS » SE DÉCOCHAIT TOUTE SEULE  (v1445 → **v1446**)
+
+**Signalé par Ben**, captures à l'appui : une fiche de production « Chocolat passion » montrant
+un seul lot (« 030826CHP-CO », sans suffixe de couleur) avec le simple rappel v1441 — « divise ta
+meringue en 2 portions égales » — alors qu'il pensait avoir demandé la vraie division en 2 lots
+introduite en v1445. Le numéro de lot lui-même était la preuve : un partage réussi aurait donné
+2 lots avec des codes couleur distincts, pas un seul lot au format d'avant v1445.
+
+### La cause
+`prodUpdateCoqueHint()` reconstruit **entièrement** la case à cocher (`innerHTML`) à chaque appel —
+y compris depuis le champ **Quantité**, qui appelle cette fonction à **chaque frappe** depuis la
+v1441. Le nouvel `<input>` ne portait jamais l'état précédent : cocher la case, puis modifier la
+quantité (l'ordre naturel d'usage — la quantité est pré-remplie par le rendement de la recette, on
+la corrige souvent après avoir repéré le rappel bicolore) redessinait une case **décochée**, en
+silence, sans aucun message d'erreur. Cliquer « Lancer la production » retombait alors sur
+l'ancien chemin à un seul lot.
+
+### Le fix
+L'état de la case (`checked`) est lu **avant** que l'élément ne soit détruit par la réaffectation
+d'`innerHTML`, et reporté sur le nouvel `<input>` généré.
+
+### Un piège d'outillage découvert au passage
+Écrire le test de non-régression a révélé que `prodUpdateCoqueHint()` n'avait **jamais** été
+extraite par `tests/_extract.js` jusqu'ici. Sa structure — un `${condition ? `template` : `template`}` **imbriqué** dans le gros bloc HTML — fait qu'un backtick d'ouverture du template
+imbriqué est indiscernable, pour l'extracteur, de la fermeture du template extérieur : le comptage
+d'accolades déraillait et engloutissait des dizaines de milliers de caractères plus loin dans le
+fichier avant de retomber par coïncidence sur une profondeur nulle. Corrigé en sortant le texte
+conditionnel dans une variable à part (`texteEtat`) avant le template principal — un seul niveau de
+backticks, extraction propre, affichage strictement identique. `tests/_extract.js` lui-même n'a pas
+été touché (règle du projet : un seul stripper/extracteur, jamais un second).
+
+### Suite v1445 amendée : 3 assertions (`tests/v1445b-checkbox-reset.test.js`)
+La case reste cochée après un second rendu déclenché par la quantité — le cas exact de Ben (A) ;
+preuve par réintroduction — sans le correctif, la case se décoche bien toute seule (B).
