@@ -148,7 +148,9 @@ const SUITES = [
   'v1434-dons-independants-paiement.test.js', // v1434 · un DON compte qu'il soit payé ou non : le filtre de vente s'applique APRÈS le comptage des dons, jamais en amont de buildFlavorSales
   'v1435-marches-dans-planning.test.js',      // v1435 · les marchés programmés entrent dans le planning : besoinMarchesParParfum, point de vérité unique des 3 écrans, sans condition de mode
   'v1436-location-pyramide-service.test.js',  // v1436 · la location de pyramide remonte en prestation de service même sans ligne prestation séparée — montantServiceLigne, point de vérité unique
-  'v1437-fiche-client-copilote.test.js'       // v1437 · fiche client intelligente : indicateurs à seuil de silence, état relatif au rythme du client, recos argumentées, ouverture universelle
+  'v1437-fiche-client-copilote.test.js',      // v1437 · fiche client intelligente : indicateurs à seuil de silence, état relatif au rythme du client, recos argumentées, ouverture universelle
+  'v1438-activeTx-course.test.js',            // v1438 · dexie.min.js : _activeTx (transaction en cours) était un champ PARTAGÉ, réutilisable par erreur par un appel concurrent — _txStore vérifie désormais qu'elle est vivante ET porte la bonne table avant de la réutiliser
+  'v1439-prodboard-launch.test.js'            // v1439 · le bouton « ＋ Lancer une tâche » de l'atelier complet appelait prodTaskPicker(), jamais définie — pointé vers le vrai mécanisme (_atPicker + prodRenderBoard)
 ];
 
 let allOk = true;

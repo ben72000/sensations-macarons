@@ -3456,3 +3456,140 @@ le choix de Ben est tenu par le code, pas seulement par l'intention.
 ### Angle mort déclaré
 Les marchés gardent leurs propres `distanceKm`/`tempsRouteMin` (écran marché) : ils ne sont ni
 alimentés ni alimentés par ce carnet. Hors périmètre de la demande, à traiter si Ben le souhaite.
+
+---
+
+## v1392 — Résumé d'assemblage : coques mono-couleur nommées et comptées juste
+
+Vu par Ben en atelier (capture « Citron crémeux », coques Jaune + Jaune) : le résumé
+d'assemblage affichait « (9 coques de chaque couleur) » pour un macaron **mono-couleur**.
+Faux deux fois : le mot « couleur » n'a pas de sens à une seule couleur, et 9 macarons =
+**18 coques** (2 par macaron), pas 9. Attendu : « (18 coques jaunes) ».
+
+Le compte était en fait déjà bon dans `coquesNeeded` (= assemblable × 2) ; il manquait le
+**nom de couleur accordé**. La branche mono passe de `(N coques)` à
+`(N coques <couleur>s)` via le helper `pluralCouleur()`. Branche bi **inchangée**.
+
+`pluralCouleur()` accorde les deux premiers mots, saute ceux finissant déjà par s/x :
+« Jaune » → « jaunes », « Marron foncé » → « marrons foncés », « Rouge bourgogne » →
+« rouges bourgognes ».
+
+### Suite v1392 : 9 assertions
+Garde statique (branche bi conserve « de chaque couleur » ; branche mono nomme la couleur
+et compte `coquesNeeded`, pas `assemblable`) + comportemental sur `pluralCouleur`.
+
+---
+
+## v1393 — Conseil marge par parfum : recommander seulement quand les données le permettent
+
+Demande de Ben (prompt « Decision Council ») : un conseil tarifaire qui ne remplit jamais
+les vides. Contrainte majeure : **aucun historique de prix daté** n'est enregistré →
+l'**élasticité est incalculable**. Le conseil raisonne donc sur la **marge mesurée**, jamais
+sur la réaction de la demande, et le déclare.
+
+`conseilMargeParfum(analysis, settings, data)` est une couche d'**interprétation** : elle lit
+`tauxMarge` / `coutRevientUnit` / pièces déjà produits par `analyzeFlavorProfitability` et **ne
+recalcule rien** (règle gelée : le raisonnement route, il ne calcule pas).
+
+### Ce que le code tient
+- **Jauge de confiance** sur la seule variable disponible (pièces vendues) : reco **FERME**
+  seulement au-delà de 50 pièces ; en-dessous → « à confirmer », jamais ferme. C'est la parade
+  exacte à l'objection « échantillon trop mince » du procureur.
+- **À perte** traité à part (corriger en priorité), pas comme une simple hausse.
+- **Le procureur** produit des objections **fondées sur la ligne** : dons qui gonflent le
+  volume, écart prix encaissé/attendu (remises/formats), coût de revient possiblement périmé
+  si la matière a bougé (`flavorCostHikeAlerts`).
+- **« Ce que ce conseil ignore »** nomme toujours l'élasticité incalculable — honnêteté
+  structurelle affichée à l'écran `rentaparfum`.
+
+### Piège d'extraction évité (règle du projet)
+La 1ʳᵉ version contenait `/pièce` juste après une interpolation `${…}` dans un template : le
+stripper de `_extract.js` le prenait pour un début de regex et sur-lisait 122 000 caractères,
+masquant un test. Reformulé « par pièce ». L'app tournait, mais le motif était un piège latent.
+
+### Suite v1393 : 20 assertions
+Confiance (ferme > 50 pièces ; jamais ferme < 50 à écart de marge égal) ; à perte distinct ;
+au-dessus du seuil absent ; procureur (échantillon, dons, écart, coût périmé) ; non-recalcul.
+`run-all.js` complété des suites v1389→v1393 qui manquaient à l'appel. Agrégat entièrement vert.
+
+---
+
+## 2026-08-02 — LA COURSE AU DÉMARRAGE : CHIFFRES AU LIEU DES PARFUMS  (v1437 → **v1438**)
+
+*(Ce journal n'a pas d'entrée entre v1393 et v1438 — les livraisons intermédiaires n'ont pas été
+tracées ici. Hors périmètre de cette entrée.)*
+
+**Signalé par Ben**, captures + rapport d'incident (écran Santé de l'app) à l'appui : au lancement,
+certains batchs affichaient un numéro brut (« #1234 ») au lieu du nom du parfum ; en quittant l'app
+et en la relançant, les numéros disparaissaient au profit des parfums. L'écran Productions plantait
+parfois tout court (« Affichage indisponible »). Les deux symptômes partageaient la même erreur
+IndexedDB dans le journal : « The transaction finished. » ou « The specified object store was not
+found. ».
+
+### Ce n'était pas un bug d'affichage
+La cause vivait dans le **moteur** (`dexie.min.js`), pas dans l'écran. `_activeTx` (la transaction
+IndexedDB « en cours ») est un **champ unique, partagé par toute l'instance Dexie** — pas propre à
+chaque appel. Au démarrage, plusieurs opérations tournent concurremment (migrations, flush différé
+du journal d'audit via `Dexie.ignoreTransaction`) : l'une d'elles pouvait hériter **par erreur** de
+la transaction d'un AUTRE appel — déjà terminée, ou ne portant pas la table visée.
+
+`atParfumsDispo()` avalait cette erreur (`db.recipes.toArray().catch(()=>[])`) → repli silencieux
+sur une liste de recettes vide → chaque batch retombait sur `'#'+id`. Sur Productions, la même
+erreur n'était pas rattrapée → écran en échec.
+
+### Le fix
+`Table._txStore()` vérifie désormais, avant de réutiliser la transaction partagée, qu'elle est
+encore **vivante** (elle n'a pas déjà fini) ET qu'elle **porte bien la table demandée**. Si l'un des
+deux manque, une transaction dédiée est ouverte au lieu de laisser planter. L'usage légitime
+(plusieurs écritures dans le même appel `db.transaction()` explicite) continue de réutiliser la même
+transaction — atomicité intacte. Zéro changement à `app.js`.
+
+### Suite v1438 : 7 assertions (`tests/v1438-activeTx-course.test.js`)
+Reproduit les deux messages d'erreur exacts du rapport d'incident (transaction étrangère /
+transaction déjà finie) ; le symptôme applicatif précis (`recipes.toArray()` + repli `'#'+id`) ;
+non-régression sur une transaction explicite multi-tables légitime. Preuve par réintroduction :
+4 rouges contre le fichier non corrigé, sur ces mêmes cas.
+
+**Angle mort déclaré** : le fix isole chaque opération contre une transaction morte/étrangère, mais
+si deux `db.transaction()` explicites multi-tables tournent **vraiment** en concurrence,
+l'atomicité de l'une pourrait se fractionner silencieusement en plusieurs petites transactions
+séparées. Une vraie file d'attente de transactions serait le remède complet — hors périmètre de ce
+correctif.
+
+**Note d'outillage** : `tests/_faux-idb.js`/`_memidb.js` (le double IndexedDB officiel du projet)
+n'étaient pas disponibles au moment d'écrire ce test ; `tests/_fakeidb.js` + `_loadDexie.js` en sont
+un substitut minimal, à réconcilier avec le vrai harnais si Ben le retrouve.
+
+---
+
+## 2026-08-03 — LE BOUTON « ＋ LANCER UNE TÂCHE » N'OUVRAIT RIEN  (v1438 → **v1439**)
+
+**Signalé par Ben**, capture du journal d'incident (écran Santé de l'app) à l'appui : clic sur le
+bouton marron « ＋ Lancer une tâche » dans l'atelier complet → message d'erreur. Le journal montrait
+« GLOBAL onerror @app.js:61626 — Can't find variable: prodTaskPicker », écran atelier.
+
+### La cause
+`prodBoardLaunch()`, le gestionnaire de ce bouton, appelait `prodTaskPicker()` — une fonction qui
+n'existe **nulle part** dans `app.js`. Un commentaire, deux mille lignes plus haut, affirmait
+qu'elle était « réutilisée » par le panneau chrono flottant : cette documentation **fausse** est
+précisément ce qui a laissé le trou invisible à la relecture — personne ne cherche une fonction que
+le code affirme déjà exister.
+
+Le vrai sélecteur de tâche, depuis le passage à la « couche flottante » (v1364 : « sans ouvrir de
+modale »), s'ouvre en posant `_atPicker = true` puis en redessinant le panneau — mécanisme déjà
+utilisé et fonctionnel ailleurs, via `atTogglePicker()`, pour le bouton jumeau du panneau flottant.
+`prodBoardLaunch()` n'avait simplement jamais été migré vers ce mécanisme.
+
+### Le fix
+`prodBoardLaunch()` ouvre désormais le même mécanisme réel (`_atPicker = true` + `prodRenderBoard()`
+plutôt que de basculer, puisque ce bouton doit toujours OUVRIR, jamais refermer sous le clic). Le
+commentaire fautif corrigé pour ne plus citer une fonction absente.
+
+### Suite v1439 : 7 assertions (`tests/v1439-prodboard-launch.test.js`)
+Garde statique anti-réintroduction (aucune définition `prodTaskPicker` nulle part dans `app.js`) ;
+le corps réel de `prodBoardLaunch` ne la référence plus et pose bien `_atPicker`/appelle bien
+`prodRenderBoard` ; comportement vérifié en isolation (le drapeau passe à `true`, le rendu est
+appelé exactement une fois) ; preuve par réintroduction (l'ancien appel reproduit lève le
+`ReferenceError` exact vu par Ben).
+
+
