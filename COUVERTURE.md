@@ -4022,3 +4022,146 @@ réintroduction — sans l'expansion, seulement 2 lots, Chocolat passion jamais 
 **Sensibilité vérifiée par mutation réelle de `app.js`** : revenir à l'ancien calcul 1-lot-par-def
 dans la branche duo fait échouer 7 assertions de la section B, exactement celles qui portent sur
 la division de Chocolat passion.
+
+---
+
+## 2026-08-03 — POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION  (v1449 → **v1450**)
+
+**Demandé par Ben** :
+> « Je veux qu'à chaque fois que c'est possible, devant chaque transaction ça indique le
+> pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique
+> sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le
+> pourcentage que ça représente sur la totalité du calcul. Et je veux que chaque ligne indique le
+> nom du client de manière systématique et non pas un montant avec un numéro qui ne donne aucune
+> information utile sur la provenance de la transaction. »
+
+### Portée retenue
+Les 3 écrans de détail CA/encaissement existants : détail du mois (`caMonthDetail`), détail d'une
+période glissante jour/semaine/année (`caPeriodeDetail`, v1444), détail d'une catégorie du bilan
+URSSAF (`comptaCategorieDetail`, v1412/v1419) — exactement le chemin décrit par l'exemple de Ben,
+et les seuls écrans de l'app où une liste de transactions individuelles somme à un total CA
+affiché.
+
+### Le fix
+Fonction pure partagée `pctDuTotal(montant, total)`, branchée sous le montant de chaque ligne des
+3 écrans — un seul calcul, pas un par écran. Une ligne **négative** (reprise, avoir) affiche un
+pourcentage **négatif** : elle réduit le total, ce n'est pas la même chose que d'y contribuer, et
+afficher sa valeur absolue aurait menti sur le sens. Une contribution sous 1 % affiche « < 1 % »
+plutôt qu'un « 0 % » qui laisserait croire qu'elle est nulle. Respecte le mode confidentialité
+comme `euro()` : un pourcentage exact à côté d'un montant masqué resterait un indice exploitable.
+
+### Le second point : déjà en place
+Audit des 3 écrans avant de toucher quoi que ce soit : les trois affichent déjà le nom du client
+en clair (`caMonthDetail` et `caPeriodeDetail` depuis leur écriture, `comptaCategorieDetail`
+depuis le fix v1419 qui avait déjà mis le nom en avant devant le numéro de commande). Vérifié par
+garde statique plutôt que re-modifié sans raison de le faire.
+
+### Suite v1450 : 19 assertions (`tests/v1450-pourcentage-ca.test.js`)
+`pctDuTotal` en isolation : contribution normale, ligne totale, ligne négative (signée, pas
+absolue), petite contribution « < 1 % », total nul sans division par zéro, arrondi, mode
+confidentialité (A) ; **réconciliation** — la somme des pourcentages arrondis d'une répartition
+complète retombe sur 100 % aux arrondis près (B) ; câblage réel sur les 3 écrans (C) ; garde
+statique sur le nom du client, déjà en place (D) ; rendu HTML réel vérifié sur un jeu de données
+connu (75 %/25 %) (E). Sensibilité confirmée par mutation réelle de `app.js`.
+
+---
+
+## 2026-08-03 — POURCENTAGE DE CA, SUITE : 3 ÉCRANS DE PLUS  (v1450 → **v1451**)
+
+**Continuation directe de v1450.** Ben avait demandé le pourcentage « à chaque fois que c'est
+possible » ; la livraison précédente s'était volontairement limitée aux 3 écrans correspondant à
+son exemple littéral (CA du mois). Recherche systématique de tous les autres écrans où une liste
+de transactions individuelles somme à un total CA affiché à l'écran.
+
+### Trois écrans de plus, corrigés
+- **`comptaFluxDetail`** (« CA facturé » / « CA encaissé » par période) : deux sous-totaux
+  distincts déjà affichés séparément — le total officiel, et les reprises d'historique
+  (« hors URSSAF »). Une reprise reçoit un pourcentage de **son propre** sous-total, jamais du
+  total officiel : les mélanger aurait fait mentir l'un des deux pourcentages, exactement le genre
+  d'erreur silencieuse que ce type de correctif doit éviter d'introduire.
+- **`renderAvoirs`** (journal des remboursements émis) : le total était déjà affiché en tête
+  d'écran (« X avoir(s) émis · total Y »), il ne restait qu'à brancher le pourcentage par ligne.
+- **`renderPanierMoyen`** (détail des commandes derrière le panier moyen ventilé) : l'écran affiche
+  déjà un « Total sur la sélection » à côté du panier moyen — le pourcentage s'y raccroche
+  naturellement, même si le chiffre principal mis en avant est une moyenne, pas une somme.
+
+### Volontairement écartés
+- Les **cartes de règlement par commande** (reste à encaisser) : chaque carte détaille UNE
+  commande, sans total de groupe affiché au-dessus — rien dont calculer un pourcentage.
+- Les **listes d'anomalies de cohérence du CA** : le montant y est un écart constaté, pas une
+  contribution à un total — lui donner un pourcentage aurait été un chiffre sans signification.
+
+### Suite v1451 : 9 assertions (`tests/v1451-pourcentage-ca-suite.test.js`)
+Câblage réel des 3 écrans (A) ; preuve que les deux sous-totaux de `comptaFluxDetail` restent
+séparés dans les pourcentages — une reprise rapportée par erreur au total officiel donnerait un
+chiffre différent (B) ; rendu HTML réel du journal des avoirs vérifié sur un jeu de données connu
+(75 %/25 %) (C). Sensibilité confirmée par mutation réelle de `app.js` (mélanger les deux
+sous-totaux de `comptaFluxDetail` fait échouer l'assertion dédiée).
+
+---
+
+## 2026-08-03 — SACHET (1 À 3 MACARONS) ET COFFRET DE 10 À 22 €  (v1451 → **v1452**)
+
+**Demandé par Ben** :
+> « Rajouter offre dans commande permettant de vendre : un coffret de 10 macarons à 22€.
+> L'emballage par défaut est la boîte blanche de 8/10 macarons. Assure toi de rendre les autres
+> emballages selectionnables aussi telle que c'est déjà le cas aujourd'hui. — un sachet pouvant
+> contenir de 1 à 3 macarons. Prix : 2,5€ par macaron. De manière générale introduire ce nouvel
+> emballage dans tous les écrans de commande, y compris vrac. »
+
+### Ce que « introduire dans tous les écrans » veut dire techniquement
+Un **type de ligne de commande** est lu par environ **137 endroits** de l'app : planification de
+production, calculs de prix, factures et devis, exports, analytics client, mix produit, marges,
+comptabilité. Et un type inconnu **ne plante pas** — il est ignoré en silence, ou pire, tombe dans
+un `else` prévu pour autre chose. C'est le vrai risque de ce chantier, pas la difficulté du code :
+un sachet oublié dans `lineTotalStored` vaudrait **0 €** sur la facture ; oublié dans le mix
+produit, il serait rangé parmi les **dons** (offerts). Chaque point de branchement a donc été
+traité un par un, et chacun est vérifié par une assertion dédiée.
+
+### Le sachet
+Nouveau type de ligne complet : bouton « + Sachet », grille de parfums avec le **même compteur de
+remplissage** que le coffret (vert quand c'est pile, rouge si ça dépasse — langage visuel déjà
+connu de Ben, plutôt qu'un second inventé pour la même idée), macarons « sans parfum déterminé »
+supportés (ils partent à la détermination en production comme ceux d'un coffret), remise de ligne,
+validation à l'enregistrement (au moins 1 macaron, jamais plus de 3).
+
+Branché dans : enregistrement (`cmdLinesToStored`) et réouverture (`_lineToEdit`) — sans ces deux-là
+la ligne **disparaîtrait à la sauvegarde** ou reviendrait avec des parfums au mauvais format ; prix
+en saisie **et** prix stocké ; besoins en macarons par parfum et comptage total (production) ;
+liaison aux lots ; coût matières et marge (`computeOrderMargins`, en marchandise, sans coût
+d'emballage propre — comme le vrac) ; libellés de facture texte et HTML ; export de commande ;
+analytics client ; comptage mensuel des pièces ; et **sa propre catégorie** dans le mix produit.
+
+Au passage : le **vrac** manquait dans le comptage mensuel des pièces (`coutByMonth`) — omission
+préexistante trouvée en ajoutant le sachet à la même liste, corrigée du même coup.
+
+### Le coffret de 10
+Ajouté au catalogue à 22 €. **Migration idempotente distincte du seed initial** : `seedProducts()`
+ne s'exécute que sur un catalogue **vide** (`if(n>0) return`) — la base existante de Ben ne l'aurait
+donc jamais reçu. `seedCoffret10()` crée aussi la boîte blanche 8/10 si elle manque, et ne réécrit
+jamais un coffret 10 déjà présent (Ben a pu en régler le prix lui-même).
+
+Choisir la taille 10 pré-sélectionne cette boîte : c'est un **défaut, pas un verrou** — le mode
+« autre emballage » est activé avec la boîte blanche pointée, et les trois modes (standard /
+réutilisable / autre) ainsi que toute la liste restent sélectionnables exactement comme avant,
+ce que Ben demandait explicitement.
+
+`BOX_FLAVOR_LIMIT[10]` a dû être ajouté : sans cette entrée, le format serait retombé sur `||0`,
+soit **zéro parfum sélectionnable** — la grille aurait été bloquée.
+
+### Suite v1452 : 42 assertions (`tests/v1452-sachet-coffret10.test.js`)
+Constantes conformes aux chiffres demandés (A) ; **réconciliation** entre le prix du modèle
+d'édition et celui du modèle stocké — deux chemins de code distincts qui, s'ils divergeaient,
+feraient facturer autre chose que ce qui s'affiche à la saisie (B) ; **aller-retour**
+enregistrement → réouverture sans perte (C) ; câblage vérifié sur les 14 points de dispatch, un par
+un (D) ; le sachet n'est pas confondu avec un don (E) ; migration idempotente et respectueuse d'un
+réglage existant (F) ; emballage par défaut sans verrouillage des autres choix (G).
+
+**Sensibilité vérifiée par mutation réelle de `app.js`** : retirer le sachet de `lineTotalStored`
+(le « type oublié » classique) fait échouer 8 assertions, dont la garde explicite « un sachet non
+vide ne vaut jamais 0 € ».
+
+**Limite d'outillage** : `drawCoffretLine` contient des templates imbriqués que `tests/_extract.js`
+tronque (limite connue, cf. v1446/v1449). L'assertion qui vérifie que les 3 modes d'emballage
+restent proposés lit donc le **texte brut** de la fonction plutôt que son extraction. Le code
+applicatif est correct ; c'est l'outil de lecture qui ne sait pas parser cette forme.

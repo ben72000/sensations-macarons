@@ -158,7 +158,10 @@ const SUITES = [
   'v1445-bicolore-divise.test.js',            // v1445 · un parfum bicolore peut être divisé en 2 lots réels séparés (comme une meringue mutualisée) — couleur explicite prioritaire sur la recette dans les 3 moteurs de couleur, réconciliation dissymétrique contre la double-division
   'v1445b-checkbox-reset.test.js',            // v1445b · la case « diviser en 2 lots » se décochait toute seule dès qu'on touchait la quantité (prodUpdateCoqueHint reconstruisait l'input sans mémoriser son état)
   'v1448-lot-duo-preview.test.js',            // v1448 · le champ « N° lot de production » était masqué en duo/bicolore-divisé (jamais lu par la sauvegarde réelle, affichait un code d'une autre recette) et remplacé par un aperçu réconcilié avec la vraie formule de lot
-  'v1449-bicolore-duo.test.js'                 // v1449 · un parfum bicolore combiné à d'autres (mode duo/trio) se divise aussi par couleur — moteur partagé _sousLotsCoques, case à cocher supprimée, reproduction exacte du scénario chiffré de Ben (Pistache 120 + Chocolat passion 60/60)
+  'v1449-bicolore-duo.test.js',                 // v1449 · un parfum bicolore combiné à d'autres (mode duo/trio) se divise aussi par couleur — moteur partagé _sousLotsCoques, case à cocher supprimée, reproduction exacte du scénario chiffré de Ben (Pistache 120 + Chocolat passion 60/60)
+  'v1450-pourcentage-ca.test.js',                // v1450 · pourcentage de CA affiché sous chaque ligne des 3 écrans de détail encaissement (mois, période glissante, catégorie URSSAF) — moteur partagé pctDuTotal, réconciliation à 100%
+  'v1451-pourcentage-ca-suite.test.js',         // v1451 · pourcentage de CA étendu à 3 écrans de plus (CA facturé/encaissé par période, journal des avoirs, panier moyen ventilé) — reprises et total officiel gardés séparés
+  'v1452-sachet-coffret10.test.js'              // v1452 · sachet (1–3 macarons, 2,50 €/mac.) + coffret de 10 à 22 € : branchement du nouveau type de ligne dans les ~14 points de dispatch, réconciliation prix saisie/stocké, garde « jamais 0 € »
 ];
 
 let allOk = true;

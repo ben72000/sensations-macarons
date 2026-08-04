@@ -5,8 +5,10 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1449'; // suite : voir tests/v1449-bicolore-duo.test.js
-const APP_MAJ = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
+const APP_VERSION = 'v1452'; // suite : voir tests/v1452-sachet-coffret10.test.js
+const APP_MAJ = 'SACHET (1 À 3 MACARONS) ET COFFRET DE 10 À 22 \u20ac. Ben : « Rajouter offre dans commande permettant de vendre : un coffret de 10 macarons à 22\u20ac. L\u2019emballage par défaut est la boîte blanche de 8/10 macarons. Assure toi de rendre les autres emballages selectionnables aussi telle que c\u2019est déjà le cas aujourd\u2019hui. — un sachet pouvant contenir de 1 à 3 macarons. Prix : 2,5\u20ac par macaron. De manière générale introduire ce nouvel emballage dans tous les écrans de commande, y compris vrac. » LE SACHET est un nouveau type de ligne de commande complet : bouton « + Sachet », grille de parfums avec compteur de remplissage (comme le coffret), macarons « sans parfum déterminé » supportés, remise de ligne, validation (au moins 1, jamais plus de 3). UN TYPE DE LIGNE EST LU PAR ~137 ENDROITS de l\u2019app (production, prix, factures, exports, analytics) et un type inconnu n\u2019y plante pas : il est ignoré en silence, ou tombe dans un repli prévu pour autre chose. Le sachet a donc été branché un par un : enregistrement et réouverture (sans quoi la ligne disparaîtrait à la sauvegarde), prix en saisie ET prix stocké (sans quoi une commande enregistrée vaudrait 0\u20ac), besoins en macarons et comptage pour la production, coût matières et marge, libellés de facture et de devis, export, analytics client, et sa propre catégorie dans le mix produit (sinon il aurait été compté parmi les DONS, à 0\u20ac). LE COFFRET DE 10 : ajouté au catalogue à 22\u20ac par une migration idempotente distincte du seed initial (celui-ci ne s\u2019exécute que sur un catalogue vide — une base existante ne l\u2019aurait jamais reçu), avec création de la boîte blanche 8/10 si absente. Choisir la taille 10 pré-sélectionne cette boîte : c\u2019est un DÉFAUT, pas un verrou — les trois modes d\u2019emballage et toute la liste restent sélectionnables comme avant. Suite v1452 : 42 assertions, dont une réconciliation prix saisie/prix enregistré, un aller-retour enregistrement→réouverture, et une garde « un sachet ne vaut jamais 0\u20ac » — sensibilité vérifiée par mutation réelle de app.js (8 assertions rouges).';
+const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
+const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
 const _APP_MAJ_v1448_ARCHIVE_INUTILISEE = 'LE CHAMP « N° LOT DE PRODUCTION » MENTAIT EN MODE DUO. Ben, capture à l\u2019appui : lançant Chocolat passion + Pistache en meringue commune, le champ affichait « 030826RAF » — ni CHP ni PIS, mais RAF (Coco Rafaello, une tout autre recette). CAUSE : la branche duo de saveProd() ne lit JAMAIS ce champ — chaque parfum reçoit son propre lot, calculé indépendamment. Sa valeur affichée venait de prodRefreshLot(), qui lit TOUJOURS la recette unique (f_rec) — or f_rec reste dans la page (juste masquée) en duo, avec la valeur de la DERNIÈRE recette affichée avant le passage en duo. Un champ qui ment ET n\u2019a aucun effet réel est pire qu\u2019un champ absent. Même défaut, plus discret, sur la case « diviser en 2 lots » (v1445/v1446) : cochée, ce champ n\u2019est pas plus lu par le lancement réel. FIX : le champ est désormais masqué dans ces deux cas ; à la place, les VRAIS numéros de lot qui seront utilisés sont prévisualisés — en mode duo dans le récapitulatif de répartition, et pour la division bicolore dans son propre encart — calculés avec EXACTEMENT la même formule que la sauvegarde réelle, jamais un second calcul qui pourrait diverger. Suite v1448 : 12 assertions (tests/v1448-lot-duo-preview.test.js), dont une réconciliation qui rejoue la vraie formule de sauvegarde et vérifie que l\u2019aperçu affiche bien 030826CHP-CO et 030826PIS-CO — jamais RAF.';
 const _APP_MAJ_v1447_ARCHIVE_INUTILISEE = 'CODES COULEUR DES LOTS : EXPLICITES, PLUS ALGORITHMIQUES. Ben : « je veux que le code pour la coque blanche dise BLA et pas BAN ». Le code court utilisé dans les numéros de lot (ex. 030826PRAMAR-CO) était calculé automatiquement à partir du libellé de la couleur, avec un filtre qui retire les lettres I/L/O — pour « Blanc », ça retire le L et donne « BAN ». En creusant plus loin que la seule demande de Ben : ce calcul automatique faisait aussi atterrir les 4 marrons de la palette sur le même code « MAR », les 2 rouges sur « RUG », les 2 verts sur « VER » et les 2 jaunes sur « JAU » — deux couleurs différentes, un même code de lot, silencieusement indiscernables. FIX : une table explicite (même principe que FLAVOR_CODES pour les parfums) donne à chacune des 14 couleurs un code lisible et unique — blanc → BLA comme demandé, plus aucune collision entre les 14. Une couleur future non cataloguée retombe sur l\u2019ancien calcul automatique. Suite v1445 amendée (section A) : code du blanc vérifié, absence de collision vérifiée sur les 14 couleurs, repli pour couleur inconnue — sensibilité confirmée par réintroduction réelle de l\u2019ancien calcul.';
 const _APP_MAJ_v1446_ARCHIVE_INUTILISEE = 'LA CASE « DIVISER EN 2 LOTS » SE DÉCOCHAIT TOUTE SEULE. Ben, captures à l\u2019appui : une fiche « Chocolat passion » montrant un seul lot (« 030826CHP-CO », sans suffixe de couleur) avec le simple rappel v1441, alors qu\u2019il pensait avoir demandé la division en 2 lots. CAUSE : `prodUpdateCoqueHint()` reconstruit ENTIÈREMENT la case à cocher à chaque appel — y compris depuis le champ Quantité, qui appelle cette fonction à chaque frappe depuis la v1441. Le nouvel `<input>` ne portait jamais l\u2019état précédent : cocher la case puis toucher la quantité (l\u2019ordre naturel d\u2019usage — la quantité est pré-remplie par défaut, on la corrige souvent après avoir repéré le rappel bicolore) redessinait une case DÉCOCHÉE en silence, sans aucun message d\u2019erreur. Lancer la production retombait alors sur l\u2019ancien chemin à un seul lot. FIX : l\u2019état de la case est lu AVANT d\u2019être détruite et reporté sur la nouvelle. Suite v1445 amendée : 3 assertions (tests/v1445b-checkbox-reset.test.js), dont la preuve par réintroduction du symptôme exact de Ben.';
@@ -4265,7 +4267,7 @@ async function seedAllergenes(){
     }
   }catch(e){ /* silencieux : ne bloque jamais le démarrage */ }
 }
-const BOX_PRICES = { 6: 12, 8: 16, 16: 28, 25: 42 }; // prix de base par taille
+const BOX_PRICES = { 6: 12, 8: 16, 10: 22, 16: 28, 25: 42 }; // prix de base par taille
 // Prix au macaron selon le mode du vrac : 'pro' = tarif pro standard ; 'nonpro' = tarif coffret
 // particulier au macaron (BOX_PRICES[6]/6, soit 2,00 €). Centralisé pour rester cohérent partout.
 function vracPrixMacaron(ln){
@@ -4275,7 +4277,10 @@ function vracPrixMacaron(ln){
   }
   return +s.prixMacaronProStd||0;
 }
-const BOX_FLAVOR_LIMIT = { 6: 3, 8: 4, 16: 4, 25: 5 }; // parfums DIFFÉRENTS inclus
+// [v1452] BOX_FLAVOR_LIMIT[10] : sans cette entrée, un coffret de 10 tomberait sur ||0 → 0 parfum
+// sélectionnable, la grille de parfums resterait bloquée. Valeur alignée sur ses voisins (8→4,
+// 16→4) : ni plus stricte que le format juste en dessous, ni plus permissive que celui au-dessus.
+const BOX_FLAVOR_LIMIT = { 6: 3, 8: 4, 10: 4, 16: 4, 25: 5 }; // parfums DIFFÉRENTS inclus
 const FLAVOR_SURCHARGE = 3;     // € par parfum différent supplémentaire
 const ORDER_STATUS = ['À préparer', 'Terminée', 'Livrée'];
 // Motifs de perte / casse sur stock fini (déclaration explicite)
@@ -4690,6 +4695,12 @@ const EVENT_MIN_EQUIP = 1;      // au moins 1 pyramide obligatoire
 const PYRA_PRICE = 1.60;        // prix au macaron en mode événement-pyramide
 // Prix unitaire du macaron en événement : 1,60€ si pyramide présente, sinon tarif événement standard.
 function eventUnitPrice(ln){ return ((+(ln&&ln.equip)||0)>0) ? PYRA_PRICE : EVENT_PRICE; }
+// [v1452] SACHET — Ben : « un sachet pouvant contenir de 1 à 3 macarons. Prix : 2,5€ par
+// macaron. » Type de ligne simple (pas d'emballage à capacité, comme le vrac) : on ne fait QUE
+// vendre 1 à 3 macarons au détail. SACHET_MAX borne à la fois la saisie et la validation avant
+// enregistrement — jamais un sachet à 0 ou à 4+ macarons.
+const SACHET_PRIX_MACARON = 2.5;  // € par macaron
+const SACHET_MAX = 3;             // capacité maximale d'un sachet (macarons)
 // [v1079] PYRAMIDE : location (service) OU vente (marchandise cédée), au choix par ligne.
 //  - location (défaut) : EQUIP_PRICE par pyramide, compté en SERVICE (prestation).
 //  - vente : prix de vente libre (pyraPrixVente), compté en MARCHANDISE, avec coût d'achat (pyraCoutAchat).
@@ -5418,6 +5429,24 @@ const euroPrec = n => {
   else if(v!==0 && Math.abs(v) < 1) dec = 3;
   return v.toLocaleString('fr-FR', {minimumFractionDigits:dec, maximumFractionDigits:dec}) + ' €';
 };
+// [v1450] POURCENTAGE QU'UNE LIGNE REPRÉSENTE SUR LE TOTAL AFFICHÉ À L'ÉCRAN. Ben : « devant
+// chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul
+// réalisé […] quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé,
+// chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » PURE,
+// réutilisée par toutes les vues de détail CA (mois, période glissante, catégorie URSSAF) — un
+// seul calcul, pas un par écran.
+// Signé : une ligne NÉGATIVE (reprise, avoir) réduit le total — son pourcentage reste négatif,
+// pas sa valeur absolue, qui laisserait croire qu'elle y contribue positivement.
+// Respecte le mode confidentialité comme euro() : un pourcentage exact à côté d'un montant masqué
+// resterait un indice exploitable (ex. « 50 % » avec le total connu révèle le montant).
+function pctDuTotal(montant, total){
+  if(privacyMasked()) return '•••';
+  if(!total) return '';
+  const p = (+montant||0) / total * 100;
+  const abs = Math.abs(p);
+  if(abs > 0 && abs < 1) return (p<0?'-':'') + '< 1 %';
+  return Math.round(p) + ' %';
+}
 // Quantité : arrondit proprement (max 3 décimales) et supprime les zéros parasites
 const qty = n => { const v = round3(n); return v.toLocaleString('fr-FR', {maximumFractionDigits:3}); };
 // AFFICHAGE UNIFORME EN GRAMMES — sans modifier les données stockées.
@@ -8009,7 +8038,7 @@ async function caPeriodeDetail(gran, cle){
   const rows = lignes.length ? lignes.map(l=>`
     <div class="sum-box" style="${l.oid?'cursor:pointer':''}" ${l.oid?`onclick="closeModal();setTimeout(()=>cmdView(${l.oid}),0)"`:''}>
       <span><span style="color:#9a8a82">${fmtDate(l.date)}</span> · <b>${esc(l.nom)}</b>${l.type==='mk'?' <span style="color:#2e6b3f;font-size:.72rem">· marché</span>':''}${l.moyen?` <span style="color:#9a8a82;font-size:.76rem">${esc(l.moyen)}</span>`:''}</span>
-      <b>${euro(l.montant)}</b></div>`).join('')
+      <span style="display:flex;flex-direction:column;align-items:flex-end;line-height:1.3"><b>${euro(l.montant)}</b><span style="font-size:.68rem;color:#9a8a82">${pctDuTotal(l.montant, total)}</span></span></div>`).join('')
     : '<p class="note">Aucun encaissement sur cette période.</p>';
   openModal(`<h3>💶 Encaissements — ${esc(_caLabelLongGran(cle, gran))}</h3>
     <p class="note">Du ${fmtDate(b.debut)} au ${fmtDate(b.fin)}. Touche une ligne pour ouvrir la commande.</p>
@@ -8084,7 +8113,7 @@ async function comptaCategorieDetail(ym, categorie){
     const ref = (l.oid!=null && l.client) ? ` <span style="color:#9a8a82;font-weight:400">· #${l.oid}</span>` : '';
     return `<div class="sum-box" style="${l.oid?'cursor:pointer':''}" ${l.oid?`onclick="comptaOuvrirCommande(${l.oid},'${esc(ym)}','${esc(categorie)}')"`:''}>
        <span>${l.date?`<span style="color:#9a8a82">${fmtDate(l.date)}</span> · `:''}<b>${nom}</b>${ref}</span>
-       <b style="color:${l.montant<0?'#b3261e':'inherit'}">${euro(l.montant)}</b></div>`;
+       <span style="display:flex;flex-direction:column;align-items:flex-end;line-height:1.3"><b style="color:${l.montant<0?'#b3261e':'inherit'}">${euro(l.montant)}</b><span style="font-size:.68rem;color:#9a8a82">${pctDuTotal(l.montant, total)}</span></span></div>`;
   }).join('')
     : '<p class="note">Aucune ligne dans cette catégorie ce mois-ci.</p>';
   openModal(`${retourBoutonHtml()}<h3>${titre} — ${esc(monthLabel(ym))}</h3>
@@ -8123,10 +8152,10 @@ async function caMonthDetail(mk){
   const rowsCmd = lignes.length ? lignes.map(l=>
     `<div class="sum-box" style="cursor:pointer" onclick="closeModal();cmdView(${l.oid})">
        <span>${fmtDate(l.date)} · ${esc(l.nom)}${l.moyen?` <span style="color:#9a8a82;font-size:.74rem">· ${esc(l.moyen)}</span>`:''}</span>
-       <b>${euro(l.montant)}</b></div>`).join('')
+       <span style="display:flex;flex-direction:column;align-items:flex-end;line-height:1.3"><b>${euro(l.montant)}</b><span style="font-size:.68rem;color:#9a8a82">${pctDuTotal(l.montant, total)}</span></span></div>`).join('')
     : '<p class="note">Aucun encaissement de commande ce mois.</p>';
   const rowsMk = mkLignes.length ? `<h3 style="font-size:1rem;margin:14px 0 8px">Marchés</h3>`+mkLignes.map(l=>
-    `<div class="sum-box"><span>${fmtDate(l.date)} · ${esc(l.nom)}</span><b>${euro(l.montant)}</b></div>`).join('') : '';
+    `<div class="sum-box"><span>${fmtDate(l.date)} · ${esc(l.nom)}</span><span style="display:flex;flex-direction:column;align-items:flex-end;line-height:1.3"><b>${euro(l.montant)}</b><span style="font-size:.68rem;color:#9a8a82">${pctDuTotal(l.montant, total)}</span></span></div>`).join('') : '';
   openModal(`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px">
       <button class="btn ghost sm" onclick="caMonthDetail('${_mkPrev}')" title="Mois précédent">‹</button>
       <h3 style="margin:0;text-align:center;flex:1">Détail du CA — ${esc((typeof monthLabel==='function') ? monthLabel(mk) : mk)}</h3>
@@ -13285,7 +13314,7 @@ function gfBase(k){ return isGFKey(k) ? k.slice(0, -GF_MARK.length) : k; }
 function orderFlavorNeeds(o){
   const needs={};
   orderToLines(o).forEach(ln=>{
-    if(ln.type==='coffret'||ln.type==='evenement'||ln.type==='don'||ln.type==='vrac'){
+    if(ln.type==='coffret'||ln.type==='evenement'||ln.type==='don'||ln.type==='vrac'||ln.type==='sachet'){
       (ln.parfums||[]).forEach(p=>{ if(+p.qte>0) needs[p.nom]=(needs[p.nom]||0)+(+p.qte||0); });
     }
     // Grands formats : recette DISTINCTE, stock séparé → clé marquée GF, jamais mélangée
@@ -13297,14 +13326,14 @@ function orderFlavorNeeds(o){
   return needs;
 }
 // Nombre TOTAL de macarons d'une commande, indépendamment du détail des parfums
-// (coffret → taille, événement → evQte, vrac/don → parfums+sansParfum, grand → items).
+// (coffret → taille, événement → evQte, vrac/don/sachet → parfums+sansParfum, grand → items).
 // Sert de filet pour lier/scanner les commandes « saveurs à définir » (sans parfum détaillé).
 function orderTotalMacarons(o){
   let n=0;
   orderToLines(o).forEach(ln=>{
     if(ln.type==='coffret') n += +ln.taille||0;
     else if(ln.type==='evenement') n += +ln.evQte||0;
-    else if(ln.type==='vrac') n += (ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0) + (+ln.sansParfum||0);
+    else if(ln.type==='vrac'||ln.type==='sachet') n += (ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0) + (+ln.sansParfum||0);
     else if(ln.type==='don'){ n += (ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0) + (ln.items||[]).reduce((s,p)=>s+(+p.qte||0),0); }
     else if(ln.type==='grand') n += (ln.items||[]).reduce((s,p)=>s+(+p.qte||0),0);
   });
@@ -19914,11 +19943,10 @@ async function ensureOrderDecremented(orderId){
   orderToLines(o).forEach(ln=>{
     if(ln.type==='coffret') totMac += +ln.taille||0;
     else if(ln.type==='evenement') totMac += +ln.evQte||0;
-    else if(ln.type==='vrac') totMac += (ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0) + (+ln.sansParfum||0);
+    else if(ln.type==='vrac'||ln.type==='sachet') totMac += (ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0) + (+ln.sansParfum||0);
     else if(ln.type==='don'){ totMac += (ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0) + (ln.items||[]).reduce((s,p)=>s+(+p.qte||0),0); }
     else if(ln.type==='grand') totMac += (ln.items||[]).reduce((s,p)=>s+(+p.qte||0),0);
   });
-  // Aucune pièce de macaron (ex. prestation seule, livraison seule) → rien à tracer.
   if(round3(totMac) <= 0) return true;
 
   // Besoins par parfum (clé GF marquée pour les grands formats : stock séparé).
@@ -20320,6 +20348,7 @@ async function renderCmd(){
     if(ln.type==='evenement') return `Événement ${ln.evQte||0} mac. +${ln.equip||0} pyr.`;
     if(ln.type==='grand'){ const n=(ln.items||[]).reduce((s,b)=>s+(+b.qte||0),0); return `Grand format ×${n}`; }
     if(ln.type==='vrac'){ const n=(ln.parfums||[]).reduce((s,b)=>s+(+b.qte||0),0); return `Vrac ${ln.proMode==='nonpro'?'':'pro '}×${n}`; }
+    if(ln.type==='sachet'){ const n=(ln.parfums||[]).reduce((s,b)=>s+(+b.qte||0),0)+(+ln.sansParfum||0); return `Sachet ×${n}`; }
     if(ln.type==='don'){ const n=(ln.parfums||[]).reduce((s,b)=>s+(+b.qte||0),0)+(ln.items||[]).reduce((s,b)=>s+(+b.qte||0),0); return `Don ×${n} (offert)`; }
     if(ln.type==='prestation'){
       if(ln.presta==='accompagnement'){ const m=ln.mode==='enligne'?'en ligne':(ln.mode==='presentiel'?'présentiel':''); return `Accompagnement${ln.dureeH?' '+ln.dureeH+'h':''}${m?' ('+m+')':''}`; }
@@ -21068,6 +21097,13 @@ async function cmdView(id){
         ${parfums.length?`<div style="margin-top:6px">${parfums.map(p=>`<span class="pill">${esc(p.nom)} × ${p.qte}</span>`).join('')}</div>`:'<p class="note">Aucun.</p>'}
         <div class="sum-box" style="margin-top:8px"><span>Sous-total</span><b>${euro(lineTotalStored(ln))}</b></div></div>`;
     }
+    if(ln.type==='sachet'){
+      const parfums=(ln.parfums||[]).filter(p=>p.qte>0);
+      const n=parfums.reduce((s,p)=>s+(+p.qte||0),0)+(+ln.sansParfum||0);
+      return `<div class="cmd-line"><div class="line-type">Sachet <span class="line-sub">${n} macaron${n>1?'s':''} · ${euro(SACHET_PRIX_MACARON)}/macaron</span></div>
+        ${parfums.length?`<div style="margin-top:6px">${parfums.map(p=>`<span class="pill">${esc(p.nom)} × ${p.qte}</span>`).join('')}</div>`:'<p class="note">Parfums non détaillés.</p>'}
+        <div class="sum-box" style="margin-top:8px"><span>Sous-total</span><b>${euro(lineTotalStored(ln))}</b></div></div>`;
+    }
     if(ln.type==='don'){
       const parfums=(ln.parfums||[]).filter(p=>p.qte>0);
       const items=(ln.items||[]).filter(p=>p.qte>0);
@@ -21259,6 +21295,7 @@ function lineTotalStored(ln){
   else if(ln.type==='evenement') base = money2((ln.evQte||0)*eventUnitPrice(ln) + pyraTotalLigne(ln) + accessoireDecoTotal(ln));
   else if(ln.type==='grand'){ const pu=bigPrice(ln.tarif); const tot=(ln.items||[]).reduce((s,p)=>s+(+p.qte||0),0); base = money2(tot*pu); }
   else if(ln.type==='vrac'){ const pu=vracPrixMacaron(ln); const tot=(ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0) + (+ln.sansParfum||0); base = money2(tot*pu); }
+  else if(ln.type==='sachet'){ const tot=(ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0) + (+ln.sansParfum||0); base = money2(tot*SACHET_PRIX_MACARON); }
   else if(ln.type==='don') return 0; // toujours gratuit, pas de remise à appliquer
   else if(ln.type==='prestation'){
     base=money2(+ln.montantHT||0);
@@ -21337,6 +21374,7 @@ function _lineToEdit(ln){
   if(t==='evenement') return {type:'evenement', evQte:ln.evQte||EVENT_MIN, equip:(ln.equip!=null?ln.equip:EVENT_MIN_EQUIP), evFiltrePyr:(ln.evFiltrePyr!=null?ln.evFiltrePyr:null), parfums:_parfumsToObj(ln.parfums), sansParfum:(+ln.sansParfum||0), spMode:ln.spMode||'assortiment', spNbParfums:(+ln.spNbParfums||0), remisePct:+ln.remisePct||0, pyraVendue:!!ln.pyraVendue, pyraPrixVente:(ln.pyraPrixVente!=null?+ln.pyraPrixVente:null), pyraCoutAchat:(ln.pyraCoutAchat!=null?+ln.pyraCoutAchat:null), accessoireDeco:!!ln.accessoireDeco, _configChoisie:!!ln._configChoisie};
   if(t==='grand') return {type:'grand', tarif:ln.tarif||'particulier', items:_parfumsToObj(ln.items), remisePct:+ln.remisePct||0, embMode:ln.embMode||'reutilisable', embMatId:ln.embMatId||null};
   if(t==='vrac') return {type:'vrac', proMode:ln.proMode==='nonpro'?'nonpro':'pro', parfums:_parfumsToObj(ln.parfums), sansParfum:(+ln.sansParfum||0), spMode:ln.spMode||'assortiment', spNbParfums:(+ln.spNbParfums||0), remisePct:+ln.remisePct||0};
+  if(t==='sachet') return {type:'sachet', parfums:_parfumsToObj(ln.parfums), sansParfum:(+ln.sansParfum||0), spMode:ln.spMode||'assortiment', spNbParfums:(+ln.spNbParfums||0), remisePct:+ln.remisePct||0};
   if(t==='don') return {type:'don', parfums:_parfumsToObj(ln.parfums), items:_parfumsToObj(ln.items), donEmbMode:ln.donEmbMode||'sans', embMatId:(ln.donEmbMode==='autre'?(ln.embMatId||null):null), sacMatId:(+ln.sacMatId>0?+ln.sacMatId:null), sacNb:(+ln.sacNb>0?+ln.sacNb:0)};
   if(t==='prestation') return {type:'prestation', presta:ln.presta||'', libelle:ln.libelle||'', montantHT:+ln.montantHT||0, dureeH:+ln.dureeH||0, mode:ln.mode||'', detail:ln.detail||'', remiseType:ln.remiseType||'pct', remisePct:+ln.remisePct||0, remiseEuro:+ln.remiseEuro||0, ...(ln.isLivraison?{isLivraison:true}:{})};
   return {...ln};
@@ -21438,6 +21476,7 @@ async function cmdForm(id, opts){
    <div id="linesWrap"></div>
    <div class="add-line-row">
      <button class="btn ghost sm" onclick="addLine('coffret')">+ Coffret</button>
+     <button class="btn ghost sm" onclick="addLine('sachet')">+ Sachet</button>
      <button class="btn ghost sm" onclick="addLine('evenement')">+ Événement</button>
      <button class="btn ghost sm" onclick="addLine('grand')">+ Grand format</button>
      <button class="btn ghost sm" onclick="addLine('vrac')">+ Vrac</button>
@@ -21976,6 +22015,7 @@ function addLine(type){
   else if(type==='evenement') cmdLines.push({type:'evenement', evQte:EVENT_MIN, equip:0, evFiltrePyr:0, parfums:{}});
   else if(type==='grand') cmdLines.push({type:'grand', tarif:'particulier', items:{}});
   else if(type==='vrac') cmdLines.push({type:'vrac', parfums:{}});
+  else if(type==='sachet') cmdLines.push({type:'sachet', parfums:{}});
   else if(type==='don') cmdLines.push({type:'don', parfums:{}, items:{}});
   else if(type==='prestation') cmdLines.push({type:'prestation', libelle:'', montantHT:0, remiseType:'pct', remisePct:0, remiseEuro:0});
   drawLines();
@@ -21984,12 +22024,13 @@ function removeLine(i){ cmdLines.splice(i,1); drawLines(); }
 
 function drawLines(){
   const wrap=document.getElementById('linesWrap'); if(!wrap)return;
-  if(!cmdLines.length){ wrap.innerHTML='<p class="note">Ajoute au moins un produit ci-dessous (coffret, événement, grand format, prestation ou don).</p>'; cmdRecalc(); return; }
+  if(!cmdLines.length){ wrap.innerHTML='<p class="note">Ajoute au moins un produit ci-dessous (coffret, sachet, événement, grand format, prestation ou don).</p>'; cmdRecalc(); return; }
   wrap.innerHTML = cmdLines.map((ln,i)=>{
     if(ln.type==='coffret') return drawCoffretLine(ln,i);
     if(ln.type==='evenement') return drawEventLine(ln,i);
     if(ln.type==='grand') return drawBigLine(ln,i);
     if(ln.type==='vrac') return drawVracLine(ln,i);
+    if(ln.type==='sachet') return drawSachetLine(ln,i);
     if(ln.type==='don') return drawDonLine(ln,i);
     if(ln.type==='prestation') return drawPrestationLine(ln,i);
     return '';
@@ -22094,6 +22135,17 @@ function setSpMode(i,v){ if(!cmdLines[i]) return; cmdLines[i].spMode = (v==='ade
 function setSpNbParfums(i,v){ if(!cmdLines[i]) return; const n=Math.max(0,Math.round(+v||0)); if(n>0) cmdLines[i].spNbParfums=n; else delete cmdLines[i].spNbParfums; }
 function setCoffretTaille(i,v){ cmdLines[i].taille=+v;
   cmdLines[i].prixUnitaireApplique=null; // taille changée → re-tarifer au prix courant du catalogue
+  // [v1452] Ben : « L'emballage par défaut est la boîte blanche de 8/10 macarons. Assure toi de
+  // rendre les autres emballages selectionnables aussi telle que c'est déjà le cas aujourd'hui. »
+  // On pré-sélectionne donc « Autre emballage » + la boîte blanche pour le format 10 — un DÉFAUT,
+  // pas un verrou : les 3 modes (standard / réutilisable / autre) et toute la liste d'emballages
+  // restent disponibles exactement comme avant. Ne s'applique qu'au CHANGEMENT de taille : rouvrir
+  // une commande déjà enregistrée conserve le choix qui y avait été fait (_lineToEdit).
+  if(+v===COFFRET10_TAILLE){
+    const emb = (cmdEmballagesCache||[]).find(m =>
+      (m.nom||'').trim().toLowerCase()===COFFRET10_EMB_NOM.toLowerCase());
+    if(emb){ cmdLines[i].embMode='autre'; cmdLines[i].embMatId=+emb.id; }
+  }
   // purge les parfums au-delà de la nouvelle taille
   const max=+v; Object.keys(cmdLines[i].parfums).forEach(k=>{ if(cmdLines[i].parfums[k]>max) cmdLines[i].parfums[k]=max; }); drawLines(); }
 function setCoffretParfum(i,fi,v){ const f=FLAVORS[fi]; const q=+v||0; if(q>0)cmdLines[i].parfums[f]=q; else delete cmdLines[i].parfums[f]; drawLines(); }
@@ -22927,6 +22979,66 @@ function setVracSansParfum(i,v){ if(!cmdLines[i]) return; const q=Math.max(0,Mat
 // (qui fait apparaître le bloc assortiment/à déterminer) est déclenché au blur via onchange.
 function setVracSansParfumLive(i,v){ if(!cmdLines[i]) return; const q=Math.max(0,Math.round(+v||0)); if(q>0) cmdLines[i].sansParfum=q; else delete cmdLines[i].sansParfum; if(typeof cmdRecalc==='function') cmdRecalc(); }
 
+// [v1452] SACHET — Ben : « un sachet pouvant contenir de 1 à 3 macarons. Prix : 2,5€ par
+// macaron. » Même « compteur de remplissage » que le coffret (vert pile, rouge dépassé) : ce
+// langage visuel existe déjà dans l'app, le réutiliser ici évite d'en inventer un second pour la
+// même idée (une capacité à respecter). SACHET_MAX borne l'AFFICHAGE et la VALIDATION à la
+// sauvegarde (cmdValidateLines) — pas la saisie elle-même, comme flavorPickRow le fait déjà pour
+// le coffret (v1087 : un champ libre, pas un plafond dur, pour ne jamais bloquer la frappe).
+function drawSachetLine(ln,i){
+  if(!ln.parfums) ln.parfums={};
+  const rows = FLAVORS.map((f,fi)=>{
+    const q=ln.parfums[f]||0;
+    return flavorPickRow(f, q, `setSachetParfum(${i},${fi},VAL)`, SACHET_MAX);
+  }).join('');
+  // Même filet que le coffret (v1188) : un parfum hors catalogue FLAVORS (issu d'une recette/prep)
+  // resterait invisible et indécochable sans cette ligne dédiée.
+  const horsCatalogue = Object.keys(ln.parfums).filter(nom => (+ln.parfums[nom]||0) > 0 && !FLAVORS.includes(nom));
+  const extraRows = horsCatalogue.map(nom => {
+    const q = +ln.parfums[nom]||0;
+    const enc = escJs(encodeURIComponent(nom));
+    return flavorPickRow(nom, q, `setSachetParfumNom(${i},'${enc}',VAL)`, SACHET_MAX);
+  }).join('');
+  const sansParfum = +ln.sansParfum||0;
+  const totQ = Object.values(ln.parfums).reduce((s,q)=>s+(+q||0),0) + sansParfum;
+  const rempliCol = totQ===SACHET_MAX ? '#2e7d32' : (totQ>SACHET_MAX ? '#b3261e' : '#7a6a62');
+  const rempliTxt = totQ>SACHET_MAX ? `${totQ}/${SACHET_MAX} — dépasse de ${totQ-SACHET_MAX} !` : `${totQ}/${SACHET_MAX}`;
+  const spOn = sansParfum>0;
+  let spOpts=''; for(let n=1;n<=SACHET_MAX;n++) spOpts+=`<option value="${n}" ${sansParfum===n?'selected':''}>${n}</option>`;
+  const sansParfumRow = `<div onclick="setSachetSansParfum(${i}, ${spOn?0:1})"
+      style="display:flex;align-items:center;gap:12px;padding:12px 14px;margin:4px 0;cursor:pointer;
+      border:1px solid var(--hair);border-radius:12px;
+      background:${spOn?'#f0ece4':'#fbf8f3'};${spOn?'border-color:#cdbfa8':''}">
+    <span style="width:22px;height:22px;border-radius:50%;background:repeating-linear-gradient(45deg,#cbb,#cbb 3px,#ddd 3px,#ddd 6px);flex:none;box-shadow:inset 0 0 0 1px rgba(0,0,0,.06);${spOn?'outline:2px solid #8a7a62;outline-offset:1px':''}"></span>
+    <span style="flex:1;font-size:1rem;color:${spOn?'var(--bordeaux)':'#6a5a52'};font-weight:${spOn?'600':'400'}">Sans parfum déterminé <span style="font-size:.72rem;color:#9a8a82;font-weight:400">— à définir plus tard</span></span>
+    ${spOn
+      ? `<select onclick="event.stopPropagation()" onchange="setSachetSansParfum(${i},+this.value)" style="font-size:1rem;padding:4px 8px">${spOpts}</select>`
+      : `<span style="color:#9a8a82;font-size:.9rem">+ ajouter</span>`}
+  </div>`;
+  return `<div class="cmd-line">
+    <div class="line-head"><span class="line-type">Sachet <span class="line-sub">1 à ${SACHET_MAX} macarons</span></span><span class="line-del" onclick="removeLine(${i})">✕ retirer</span></div>
+    <p class="note" style="margin:-2px 0 4px">${euro(SACHET_PRIX_MACARON)} par macaron.</p>
+    <label style="font-size:.78rem;color:#7a6a62">Parfums (quantité)</label>
+    <div class="flav-grid">${rows}${extraRows}${sansParfumRow}</div>
+    ${sansParfum>0 ? `<p class="note" style="margin:6px 0 2px;color:#9a7d3a">🎯 Les ${sansParfum} macaron${sansParfum>1?'s':''} sans parfum seront à déterminer au démarrage de la production — l'app te le proposera au bon moment, avec le stock réel de ce jour-là.</p>
+    ${cmdSpModeBlock(ln,i)}` : ''}
+    <div class="sum-box" style="border:2px solid ${rempliCol};background:${totQ===SACHET_MAX?'#eef6ee':(totQ>SACHET_MAX?'#fdf2f1':'#fbf8f3')}">
+      <span>Macarons</span>
+      <b style="color:${rempliCol};font-size:1.1rem">${rempliTxt}${totQ===SACHET_MAX?' ✓':''}</b></div>
+    <div class="sum-box"><span>${totQ} × ${euro(SACHET_PRIX_MACARON)}</span><b>${euro(totQ*SACHET_PRIX_MACARON)}</b></div>
+    ${lineRemiseRow(ln,i)}
+  </div>`;
+}
+function setSachetParfum(i,fi,v){ const f=FLAVORS[fi]; const q=+v||0; if(q>0)cmdLines[i].parfums[f]=q; else delete cmdLines[i].parfums[f]; drawLines(); }
+function setSachetParfumNom(i, encNom, v){
+  if(!cmdLines[i] || !cmdLines[i].parfums) return;
+  let nom; try{ nom = decodeURIComponent(encNom); }catch(_){ nom = encNom; }
+  const q=+v||0;
+  if(q>0) cmdLines[i].parfums[nom]=q; else delete cmdLines[i].parfums[nom];
+  drawLines();
+}
+function setSachetSansParfum(i,v){ if(!cmdLines[i]) return; const q=Math.max(0,+v||0); if(q>0) cmdLines[i].sansParfum=q; else delete cmdLines[i].sansParfum; drawLines(); }
+
 function drawDonLine(ln,i){
   if(!ln.parfums) ln.parfums={}; if(!ln.items) ln.items={};
   const parfRows = FLAVORS.map((f,fi)=>{
@@ -23038,6 +23150,7 @@ function lineTotalBase(ln){
   if(ln.type==='evenement') return addMoney(addMoney(mulMoney(ln.evQte||0,eventUnitPrice(ln)), pyraTotalLigne(ln)), accessoireDecoTotal(ln));
   if(ln.type==='grand'){ const pu=bigPrice(ln.tarif); const tot=Object.values(ln.items||{}).reduce((s,q)=>s+(+q||0),0); return mulMoney(tot,pu); }
   if(ln.type==='vrac'){ const pu=vracPrixMacaron(ln); const tot=Object.values(ln.parfums||{}).reduce((s,q)=>s+(+q||0),0) + (+ln.sansParfum||0); return mulMoney(tot,pu); }
+  if(ln.type==='sachet'){ const tot=Object.values(ln.parfums||{}).reduce((s,q)=>s+(+q||0),0) + (+ln.sansParfum||0); return mulMoney(tot,SACHET_PRIX_MACARON); }
   if(ln.type==='don') return 0;
   if(ln.type==='prestation') return money2(+ln.montantHT||0);
   return 0;
@@ -23126,6 +23239,7 @@ function cmdLinesToStored(){
     if(ln.type==='evenement') return {type:'evenement', evQte:ln.evQte, equip:ln.equip, remisePct:rp, sansParfum:(+ln.sansParfum||0)||undefined, spMode:((+ln.sansParfum||0)>0?(ln.spMode||'assortiment'):undefined), spNbParfums:((+ln.sansParfum||0)>0&&ln.spMode!=='adeterminer'&&+ln.spNbParfums>0?+ln.spNbParfums:undefined), pyraVendue:!!ln.pyraVendue, pyraPrixVente:(ln.pyraPrixVente!=null?+ln.pyraPrixVente:null), pyraCoutAchat:(ln.pyraCoutAchat!=null?+ln.pyraCoutAchat:null), accessoireDeco:(ln.accessoireDeco?true:undefined), parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
     if(ln.type==='grand') return {type:'grand', tarif:ln.tarif, remisePct:rp, embMode:ln.embMode||'reutilisable', embMatId:ln.embMatId||null, items:Object.keys(ln.items).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
     if(ln.type==='vrac') return {type:'vrac', proMode:ln.proMode==='nonpro'?'nonpro':'pro', remisePct:rp, sansParfum:(+ln.sansParfum||0)||undefined, spMode:((+ln.sansParfum||0)>0?(ln.spMode||'assortiment'):undefined), spNbParfums:((+ln.sansParfum||0)>0&&ln.spMode!=='adeterminer'&&+ln.spNbParfums>0?+ln.spNbParfums:undefined), parfums:Object.keys(ln.parfums||{}).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
+    if(ln.type==='sachet') return {type:'sachet', remisePct:rp, sansParfum:(+ln.sansParfum||0)||undefined, spMode:((+ln.sansParfum||0)>0?(ln.spMode||'assortiment'):undefined), spNbParfums:((+ln.sansParfum||0)>0&&ln.spMode!=='adeterminer'&&+ln.spNbParfums>0?+ln.spNbParfums:undefined), parfums:Object.keys(ln.parfums||{}).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
     if(ln.type==='don') return {type:'don', donEmbMode:ln.donEmbMode||'sans', embMatId:(ln.donEmbMode==='autre'?(ln.embMatId||null):null), sacMatId:(+ln.sacMatId>0?+ln.sacMatId:null), sacNb:(+ln.sacMatId>0?Math.max(0,Math.round(+ln.sacNb||0)):0), parfums:Object.keys(ln.parfums||{}).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]})), items:Object.keys(ln.items||{}).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
     if(ln.type==='prestation') return {type:'prestation', libelle:ln.libelle||'', montantHT:money2(+ln.montantHT||0), remiseType:ln.remiseType||'pct', remisePct:Math.max(0,Math.min(100,+ln.remisePct||0)), remiseEuro:money2(+ln.remiseEuro||0), ...(ln.isLivraison?{isLivraison:true}:{})};
   }).filter(Boolean);
@@ -23717,6 +23831,11 @@ async function saveCmd(id){
       if(!tot){ toast('Grand format : sélectionne au moins une pièce'); return; }
     }
     if(ln.type==='coffret' && !ln.taille){ toast('Coffret : choisis une taille'); return; }
+    if(ln.type==='sachet'){
+      const tot=Object.values(ln.parfums||{}).reduce((s,q)=>s+(+q||0),0) + (+ln.sansParfum||0);
+      if(!tot){ toast('Sachet : indique au moins 1 macaron'); return; }
+      if(tot>SACHET_MAX){ toast(`Sachet : maximum ${SACHET_MAX} macarons (${tot} indiqués)`); return; }
+    }
     if(ln.type==='don'){
       const tot=Object.values(ln.parfums||{}).reduce((s,q)=>s+(+q||0),0)+Object.values(ln.items||{}).reduce((s,q)=>s+(+q||0),0);
       if(!tot){ toast('Don : indique au moins un macaron offert'); return; }
@@ -25003,6 +25122,7 @@ async function cmdLink(orderId){
   lignes.forEach(ln=>{
     if(ln.type==='coffret') totMac += +ln.taille||0;
     else if(ln.type==='evenement') totMac += +ln.evQte||0;
+    else if(ln.type==='sachet'){ totMac += (ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0) + (+ln.sansParfum||0); }
     else if(ln.type==='don'){ const n=(ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0); totMac+=n; totDon+=n; }
   });
   const dejaLie = existing.reduce((s,e)=>s+(+e.qte||0),0);
@@ -26882,7 +27002,7 @@ function estimateOrderMaterialCost(o, recipes, recipeItems, lots){
     if(ln.type==='coffret') pieces=+ln.taille||0;
     else if(ln.type==='evenement') pieces=+ln.evQte||0;
     else if(ln.type==='grand') pieces=(ln.items||[]).reduce((s,p)=>s+(+p.qte||0),0);
-    else if(ln.type==='vrac') pieces=(ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0) + (+ln.sansParfum||0);
+    else if(ln.type==='vrac'||ln.type==='sachet') pieces=(ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0) + (+ln.sansParfum||0);
     else if(ln.type==='don') pieces=(ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0);
     else if(ln.type==='histo') pieces=(ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0); // commande migrée : estim. via nb de macarons saisis
     if(pieces<=0) return;
@@ -27194,10 +27314,10 @@ function computeOrderMargins(o, recipes, recipeItems, lots, materials, embEstRat
       // [A2] coût réel des parfums du grand format (portés par ln.items).
       coutMat=money2(coutMat + _coutReelParfums(ln.items));
     }
-    else if(ln.type==='vrac'){
+    else if(ln.type==='vrac'||ln.type==='sachet'){
       const _parf=(ln.parfums||[]).reduce((a,p)=>a+(+p.qte||0),0);
       const _sansP=(+ln.sansParfum||0);
-      pieces=_parf+_sansP;                                    // boîte réutilisable : pas de coût emballage
+      pieces=_parf+_sansP;                                    // ni l'un ni l'autre n'a de coût emballage propre
       // [A2] parfums résolus au coût réel ; les pièces « sans parfum » n'ont pas de recette →
       // coût moyen ASSUMÉ (documenté : c'est un choix explicite du vendeur, pas un parfum à résoudre).
       coutMat=money2(coutMat + _coutReelParfums(ln.parfums));
@@ -29918,6 +30038,7 @@ function generateInsights(S){
       if(ln.type==='coffret') key=`Coffret ${ln.taille}`;
       else if(ln.type==='evenement') key='Événement';
       else if(ln.type==='grand') key='Grand format';
+      else if(ln.type==='sachet') key='Sachet';
       else if(ln.type==='prestation') key='Prestation / Coaching';
       else key='Don';
       const lt=lineTotalStored(ln);
@@ -30072,6 +30193,10 @@ function computeStats(orders, clients, toLines){
           addP(global.produits,lbl,p.qte); addP(C.produits,lbl,p.qte);
           addP(global.grandFormat,p.nom,p.qte); addP(C.grandFormat,p.nom,p.qte);
           global.nbMacarons+=p.qte; C.macarons+=p.qte; global.parMois[mois].macarons+=p.qte; C.parMois[mois].macarons+=p.qte; addGF(C,mois,p.qte); } });
+      } else if(ln.type==='sachet'){
+        addP(global.produits,'Sachet',1); addP(C.produits,'Sachet',1);
+        (ln.parfums||[]).forEach(p=>{ if(p.qte>0){ addP(global.parfums,p.nom,p.qte); addP(C.parfums,p.nom,p.qte);
+          global.nbMacarons+=p.qte; C.macarons+=p.qte; global.parMois[mois].macarons+=p.qte; C.parMois[mois].macarons+=p.qte; addStd(C,mois,p.qte); } });
       } else if(ln.type==='don'){
         // dons : comptés dans la consommation par parfum (sortie de stock réelle), 0 € donc pas de CA
         addP(global.produits,'Don',1); addP(C.produits,'Don',1);
@@ -31264,17 +31389,21 @@ async function comptaFluxDetail(type){
   lignes.sort((a,b)=>(a.date||'').localeCompare(b.date||''));
   reprisesLignes.sort((a,b)=>(a.date||'').localeCompare(b.date||''));
   reprisesTotal=money2(reprisesTotal);
+  total=money2(total);
   const titre = type==='facture' ? 'CA facturé' : 'CA encaissé';
   const rows = lignes.length ? lignes.map(l=>
     `<div class="sum-box"${l.oid?` style="cursor:pointer" onclick="closeModal();cmdView(${l.oid})"`:''}>
        <span>${fmtDate(l.date)} · ${esc(l.nom)}${l.sub?` <span style="color:#9a8a82;font-size:.72rem">· ${esc(l.sub)}</span>`:''}</span>
-       <b>${euro(l.montant)}${l.oid?' ›':''}</b></div>`).join('')
+       <span style="display:flex;flex-direction:column;align-items:flex-end;line-height:1.3"><b>${euro(l.montant)}${l.oid?' ›':''}</b><span style="font-size:.68rem;color:#9a8a82">${pctDuTotal(l.montant, total)}</span></span></div>`).join('')
     : '<p class="note">Aucun mouvement sur cette période.</p>';
-  // [A11-display] Section reprises (hors URSSAF) + CA activité globale.
+  // [A11-display] Section reprises (hors URSSAF) + CA activité globale. Pourcentage calculé sur
+  // reprisesTotal, PAS sur `total` : les reprises sont une comptabilité séparée (« jamais
+  // recompté dans tes cotisations ») — leur donner un % du total officiel mélangerait deux
+  // périmètres que ce même écran prend justement soin de garder distincts.
   const reprisesRows = reprisesLignes.map(l=>
     `<div class="sum-box"${l.oid?` style="cursor:pointer" onclick="closeModal();cmdView(${l.oid})"`:''}>
        <span>${fmtDate(l.date)} · ${esc(l.nom)} <span style="color:#9a8a82;font-size:.72rem">· reprise</span></span>
-       <b style="color:#6a4a8a">${euro(l.montant)}${l.oid?' ›':''}</b></div>`).join('');
+       <span style="display:flex;flex-direction:column;align-items:flex-end;line-height:1.3"><b style="color:#6a4a8a">${euro(l.montant)}${l.oid?' ›':''}</b><span style="font-size:.68rem;color:#9a8a82">${pctDuTotal(l.montant, reprisesTotal)}</span></span></div>`).join('');
   const reprisesBloc = reprisesTotal>0 ? `
     <div style="margin-top:14px;padding-top:10px;border-top:1px dashed #ddd0ee">
       <p class="note" style="margin:0 0 6px;color:#6a4a8a"><b>↩︎ Reprises d'historique</b> — ${reprisesLignes.length} mouvement(s). <span style="color:#9a8a82">Hors URSSAF : ce CA a été déclaré indépendamment au moment de son activité réelle. Affiché ici pour mémoire, jamais recompté dans tes cotisations.</span></p>
@@ -31606,7 +31735,7 @@ async function renderAvoirs(){
         ${a.numero?'<span class="tag ok" style="font-size:.6rem;margin-left:4px">légal</span>':'<span class="tag" style="font-size:.6rem;margin-left:4px">sans facture</span>'}
         <br><span style="font-size:.78rem;color:#7a6a60">${fmtDate(a.date)} · ${esc(a.clientId?_cliNom(a.clientId):'—')} · ${esc(a.motif||'—')}${a.note?' · '+esc(a.note):''}</span>
       </div>
-      <b style="color:#6a4a8a">${euro(a.montant)}</b></div>`).join('');
+      <span style="display:flex;flex-direction:column;align-items:flex-end;line-height:1.3"><b style="color:#6a4a8a">${euro(a.montant)}</b><span style="font-size:.68rem;color:#9a8a82">${pctDuTotal(a.montant, total)}</span></span></div>`).join('');
 
   main.innerHTML = `
    <div class="topbar"><div><h1>↩︎ Journal des avoirs</h1><p>${avoirs.length} avoir(s) émis · total ${euro(total)}</p></div></div>
@@ -31639,7 +31768,7 @@ async function renderPanierMoyen(){
   const rows = R.lignes.map(l=>`
     <div class="sum-box lnk" onclick="cmdView(${l.orderId})">
       <span>${fmtDate(l.date)} · ${esc(l.client)}</span>
-      <b>${euro(l.montant)} ›</b></div>`).join('');
+      <span style="display:flex;flex-direction:column;align-items:flex-end;line-height:1.3"><b>${euro(l.montant)} ›</b><span style="font-size:.68rem;color:#9a8a82">${pctDuTotal(l.montant, R.total)}</span></span></div>`).join('');
 
   main.innerHTML = `
    <div class="topbar"><div><h1>🛍️ Panier moyen</h1><p>Ventilé par type de commande, avec le détail réel derrière chaque chiffre</p></div></div>
@@ -36943,6 +37072,9 @@ function drawFlavorEvolutionChart(data, A){
       else if(ln.type==='don') pieces+=(ln.parfums||[]).reduce((a,p)=>a+(+p.qte||0),0);
       else if(ln.type==='evenement') pieces+=+ln.evQte||0;
       else if(ln.type==='grand') pieces+=(ln.items||[]).reduce((a,p)=>a+(+p.qte||0),0);
+      // [v1452] Sachet compté ici comme les autres pièces vendues. Le vrac l'était déjà, mais par
+      // omission : il manquait à cette liste — même forme (parfums + sansParfum), même traitement.
+      else if(ln.type==='vrac'||ln.type==='sachet') pieces+=(ln.parfums||[]).reduce((a,p)=>a+(+p.qte||0),0) + (+ln.sansParfum||0);
     });
     coutByMonth[k]=money2((coutByMonth[k]||0)+pieces*avgUnit);
   });
@@ -56948,6 +57080,7 @@ function factLineDesc(ln){
 
   if(ln.type==='grand') return `Macarons grand format${items?' — '+items:''}`;
   if(ln.type==='vrac') return joinP(`Macarons`);
+  if(ln.type==='sachet') return joinP(`Sachet de macarons`);
   if(ln.type==='don') return `Don (offert)${(parfums||items)?' — '+(parfums||items):''}`;
   if(ln.type==='prestation'){
     if(ln.isLivraison) return ln.libelle || 'Frais de livraison';   // livraison : libellé direct, sans préfixe
@@ -56990,6 +57123,10 @@ function factLineDescHtml(ln){
   if(ln.type==='vrac'){
     const lignesParfums = parfums.map(p=>`<span class="ln-sub">${esc(p.nom)} ×${+p.qte}</span>`).join('');
     return `<span class="ln-main">Macarons</span>${lignesParfums}${spLibelle(ln)}`;
+  }
+  if(ln.type==='sachet'){
+    const lignesParfums = parfums.map(p=>`<span class="ln-sub">${esc(p.nom)} ×${+p.qte}</span>`).join('');
+    return `<span class="ln-main">Sachet de macarons</span>${lignesParfums}${spLibelle(ln)}`;
   }
   // Autres types : on garde la description texte existante (échappée).
   return esc(factLineDesc(ln));
@@ -57796,6 +57933,8 @@ async function collectOrderExport(orderId){
       parfums:(ln.parfums||[]).filter(p=>p.qte>0).map(p=>({nom:p.nom,qte:p.qte}))};
     if(ln.type==='grand') return {label:`Grand format (${ln.tarif||'particulier'})`, remisePct:+ln.remisePct||0,
       parfums:(ln.items||[]).filter(p=>p.qte>0).map(p=>({nom:p.nom,qte:p.qte}))};
+    if(ln.type==='sachet') return {label:'Sachet de macarons', remisePct:+ln.remisePct||0,
+      parfums:(ln.parfums||[]).filter(p=>p.qte>0).map(p=>({nom:p.nom,qte:p.qte}))};
     if(ln.type==='don') return {label:'Don (offert)', remisePct:0,
       parfums:[...(ln.parfums||[]).filter(p=>p.qte>0).map(p=>({nom:p.nom,qte:p.qte,offert:true})),
                ...(ln.items||[]).filter(p=>p.qte>0).map(p=>({nom:p.nom+' (GF)',qte:p.qte,offert:true}))]};
@@ -57803,7 +57942,7 @@ async function collectOrderExport(orderId){
     return {label:ln.type, parfums:[]};
   });
   const totalMacarons = lignes.reduce((s,ln)=>{
-    if(ln.type==='coffret'||ln.type==='evenement'||ln.type==='don') s+=(ln.parfums||[]).reduce((a,p)=>a+(+p.qte||0),0);
+    if(ln.type==='coffret'||ln.type==='evenement'||ln.type==='don'||ln.type==='sachet') s+=(ln.parfums||[]).reduce((a,p)=>a+(+p.qte||0),0);
     if(ln.type==='evenement' && (!ln.parfums||!ln.parfums.length)) s+=(+ln.evQte||0);
     if(ln.type==='grand'||ln.type==='don') s+=(ln.items||[]).reduce((a,p)=>a+(+p.qte||0),0);
     return s;
@@ -58023,6 +58162,12 @@ async function buildOrderText(orderId){
       const _rem=Math.max(0,Math.min(100,+ln.remisePct||0));
       L.push('  - Vrac pro'+(totQ?' — '+totQ+' macaron'+(totQ>1?'s':''):'')+(_rem>0?' [remise −'+_rem+'%]':'')+' — '+euro(lineTotalStored(ln)));
       parfums.forEach(p=>L.push('      • '+p.nom+' × '+p.qte));
+    } else if(ln.type==='sachet'){
+      const parfums=(ln.parfums||[]).filter(p=>p.qte>0);
+      const totQ=parfums.reduce((s,p)=>s+(+p.qte||0),0) + (+ln.sansParfum||0);
+      const _rem=Math.max(0,Math.min(100,+ln.remisePct||0));
+      L.push('  - Sachet'+(totQ?' — '+totQ+' macaron'+(totQ>1?'s':''):'')+(_rem>0?' [remise −'+_rem+'%]':'')+' — '+euro(lineTotalStored(ln)));
+      parfums.forEach(p=>L.push('      • '+p.nom+' × '+p.qte));
     } else if(ln.type==='don'){
       const parfums=(ln.parfums||[]).filter(p=>p.qte>0);
       const items=(ln.items||[]).filter(p=>p.qte>0);
@@ -58132,6 +58277,34 @@ async function seedProducts(){
   for(const t of BOX_SIZES){
     await db.products.add({ taille:t, nom:`Coffret ${t} macarons`, prix:BOX_PRICES[t], actif:true });
   }
+}
+// [v1452] COFFRET DE 10 À 22 € — Ben : « un coffret de 10 macarons à 22€. L'emballage par défaut
+// est la boîte blanche de 8/10 macarons. » IDEMPOTENT et distinct de seedProducts() : celle-ci ne
+// s'exécute QUE sur un catalogue vide (`if(n>0) return`), donc la base existante de Ben ne l'aurait
+// jamais reçu. On crée aussi la boîte blanche si elle manque — c'est l'emballage par défaut de ce
+// format (voir COFFRET10_EMB_NOM / setCoffretTaille), sans elle le défaut n'aurait rien à pointer.
+const COFFRET10_TAILLE = 10;
+const COFFRET10_PRIX = 22;
+const COFFRET10_EMB_NOM = 'Boîte blch 8/10pcs';
+async function seedCoffret10(){
+  try{
+    // 1) La boîte blanche 8/10 (capacité 10) — même définition que createBoitesBlanches().
+    const mats = await db.materials.toArray().catch(()=>[]);
+    const embExiste = mats.some(m=>m.categorie==='emballage'
+      && (m.nom||'').trim().toLowerCase()===COFFRET10_EMB_NOM.toLowerCase());
+    if(!embExiste){
+      await db.materials.add({nom:COFFRET10_EMB_NOM, unite:'unité', categorie:'emballage',
+        capacite:10, seuil:0, prixDefaut:0.14});
+      if(typeof syncAfterMaterialChange==='function') await syncAfterMaterialChange();
+    }
+    // 2) Le coffret de 10 dans le catalogue de l'offre. On ne touche PAS à un coffret 10 déjà
+    //    présent : Ben a pu en régler le prix lui-même, l'écraser serait perdre sa saisie.
+    const prods = await db.products.toArray().catch(()=>[]);
+    if(!prods.some(p=>+p.taille===COFFRET10_TAILLE)){
+      await db.products.add({ taille:COFFRET10_TAILLE, nom:`Coffret ${COFFRET10_TAILLE} macarons`,
+        prix:COFFRET10_PRIX, actif:true });
+    }
+  }catch(e){ swallow(e,'seedCoffret10'); }
 }
 
 // Rappel d'export automatique (parade à la purge iOS d'IndexedDB).
@@ -63886,6 +64059,10 @@ function _sansParfumTotalDe(o){
       const sp = +ln.sansParfum||0;
       if(sp>0){ total += sp; if((+ln.taille||0)>taille) taille = +ln.taille||0; }
     }
+    // [v1452] Un sachet peut lui aussi porter des macarons « sans parfum » : sans ça, ils ne
+    // seraient jamais proposés à la détermination au lancement de production. Il n'a pas de
+    // « taille de coffret » — il ne fixe donc pas la référence de format, il alimente le total.
+    else if(ln.type==='sachet'){ total += (+ln.sansParfum||0); }
   });
   return { total, taille: taille||25 };
 }
@@ -72534,6 +72711,7 @@ function startClock(){
     migrateIRTranche2026();     // règle le taux marginal d'imposition à 30 % s'il n'a jamais été fixé (une seule fois)
     try{ await seedIfEmpty(); }catch(e){ console.error('seed',e); }
     try{ await seedProducts(); }catch(e){ console.error('seedProducts',e); }
+    try{ await seedCoffret10(); }catch(e){ console.error('seedCoffret10',e); }
     try{ await seedPMS(); }catch(e){ console.error('seedPMS',e); }
     try{ await seedAllergenes(); }catch(e){ console.error('seedAllergenes',e); }
     try{ await seedEmballages(); }catch(e){ console.error('seedEmballages',e); }
