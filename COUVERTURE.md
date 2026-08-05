@@ -4515,3 +4515,51 @@ Leçon : une mutation qui laisse tout vert ne prouve pas que le test est aveugle
 signaler qu'on a muté du code sans effet. Il faut alors comprendre **pourquoi** avant de conclure,
 et non déclarer le test insensible. La garde redondante a été **conservée** : elle documente
 l'intention et protège d'un futur copier-coller.
+
+---
+
+## 2026-08-05 — MACARONS VENDUS DU MOIS : DEUX DÉFAUTS  (v1459 → **v1460**)
+
+**Signalé par Ben**, sur la ligne « 🍬 X macaron(s) vendu(s) » de la carte CA de l'accueil : « je la
+vois mais le chiffre me paraît faux ».
+
+### ⚠️ Note de version
+Ben avait demandé cette ligne (et la date du jour) au tour précédent. **Les deux existaient déjà**
+dans la base de travail, ajoutées sous le tag **v1459** — code et changelog présents, mais
+`APP_VERSION` resté à v1458 et fichier de test absent. La présente livraison **corrige** cette
+v1459 plutôt que de la refaire, et prend donc le numéro **v1460**. La date du jour, elle, était
+correcte : vérifiée, rien touché.
+
+### Les deux défauts
+① **Période incohérente avec le CA de la même carte.** Les macarons comptaient les commandes
+**datées** du mois ; le CA juste au-dessus compte les **encaissements**. Une commande de juillet
+payée en août affichait son CA en août et ses macarons en juillet — deux chiffres côte à côte
+décrivant deux choses différentes. C'est très probablement ce que Ben a vu.
+
+② **Double comptage mère/fille.** Quand un client paie une grosse commande d'avance (la « mère »)
+puis vient la chercher en plusieurs fois, chaque venue est une commande « fille » portant **ses
+propres lignes de macarons**. La somme comptait la mère **et** ses filles. Le CA, lui, était protégé
+(règle d'or : une fille n'a jamais de paiement propre) — mais le compteur de macarons n'avait pas
+cette protection.
+
+### Le choix de Ben, et pourquoi il règle les deux
+Compter les macarons des commandes **encaissées** du mois, même base que le CA. Ce choix élimine ②
+**à la racine** : une fille n'ayant aucun paiement, elle pèse zéro sur cette base — aucune règle
+d'exclusion supplémentaire à écrire, donc aucune à oublier plus tard.
+
+**Paiement partiel** : le montant encaissé ne dit pas *quels* macarons il couvre. On répartit au
+**prorata du montant** — exactement ce que fait déjà le CA, qui étale l'argent d'une commande sur
+ses mois de paiement. Ratio **plafonné à 1** : un trop-perçu ne peut pas faire apparaître plus de
+macarons que la commande n'en contient. Le total est arrondi **une seule fois, à la fin** : arrondir
+commande par commande accumulerait l'erreur.
+
+### Suite v1459/v1460 : 20 assertions (`tests/v1459-macarons-vendus-mois.test.js`)
+Le cas de Ben — mère payée d'avance + deux filles de retrait — compté une seule fois (A) ; le mois
+du paiement décide, commande non payée à zéro (B) ; **réconciliation** — les mois de paiement d'une
+commande étalée totalisent exactement ses macarons, trop-perçu plafonné (C) ; exclusions reprise /
+historique / prestation sans macaron, montant nul sans division par zéro, paiement sans date
+rattaché comme le fait le CA (D) ; gardes statiques, dont la vérification que le **commentaire du
+code n'affirme plus le contraire de ce qu'il fait** (E).
+
+**Sensibilité vérifiée par mutation réelle de `app.js`** : revenir à la base « date de commande »
+fait rougir 8 assertions, dont celle du double comptage mère/fille.

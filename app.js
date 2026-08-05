@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1459'; // suite : voir tests/v1459-macarons-vendus-mois.test.js
-const APP_MAJ = 'MACARONS VENDUS SUR LE MOIS, ET LA DATE DU JOUR. Ben : « Peux tu afficher sur l\u2019ecran d\u2019accueil le nombre de macarons vendus sur le mois ? Et sur le tableau de bord indiquer la date du jour, pas seulement le mois ? ». FAIT : la carte « CA du mois » affiche desormais aussi le nombre de macarons vendus, avec la part realisee en marche quand il y en a ; et le bandeau du tableau de bord indique le jour de la semaine, le jour, le mois et l\u2019annee (il ne montrait que le mois et l\u2019annee). LE PIEGE EVITE : « vendus » n\u2019est pas « sortis ». Une fonction comptait deja les macarons d\u2019une commande, DONS COMPRIS \u2014 c\u2019est voulu, elle sert a lier les lots de production (un macaron offert quitte bien le stock). La reutiliser ici aurait fait passer les dons pour du chiffre d\u2019affaires. Un compteur distinct a donc ete ecrit, et les deux coexistent. Les reprises d\u2019historique sont aussi exclues : elles decrivent des ventes deja faites ailleurs. Cote marches, la regle du « vendu » (sorti moins retours, dons et pertes) n\u2019est PAS redite \u2014 la fonction existante est reutilisee. Periode retenue : la DATE de la commande, comme le compteur de commandes juste a cote, et volontairement PAS la date d\u2019encaissement : un paiement partiel ne dit pas quels macarons il couvre, et inventer cette repartition donnerait un compte faux d\u2019apparence exacte. Suite v1459 : 27 assertions, sensibilite verifiee par mutation reelle de app.js.';
+const APP_VERSION = 'v1460'; // suite : voir tests/v1459-macarons-vendus-mois.test.js (corrige la v1459)
+const APP_MAJ = 'MACARONS VENDUS DU MOIS : DEUX DEFAUTS CORRIGES (corrige la v1459, qui avait ajoute la ligne mais sur une base de calcul incoherente). Ben, sur la ligne « macaron(s) vendu(s) » de la carte CA de l\u2019accueil : « je la vois mais le chiffre me parait faux ». L\u2019audit a trouve DEUX defauts distincts. ① PERIODE INCOHERENTE avec le CA de la MEME carte : les macarons comptaient les commandes DATEES du mois, le CA comptait les ENCAISSEMENTS \u2014 une commande de juillet payee en aout affichait son CA en aout et ses macarons en juillet, deux chiffres cote a cote decrivant deux choses differentes. ② DOUBLE COMPTAGE mere/fille : quand un client paie d\u2019avance (commande « mere ») puis vient chercher en plusieurs fois (des « filles », chacune avec ses propres lignes de macarons), la somme comptait la mere ET ses filles. CHOIX DE BEN : compter les macarons des commandes ENCAISSEES du mois, meme base que le CA \u2014 ce qui regle ② A LA RACINE, une fille n\u2019ayant jamais de paiement propre. Un paiement PARTIEL repartit les macarons au PRORATA du montant encaisse (exactement ce que fait deja le CA, qui etale l\u2019argent sur ses mois de paiement), le ratio etant plafonne a 1 pour qu\u2019un trop-percu ne fasse pas apparaitre plus de macarons que la commande n\u2019en contient. Le total est arrondi UNE fois, a la fin. AU PASSAGE : la date du jour etait deja affichee sur le bandeau « Tableau de bord » \u2014 verifie avant de coder, rien ajoute. Suite v1459 : 20 assertions, dont la reconciliation « les mois de paiement totalisent exactement la commande » ; sensibilite verifiee par mutation reelle de app.js (8 rouges).';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
 const _APP_MAJ_v1448_ARCHIVE_INUTILISEE = 'LE CHAMP « N° LOT DE PRODUCTION » MENTAIT EN MODE DUO. Ben, capture à l\u2019appui : lançant Chocolat passion + Pistache en meringue commune, le champ affichait « 030826RAF » — ni CHP ni PIS, mais RAF (Coco Rafaello, une tout autre recette). CAUSE : la branche duo de saveProd() ne lit JAMAIS ce champ — chaque parfum reçoit son propre lot, calculé indépendamment. Sa valeur affichée venait de prodRefreshLot(), qui lit TOUJOURS la recette unique (f_rec) — or f_rec reste dans la page (juste masquée) en duo, avec la valeur de la DERNIÈRE recette affichée avant le passage en duo. Un champ qui ment ET n\u2019a aucun effet réel est pire qu\u2019un champ absent. Même défaut, plus discret, sur la case « diviser en 2 lots » (v1445/v1446) : cochée, ce champ n\u2019est pas plus lu par le lancement réel. FIX : le champ est désormais masqué dans ces deux cas ; à la place, les VRAIS numéros de lot qui seront utilisés sont prévisualisés — en mode duo dans le récapitulatif de répartition, et pour la division bicolore dans son propre encart — calculés avec EXACTEMENT la même formule que la sauvegarde réelle, jamais un second calcul qui pourrait diverger. Suite v1448 : 12 assertions (tests/v1448-lot-duo-preview.test.js), dont une réconciliation qui rejoue la vraie formule de sauvegarde et vérifie que l\u2019aperçu affiche bien 030826CHP-CO et 030826PIS-CO — jamais RAF.';
@@ -8273,19 +8273,35 @@ async function renderDash(){
   });
   _nbEncMois += closedMk.filter(k=>mkInMonth(k.date)).length;
   const nbMonth = orders.filter(c=>{const d=new Date(c.date);return d.getMonth()===m&&d.getFullYear()===y;}).length;
-  // [v1459] MACARONS VENDUS SUR LE MOIS (demande de Ben). Deux sources, comme pour le CA :
-  //  · les COMMANDES du mois — dons exclus (`orderMacaronsVendus`), reprises d'historique exclues
-  //    (elles décrivent des ventes déjà faites ailleurs, les recompter gonflerait le mois courant)
-  //  · les MARCHÉS CLOS du mois — `marketLineSummary` sait déjà ce qui a été vendu
-  //    (sortie − retour − don − perte), on ne recalcule pas cette règle ici
-  // Période : la DATE de la commande / du marché, la même base que le compteur de commandes
-  // au-dessus. Volontairement PAS la date d'encaissement : un paiement partiel ne dit pas quels
-  // macarons il couvre, et inventer cette répartition donnerait un compte faux d'apparence exacte.
+  // [v1459] MACARONS VENDUS SUR LE MOIS — MÊME BASE QUE LE CA AFFICHÉ AU-DESSUS (choix de Ben,
+  // 05/08). Les deux lignes de cette carte décrivent donc le même mois, sur les mêmes commandes.
+  //
+  // AVANT, deux défauts cohabitaient :
+  //  ① la période différait du CA : les macarons comptaient les commandes DATÉES du mois, le CA
+  //    les ENCAISSEMENTS. Une commande de juillet payée en août affichait son CA en août et ses
+  //    macarons en juillet — deux chiffres côte à côte qui parlaient de choses différentes.
+  //  ② DOUBLE COMPTAGE mère/fille : quand un client paie d'avance (la « mère ») puis vient
+  //    chercher en plusieurs fois (des « filles », chacune avec ses propres lignes), la somme
+  //    comptait la mère ET ses filles. Passer à la base « encaissé » le règle À LA RACINE : une
+  //    fille n'a jamais de paiement propre (RÈGLE D'OR, cf. paiementsDe), donc elle pèse zéro ici.
+  //
+  // PRORATA : un paiement partiel ne dit pas QUELS macarons il couvre. On répartit donc au
+  // prorata du montant encaissé — exactement ce que fait déjà le CA, qui étale l'argent d'une
+  // commande sur ses mois de paiement. Le ratio est plafonné à 1 : un trop-perçu ne peut pas
+  // faire apparaître plus de macarons que la commande n'en contient.
   let macVendusMois = 0;
   orders.forEach(o=>{
     if(o.histo || estReprise(o)) return;
-    if(ymKey(o.date||'') !== _mkCourant) return;
-    macVendusMois += orderMacaronsVendus(o);
+    const macTotal = orderMacaronsVendus(o);
+    if(macTotal<=0) return;
+    const paies = paiementsDe(o);                 // fille ⇒ [] : plus de double comptage
+    if(!paies.length) return;
+    const totalCmd = money2(+o.montant || orderMontantRecalcule(o) || 0);
+    if(totalCmd<=0) return;                       // pas de base de prorata : on n'invente pas
+    const encMois = paies.reduce((s,p)=>
+      (ymKey(p.date||o.date||'')===_mkCourant) ? s+(+p.montant||0) : s, 0);
+    if(encMois<=0) return;
+    macVendusMois += macTotal * Math.min(1, encMois/totalCmd);
   });
   let _macMarches = 0;
   try{
@@ -8298,7 +8314,9 @@ async function renderDash(){
       });
     }
   }catch(e){ swallow(e,'macarons vendus marchés'); }
-  macVendusMois = round3(macVendusMois + _macMarches);
+  // Le prorata peut donner des décimales (paiement partiel) : on arrondit le TOTAL du mois, pas
+  // chaque commande — arrondir commande par commande accumulerait l'erreur.
+  macVendusMois = Math.round(round3(macVendusMois + _macMarches));
   // [A11-display] CA cumulé depuis le début : on sépare le fil de l'eau (hors reprises, base fiscale)
   // des reprises d'historique, pour afficher les deux clairement sans mélanger.
   const _caFilEau = money2(orders.filter(o=>!estReprise(o)).reduce((s,c)=>s+(+c.montant||0),0) + closedMk.reduce((s,k)=>s+k.montant,0));
