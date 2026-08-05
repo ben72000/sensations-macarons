@@ -4358,3 +4358,60 @@ suites repassent au vert, y compris celles de v1454 et v1455 — rien n'a été 
 **fichier temporaire puis un remplacement atomique**, pour qu'un échec ne puisse jamais laisser un
 fichier vide ; (2) `node --check` ne suffit pas à prouver qu'un fichier est intact — il faut aussi
 vérifier sa **taille** et la présence d'un marqueur connu.
+
+---
+
+## 2026-08-05 — RETOURS DE MARCHÉ : RANGER LES INVENDUS EN BOÎTES  (v1456 → **v1457**)
+
+**Demandé par Ben** :
+> « Au retour d'un marché je veux pouvoir ranger mes boîtes proprement […] dans l'onglet retour
+> marché je saisi les quantités retour de chaque parfums ; l'app fait le delta puis propose de
+> ranger chaque quantité pour chaque parfums. Sur cet écran je choisi une répartition par boîte et
+> l'app me propose d'editer une étiquette spéciale retour marché […] puis l'emplacement pour les
+> ranger proprement et distinctement. »
+
+### L'audit avant d'écrire
+L'écran « Retour de marché — invendus » **existait déjà** : saisie par parfum, delta pré-calculé
+(`sorti − retour − don − perte`), choix congélateur / frigo / écarté, et une règle de sécurité —
+**recongélation interdite** si le lot a déjà été décongelé. Manquaient la répartition en boîtes,
+l'emplacement par boîte, l'étiquette retour, et le rattachement correct.
+
+### 🚨 Le défaut trouvé
+`marketLineSummary` réduisait la provenance à `productionIds[0]` (commenté « compat affichage »).
+La sortie puise pourtant en **FIFO sur plusieurs lots**, et l'app enregistre lesquels. Résultat :
+tout le retour était crédité au **premier lot**. Avec 40 pris sur A et 60 sur B, un retour de 50
+donnait +50 à A — qui n'en avait fourni que 40 — pendant que B restait court. Stock et traçabilité
+faux tous les deux.
+
+`marketLotsSortisParParfum` (pure) reconstitue désormais la provenance réelle, et
+`marketRepartirRetour` (pure) **plafonne chaque lot à ce qu'il a effectivement fourni**. C'est ce
+plafond qui rend le stock cohérent.
+
+### Les trois décisions de Ben, appliquées
+- **DLC d'origine conservée.** `marketAddRetour` la **recalculait** (`computeDlcFromHistory`) : un
+  retour au congélateur **prolongeait** donc la DLC de macarons qui venaient de passer la journée
+  dehors, à température ambiante. Elle est maintenant conservée telle quelle et **figée**
+  (`dlcAuto:false`), pour qu'un déplacement ultérieur ne la rallonge pas par la porte de derrière.
+- **Provenance inconnue → ligne « retour marché » non rattachée** (`marketAddRetourNonRattache`),
+  suffixe `-RM`, marquée `retourMarche:true` pour l'étiquette spéciale. Sur un marché les boîtes se
+  vident et se mélangent : inventer un rattachement serait pire que d'assumer qu'on ne sait pas.
+- **Boîtes d'origine recréditées en priorité**, la proposition par défaut suivant la sortie FIFO —
+  dans la plupart des cas Ben n'a qu'à valider.
+
+**Décision prise faute d'origine unique** (signalée à Ben) : une ligne non rattachée prend la DLC
+**la plus courte** des lots sortis pour ce parfum. Si aucune n'est connue, le champ reste **vide**
+plutôt qu'inventé — une DLC fabriquée sur du produit fini serait plus dangereuse qu'une DLC absente,
+qui se voit et se corrige.
+
+### Suite v1457 : 40 assertions (`tests/v1457-retours-marche.test.js`)
+Provenance réelle retrouvée sur plusieurs lots, retours déjà faits déduits, don/perte ignorés,
+sortie historique sans lot non inventée (A) ; **réconciliation** — tout le retour réparti sans rien
+créer ni perdre, plafond par lot, surplus en ligne non rattachée, lot déjà rendu qui ne reprend rien
+(B) ; DLC non recalculée et règle de recongélation conservée (C) ; la ligne non rattachée crée une
+vraie ligne de production, exige un emplacement, DLC vide si inconnue (D) ; flux en deux étapes,
+écart saisi/réparti affiché, échec d'une boîte n'interrompant pas les autres (E).
+
+**Sensibilité vérifiée par mutation réelle** : retirer le plafond par lot fait rougir 5 assertions.
+⚠️ Au premier essai, la mutation faisait **planter** la suite au lieu de la faire rougir — un
+plantage en cours de fichier saute toutes les assertions suivantes et masque l'étendue réelle du
+problème. Les assertions concernées ont été rendues **défensives** avant de conclure.

@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1456'; // suite : voir tests/v1456-reimpression-fusion.test.js
-const APP_MAJ = 'REIMPRIMER L\u2019ETIQUETTE APRES UNE FUSION. Ben : « en cas de fusion de boite je dois pouvoir reimprimer une etiquette mise a jour ». POURQUOI LA FUSION EST LE CAS PARTICULIER : sur un prelevement, Ben corrige la quantite au stylo (decision « etiquette recyclee »). Apres une fusion, il n\u2019y a rien a corriger a la main : la boite gardee contient d\u2019autres pieces qu\u2019annonce, sa DLC a pu raccourcir, et l\u2019etiquette de la boite absorbee n\u2019a plus d\u2019objet. La reimpression est donc PROPOSEE au moment exact ou elle devient necessaire, sans etre imposee, avec la quantite et la DLC reelles affichees avant d\u2019imprimer. CE QUI NE CHANGE PAS : le numero de lot. Le QR encode l\u2019adresse batie sur ce numero \u2014 le faire varier rendrait mortes toutes les etiquettes deja imprimees. On reimprime le MEME numero avec la bonne quantite : une reimpression, pas une nouvelle identite. AJOUTE AUSSI : un bouton « Etiquette » permanent sur chaque boite, pour reimprimer a tout moment. Suite v1456 : 19 assertions, dont la garde que la proposition n\u2019ECRIT rien en base et ne regenere aucun numero de lot \u2014 sensibilite verifiee par mutation reelle de app.js.';
+const APP_VERSION = 'v1457'; // suite : voir tests/v1457-retours-marche.test.js
+const APP_MAJ = 'RETOURS DE MARCHE : RANGER LES INVENDUS EN BOITES. Ben : « dans l\u2019onglet retour marche je saisi les quantites retour de chaque parfums ; l\u2019app fait le delta puis propose de ranger chaque quantite pour chaque parfums. Sur cet ecran je choisi une repartition par boite […] puis l\u2019emplacement pour les ranger proprement et distinctement ». L\u2019ecran de retour existait deja (saisie par parfum, delta pre-calcule, congelateur / frigo / ecarte, recongelation interdite si deja decongele) ; il gagne une DEUXIEME ETAPE de rangement : une ligne = une boite, avec sa quantite, son emplacement et son rattachement. DEFAUT CORRIGE AU PASSAGE : la provenance etait reduite au PREMIER lot sorti (« compat affichage ») — tout le retour lui etait credite, et un lot pouvait recuperer PLUS de pieces qu\u2019il n\u2019en avait fourni pendant que les autres restaient courts. Desormais chaque lot est plafonne a ce qu\u2019il a reellement donne, et le surplus non imputable devient une ligne « RETOUR MARCHE » distincte (suffixe -RM, etiquette speciale) plutot que d\u2019etre impute au hasard. TROIS DECISIONS DE BEN APPLIQUEES : la DLC d\u2019origine est CONSERVEE — avant, elle etait recalculee et un retour au congelateur la PROLONGEAIT alors que les macarons venaient de passer la journee dehors ; une provenance inconnue donne une ligne non rattachee plutot qu\u2019un choix force ; les boites d\u2019origine sont recreditees en priorite. Une ligne non rattachee prend la DLC la plus courte des lots sortis, et si aucune n\u2019est connue le champ reste VIDE — une DLC inventee sur du produit fini serait plus dangereuse qu\u2019une DLC absente, qui se voit et se corrige. Suite v1457 : 40 assertions, dont la reconciliation « un lot ne recupere jamais plus qu\u2019il n\u2019a fourni », verifiee sensible par mutation reelle de app.js.';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
 const _APP_MAJ_v1448_ARCHIVE_INUTILISEE = 'LE CHAMP « N° LOT DE PRODUCTION » MENTAIT EN MODE DUO. Ben, capture à l\u2019appui : lançant Chocolat passion + Pistache en meringue commune, le champ affichait « 030826RAF » — ni CHP ni PIS, mais RAF (Coco Rafaello, une tout autre recette). CAUSE : la branche duo de saveProd() ne lit JAMAIS ce champ — chaque parfum reçoit son propre lot, calculé indépendamment. Sa valeur affichée venait de prodRefreshLot(), qui lit TOUJOURS la recette unique (f_rec) — or f_rec reste dans la page (juste masquée) en duo, avec la valeur de la DERNIÈRE recette affichée avant le passage en duo. Un champ qui ment ET n\u2019a aucun effet réel est pire qu\u2019un champ absent. Même défaut, plus discret, sur la case « diviser en 2 lots » (v1445/v1446) : cochée, ce champ n\u2019est pas plus lu par le lancement réel. FIX : le champ est désormais masqué dans ces deux cas ; à la place, les VRAIS numéros de lot qui seront utilisés sont prévisualisés — en mode duo dans le récapitulatif de répartition, et pour la division bicolore dans son propre encart — calculés avec EXACTEMENT la même formule que la sauvegarde réelle, jamais un second calcul qui pourrait diverger. Suite v1448 : 12 assertions (tests/v1448-lot-duo-preview.test.js), dont une réconciliation qui rejoue la vraie formule de sauvegarde et vérifie que l\u2019aperçu affiche bien 030826CHP-CO et 030826PIS-CO — jamais RAF.';
@@ -28550,6 +28550,56 @@ async function stockFiniParParfum(){
   return Object.values(byParfum).sort((a,b)=>a.parfum.localeCompare(b.parfum));
 }
 
+// [v1457] DE QUELS LOTS VIENT CE QUI EST PARTI AU MARCHÉ — et combien reste-t-il « dehors » sur
+// chacun. PURE. Corrige le défaut de `marketLineSummary`, qui écrase la provenance réelle en ne
+// gardant que `productionIds[0]` (« compat affichage ») : si la sortie a puisé en FIFO sur 3 lots,
+// tout le retour était crédité au PREMIER — un lot pouvait ainsi récupérer plus de pièces qu'il
+// n'en avait donné, pendant que les autres restaient courts.
+//
+// `sorti` = ce que CE lot a fourni au marché. `rendu` = ce qui lui a déjà été recrédité.
+// `dehors` = ce qu'il peut encore reprendre, borné à ce qu'il a donné — un lot ne peut jamais
+// récupérer plus qu'il n'a fourni, c'est ce plafond qui garantit la cohérence du stock.
+function marketLotsSortisParParfum(moves){
+  const parParfum = {};
+  (moves||[]).forEach(mv=>{
+    if(!mv || mv.productionId==null) return;             // sorties « histo » sans lot réel : ignorées ici
+    if(mv.type!=='sortie' && mv.type!=='retour') return;  // don/perte ne reviennent pas en stock
+    const parfum = mv.parfum || '';
+    const b = (parParfum[parfum] ||= {});
+    const l = (b[mv.productionId] ||= { productionId:+mv.productionId, parfum, sorti:0, rendu:0 });
+    if(mv.type==='sortie') l.sorti = addQty(l.sorti, +mv.qte||0);
+    else                   l.rendu = addQty(l.rendu, +mv.qte||0);
+  });
+  const out = {};
+  Object.keys(parParfum).forEach(parfum=>{
+    out[parfum] = Object.values(parParfum[parfum]).map(l=>{
+      l.dehors = Math.max(0, round3(subQty(l.sorti, l.rendu)));
+      return l;
+    }).filter(l=>l.sorti>0).sort((a,b2)=>a.productionId-b2.productionId);
+  });
+  return out;
+}
+
+// [v1457] RÉPARTIT une quantité de retour sur les lots réellement sortis, SANS jamais dépasser ce
+// que chacun a fourni. PURE. Ben a tranché : re-créditer les boîtes d'origine quand c'est possible,
+// et « en cas d'impossibilité on crée une étiquette spéciale retour marché ». Le surplus non
+// imputable (sortie « histo » sans lot, ou plus de retours que de sorties tracées) part donc dans
+// un reliquat `nonRattache`, qui deviendra une ligne « retour marché » distincte — plutôt qu'être
+// forcé sur un lot au hasard, ce que faisait l'ancien comportement.
+// Ordre de service : FIFO sur l'id de lot (le plus ancien d'abord), cohérent avec la sortie.
+function marketRepartirRetour(lots, qte){
+  let reste = round3(Math.max(0, +qte||0));
+  const parLot = [];
+  (lots||[]).slice().sort((a,b)=>a.productionId-b.productionId).forEach(l=>{
+    if(reste<=0) return;
+    const peut = Math.max(0, round3(+l.dehors||0));
+    if(peut<=0) return;
+    const pris = Math.min(peut, reste);
+    if(pris>0){ parLot.push({ productionId:l.productionId, qte:round3(pris) }); reste = round3(subQty(reste, pris)); }
+  });
+  return { parLot, nonRattache: round3(Math.max(0, reste)) };
+}
+
 // Sortie d'une quantité d'un PARFUM, répartie en FIFO sur ses lots (le plus ancien d'abord).
 // L'utilisateur ne voit pas les lots ; la traçabilité et le stock atelier restent corrects.
 async function marketAddSortieParfum(marketId, parfum, qteDemandee){
@@ -28618,7 +28668,13 @@ async function marketAddRetour(marketId, productionId, qte, parfum, destination)
     const nouveauLot=lotAvecEmplacement(p.lotProduction, destination);
     const patch={qteRestante: addQty(p.qteRestante, qte), emplacement:destination, emplacementMaj:nowIso, histEmplacement:hist, lotProduction:nouveauLot};
     if(isFreezer(destination)) patch.venuDuCongelateur=true;
-    if(p.dlcAuto!==false){ patch.dlcProduit=computeDlcFromHistory(hist, nowIso); patch.dlcAuto=true; }
+    // [v1457] LA DLC D'ORIGINE EST CONSERVÉE — décision de Ben (05/08). Avant, `computeDlcFromHistory`
+    // la RECALCULAIT depuis l'historique d'emplacement : un retour au congélateur PROLONGEAIT donc
+    // la DLC de macarons qui venaient de passer la journée dehors, à température ambiante. Le
+    // passage au marché n'améliore rien ; garder la date d'origine est le choix prudent.
+    // `dlcAuto` est mis à false : cette DLC est désormais FIGÉE et ne doit plus être recalculée par
+    // un déplacement ultérieur, sinon le prolongement reviendrait par la porte de derrière.
+    if(p.dlcProduit){ patch.dlcAuto=false; }
     await db.productions.update(productionId, patch);
     await db.marketMoves.add({marketId, productionId, type:'retour', qte, parfum:parfum||'', motif:'', date:today(), destination});
     if(qte>0) _mvRet={ parfumNom: parfum || prodNomComplet(p), composant:'macaron', sens:+1, qte,
@@ -28626,6 +28682,62 @@ async function marketAddRetour(marketId, productionId, qte, parfum, destination)
   });
   // [JOURNAL STOCK] réincrémente le stock fini : invendus rapportés (skip si histo / qte 0).
   if(_mvRet) await logStockMove(_mvRet);
+}
+
+// [v1457] RETOUR NON RATTACHÉ — Ben : « Une ligne "retour marché" sans rattachement, si je ne
+// sais pas », et « en cas d'impossibilité on crée une étiquette spéciale retour marché ».
+// Sur un marché les boîtes se vident et se mélangent : quand la provenance exacte n'est plus
+// identifiable, INVENTER un rattachement serait pire que de l'assumer. On crée donc une ligne de
+// production distincte, marquée `retourMarche:true`, avec son propre n° de lot suffixé -RM.
+//
+// DLC : Ben a tranché « garder la DLC d'origine ». Sans lot d'origine unique, on retient la PLUS
+// COURTE des DLC des lots sortis pour ce parfum (même règle prudente que la fusion). Aucune DLC
+// connue → on laisse vide plutôt que d'en fabriquer une : une DLC inventée sur du produit fini
+// serait plus dangereuse qu'une DLC absente, qui se voit et se corrige.
+async function marketAddRetourNonRattache(marketId, parfum, qte, destination, opts){
+  opts = opts || {};
+  const q = round3(Math.max(0, +qte||0));
+  if(q<=0) throw new Error('Quantité invalide');
+  if(!EMP_BY_KEY[destination]) throw new Error('Emplacement de rangement du retour obligatoire');
+  const prods = await db.productions.toArray().catch(()=>[]);
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  const rec = recipes.find(r=>(r.produitNom||'')===parfum) || null;
+  // DLC la plus courte parmi les lots réellement sortis pour ce parfum.
+  let dlc = opts.dlc || '';
+  if(!dlc && Array.isArray(opts.lotsSortis)){
+    opts.lotsSortis.forEach(l=>{
+      const p = prods.find(x=>+x.id===+l.productionId);
+      if(p && p.dlcProduit) dlc = _fusionDlcPlusCourte(dlc||null, p.dlcProduit) || '';
+    });
+  }
+  const nowIso = new Date().toISOString();
+  const baseD = lotDateJJMMAA(opts.dateFab || today());
+  const code = rec ? flavorCodeRec(rec) : flavorCode(parfum||'');
+  const base = (baseD + code + 'RM').toUpperCase().replace(/\s+/g,'');
+  const lot = lotAvecEmplacement(base, destination);
+  let nouvelId = null;
+  await db.transaction('rw', db.productions, db.marketMoves, async()=>{
+    nouvelId = await db.productions.add({
+      recipeId: rec ? rec.id : null,
+      produitLibre: rec ? undefined : (parfum||'Retour marché'),
+      lotProduction: lot, lotBase: base, date: today(),
+      composant: 'complet',
+      retourMarche: true, retourMarcheId: marketId,   // marqueur : étiquette spéciale + traçabilité
+      qteTheorique: q, qteReelle: q, qteProduite: q, qteRestante: q, ecart: 0,
+      dlcProduit: dlc || '', dlcAuto: false,          // figée : jamais recalculée par un déplacement
+      prodStatut: 'termine', prodDebutTs: nowIso, prodTermineTs: nowIso, prodTimestamp: nowIso,
+      emplacement: destination, emplacementMaj: nowIso,
+      venuDuCongelateur: isFreezer(destination),
+      histEmplacement: [{lieu:destination, ts:nowIso, motif:'retour marché (provenance non identifiée)'}]
+    });
+    await db.marketMoves.add({marketId, productionId:nouvelId, type:'retour', qte:q,
+      parfum:parfum||'', motif:'provenance non identifiée', date:today(), destination});
+  });
+  try{
+    await logStockMove({ parfumNom: parfum||'Retour marché', composant:'macaron', sens:+1, qte:q,
+      type:'marche', productionId:nouvelId, marketId, note:'retour marché (provenance non identifiée)' });
+  }catch(e){ swallow(e,'logStockMove retour non rattaché'); }
+  return { ok:true, productionId:nouvelId, lot, dlc };
 }
 // Agrège les mouvements d'un marché par lot/parfum : embarqué, retour, don, perte, vendu.
 function marketLineSummary(moves){
@@ -39364,9 +39476,118 @@ async function marketRetourForm(marketId){
     <p class="note">Pour chaque parfum, saisis les invendus et choisis leur sort. Les produits frais (jamais congelés) peuvent repartir au congélateur ; ceux déjà décongelés, non.</p>
     ${rows}
     <div class="modal-actions"><button class="btn ghost" onclick="marketDetail(${marketId})">Retour</button>
-      <button class="btn gold" onclick="marketDoRetour(${marketId},${lines.length})">Valider les retours</button></div>`);
+      <button class="btn gold" onclick="marketRetourSuivant(${marketId},${lines.length})">Suivant : ranger en boîtes →</button></div>`);
   // applique le surlignage initial des boutons par défaut
   lines.forEach((l,i)=>retourSetDest(i, _retourDest[i], true));
+}
+
+// [v1457] ÉTAPE 2 — RANGER LES INVENDUS EN BOÎTES. Ben : « sur cet écran je choisi une répartition
+// par boîte […] Je saisie la quantité par boîte ainsi que la date de fabrication si elle est connue
+// (proposer un numéro de lot existant pour rattacher la quantité à un lot existant) puis
+// l'emplacement pour les ranger proprement et distinctement ».
+//
+// UNE BOÎTE = UNE LIGNE. Chaque boîte porte : une quantité, un emplacement, et un rattachement —
+// soit un lot RÉELLEMENT sorti au marché (on re-crédite la boîte d'origine, choix de Ben), soit
+// « je ne sais pas » qui crée une ligne « retour marché » distincte (-RM), plutôt que d'imputer
+// au hasard. La proposition par défaut suit la sortie FIFO : dans la plupart des cas Ben n'a qu'à
+// valider.
+let _retourPlan = [];      // [{parfum, qte, dest}] issu de l'étape 1
+let _retourBoites = {};    // parfum -> [{qte, lotId|null, emp}]
+function marketRetourSuivant(marketId, n){
+  _retourPlan = [];
+  for(let i=0;i<n;i++){
+    const el=document.getElementById('mr_'+i); if(!el) continue;
+    const q=+el.value||0; if(q<=0) continue;
+    const choix=_retourDest[i]||'frigo';
+    if(choix==='ecarte'){ _retourPlan.push({parfum:el.getAttribute('data-parfum'), qte:q, ecarte:true}); continue; }
+    _retourPlan.push({parfum:el.getAttribute('data-parfum'), qte:q,
+      dest: choix==='congel' ? 'bahut' : 'frigo'});
+  }
+  if(!_retourPlan.some(x=>!x.ecarte)){
+    // Que des écartés (ou rien) : pas de rangement à faire, on exécute directement.
+    return marketRetourExecuter(marketId);
+  }
+  return marketRetourRangerForm(marketId);
+}
+
+async function marketRetourRangerForm(marketId){
+  window._retourMarketId = marketId;   // seule variable d'écran, relue par le redessin des blocs
+  const moves = await db.marketMoves.where('marketId').equals(marketId).toArray().catch(()=>[]);
+  const prods = await db.productions.toArray().catch(()=>[]);
+  const lotsParParfum = marketLotsSortisParParfum(moves);
+  _retourBoites = {};
+  const blocs = _retourPlan.filter(x=>!x.ecarte).map(entree=>{
+    const lots = (lotsParParfum[entree.parfum]||[]);
+    // Proposition par défaut : on impute au maximum aux lots d'origine (FIFO), le reliquat non
+    // imputable devient une boîte « provenance non identifiée ».
+    const rep = marketRepartirRetour(lots, entree.qte);
+    const boites = rep.parLot.map(x=>({ qte:x.qte, lotId:x.productionId, emp:entree.dest }));
+    if(rep.nonRattache>0) boites.push({ qte:rep.nonRattache, lotId:null, emp:entree.dest });
+    _retourBoites[entree.parfum] = boites;
+    return _retourBoiteBloc(entree.parfum, lots, prods);
+  }).join('');
+  openModal(`<h3>📦 Ranger les invendus</h3>
+    <p class="note">Une ligne = une boîte. L'app propose de recréditer les boîtes d'origine ; ajuste si tu sais d'où viennent réellement les macarons. Quand tu ne sais pas, laisse « provenance non identifiée » : une étiquette spéciale <b>retour marché</b> sera créée.</p>
+    ${blocs}
+    <div class="modal-actions"><button class="btn ghost" onclick="marketRetourForm(${marketId})">‹ Retour</button>
+      <button class="btn gold" onclick="marketRetourExecuter(${marketId})">Valider et ranger</button></div>`);
+}
+
+// Un bloc par parfum : ses boîtes, avec quantité / rattachement / emplacement.
+function _retourBoiteBloc(parfum, lots, prods){
+  const boites = _retourBoites[parfum]||[];
+  const totalBoites = round3(boites.reduce((s,b)=>s+(+b.qte||0),0));
+  const attendu = round3((_retourPlan.find(x=>x.parfum===parfum)||{}).qte||0);
+  const ecart = round3(subQty(attendu, totalBoites));
+  const optLot = (sel) => {
+    const opts = lots.map(l=>{
+      const p = prods.find(x=>+x.id===+l.productionId);
+      const lotNom = p ? (p.lotProduction||('#'+l.productionId)) : ('#'+l.productionId);
+      const dlc = (p && p.dlcProduit) ? ` · DLC ${fmtDate(p.dlcProduit)}` : '';
+      return `<option value="${l.productionId}" ${+sel===+l.productionId?'selected':''}>${esc(lotNom)} — ${qty(l.dehors)} dehors${dlc}</option>`;
+    }).join('');
+    return `<option value="" ${sel==null?'selected':''}>— provenance non identifiée (étiquette retour marché) —</option>${opts}`;
+  };
+  const rows = boites.map((b,j)=>`
+    <div style="display:flex;gap:5px;align-items:center;margin:5px 0;flex-wrap:wrap">
+      <input type="number" min="1" step="1" value="${b.qte}" style="width:62px"
+        onchange="retourBoiteSet('${escJs(parfum)}',${j},'qte',this.value)">
+      <select style="flex:1;min-width:150px;padding:5px" onchange="retourBoiteSet('${escJs(parfum)}',${j},'lotId',this.value)">${optLot(b.lotId)}</select>
+      <select style="padding:5px" onchange="retourBoiteSet('${escJs(parfum)}',${j},'emp',this.value)">${_etiqOptionsEmp(b.emp)}</select>
+      <button class="btn ghost sm" onclick="retourBoiteSuppr('${escJs(parfum)}',${j})" title="Retirer cette boîte">✕</button>
+    </div>`).join('');
+  return `<div class="panel" style="margin-bottom:8px">
+    <b>${esc(parfum||'(parfum ?)')}</b> <span class="note">— ${qty(attendu)} invendu(s) à ranger</span>
+    ${rows}
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
+      <button class="btn ghost sm" onclick="retourBoiteAjout('${escJs(parfum)}')">+ une boîte</button>
+      <span style="font-size:.8rem;color:${Math.abs(ecart)<1e-9?'#3f7d52':'#b3261e'}">
+        ${Math.abs(ecart)<1e-9 ? `réparti ✓` : (ecart>0 ? `il reste ${qty(ecart)} à répartir` : `${qty(-ecart)} de trop`)}</span>
+    </div>
+  </div>`;
+}
+function retourBoiteSet(parfum, j, champ, v){
+  const b=(_retourBoites[parfum]||[])[j]; if(!b) return;
+  if(champ==='qte') b.qte = Math.max(0, round3(+v||0));
+  else if(champ==='lotId') b.lotId = v ? +v : null;
+  else if(champ==='emp') b.emp = v;
+  if(champ!=='emp') _retourRedraw();
+}
+function retourBoiteAjout(parfum){
+  const arr=(_retourBoites[parfum] ||= []);
+  const attendu = round3((_retourPlan.find(x=>x.parfum===parfum)||{}).qte||0);
+  const dejaReparti = round3(arr.reduce((s,b)=>s+(+b.qte||0),0));
+  const reste = Math.max(0, round3(subQty(attendu, dejaReparti)));
+  arr.push({ qte: reste>0?reste:1, lotId:null, emp:(arr[0]&&arr[0].emp)||'frigo' });
+  _retourRedraw();
+}
+function retourBoiteSuppr(parfum, j){
+  const arr=_retourBoites[parfum]||[]; arr.splice(j,1); _retourRedraw();
+}
+function _retourRedraw(){
+  // Re-rend uniquement les blocs (les valeurs vivent dans _retourBoites, pas dans le DOM).
+  const mk = window._retourMarketId;
+  if(mk!=null) marketRetourRangerForm(mk);
 }
 let _retourDest={};
 function retourSetDest(i, dest, silent){
@@ -39378,17 +39599,37 @@ function retourSetDest(i, dest, silent){
     b.classList.toggle('ghost', !isOn);
   });
 }
-async function marketDoRetour(marketId, n){
-  let done=0, ecartes=0;
-  for(let i=0;i<n;i++){ const el=document.getElementById('mr_'+i); if(!el) continue;
-    const q=+el.value||0; if(q<=0) continue;
-    const pid=+el.getAttribute('data-prod'); const parfum=el.getAttribute('data-parfum');
-    const choix=_retourDest[i]||'frigo';
-    if(choix==='ecarte'){ ecartes++; continue; } // écarté : non recrédité au stock (perte assumée)
-    const dest = choix==='congel' ? 'bahut' : 'frigo'; // congélateur principal = bahut
-    try{ await marketAddRetour(marketId, pid, q, parfum, dest); done++; }catch(e){ toast(e.message||'Erreur'); }
+// [v1457] EXÉCUTE le rangement des retours : une boîte à la fois, rattachée ou non.
+// Les écartés ne sont PAS recrédités au stock (perte assumée), comportement conservé de v1?.
+// Chaque erreur est signalée SANS interrompre les autres boîtes : un emplacement refusé sur une
+// boîte ne doit pas faire perdre la saisie des cinq autres.
+async function marketRetourExecuter(marketId){
+  let done=0, ecartes=0, rm=0;
+  const echecs=[];
+  for(const entree of _retourPlan){
+    if(entree.ecarte){ ecartes++; continue; }
+    const boites = _retourBoites[entree.parfum] || [];
+    for(const b of boites){
+      const q = round3(+b.qte||0);
+      if(q<=0) continue;
+      try{
+        if(b.lotId!=null){
+          await marketAddRetour(marketId, +b.lotId, q, entree.parfum, b.emp);
+        }else{
+          const moves = await db.marketMoves.where('marketId').equals(marketId).toArray().catch(()=>[]);
+          const lots = (marketLotsSortisParParfum(moves)[entree.parfum])||[];
+          await marketAddRetourNonRattache(marketId, entree.parfum, q, b.emp, { lotsSortis:lots });
+          rm++;
+        }
+        done++;
+      }catch(e){ echecs.push(`${entree.parfum} : ${e.message||'erreur'}`); }
+    }
   }
-  toast(done?`${done} retour(s) enregistré(s)${ecartes?` · ${ecartes} écarté(s)`:''} ✓`:(ecartes?`${ecartes} parfum(s) écarté(s)`:'Aucun retour saisi')); marketDetail(marketId);
+  _retourPlan=[]; _retourBoites={};
+  if(echecs.length) toast(echecs[0]);
+  else toast(done?`${done} boîte(s) rangée(s) ✓${rm?` · ${rm} en retour marché`:''}${ecartes?` · ${ecartes} écarté(s)`:''}`
+                 :(ecartes?`${ecartes} parfum(s) écarté(s)`:'Aucun retour saisi'));
+  marketDetail(marketId);
 }
 
 // Clôture : saisie du CA par mode + contrôle de cohérence vs quantités vendues.
