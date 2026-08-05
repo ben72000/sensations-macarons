@@ -4415,3 +4415,46 @@ vraie ligne de production, exige un emplacement, DLC vide si inconnue (D) ; flux
 ⚠️ Au premier essai, la mutation faisait **planter** la suite au lieu de la faire rougir — un
 plantage en cours de fichier saute toutes les assertions suivantes et masque l'étendue réelle du
 problème. Les assertions concernées ont été rendues **défensives** avant de conclure.
+
+---
+
+## 2026-08-05 — ÉTIQUETTE RETOUR MARCHÉ, ET LA QUANTITÉ QUI MANQUAIT  (v1457 → **v1458**)
+
+**Demandé par Ben** : « l'app me propose d'editer une étiquette spéciale retour marché ».
+
+### 🚨 Le défaut trouvé en ouvrant les étiquettes — plus grave que la demande
+`renderLabelHTML` **n'imprimait pas la quantité du tout**. Elle était bien calculée (`nbPieces`) et
+bien dessinée par le moteur canvas/PDF, mais ce rendu-là l'omettait. Conséquence : l'étiquette
+« recyclable » décidée en v1454 — Ben corrige la quantité au stylo à chaque prélèvement, le QR
+renvoyant à la quantité réelle — **n'avait rien à corriger sur ce chemin**.
+
+Le correctif v1454 (imprimer le **restant** plutôt que le **produit**) était donc **nécessaire mais
+insuffisant** : il changeait *quelle* quantité est calculée sans voir qu'elle n'était jamais
+affichée. Leçon : vérifier qu'une donnée corrigée est bien *rendue*, pas seulement bien calculée —
+c'est la même erreur que la v1414 (fonction juste, câblage absent), sous une autre forme.
+
+### Deux moteurs d'étiquette, une seule règle
+Le projet a **deux** rendus : canvas/PDF (partage vers Labelife) et HTML (feuille d'impression). La
+mention « RETOUR MARCHÉ » a été posée sur **les deux** — sinon elle aurait dépendu du chemin
+d'impression choisi, ce qui est précisément le genre de divergence que ce projet combat.
+
+Placement : juste **sous le nom du produit, avant le lot** — c'est la première chose à savoir sur
+ces macarons. Style : **noir plein inversé**, car une couleur ou une trame disparaît sur une
+imprimante thermique monochrome.
+
+### L'écran proposé après le rangement
+`marketRetourExecuter` collecte les lignes « retour marché » créées et propose leurs étiquettes
+juste après — ce sont les seules qui n'en ont aucune (les boîtes recréditées en ont déjà une). Les
+boîtes **sans DLC** (aucune date connue sur les lots sortis) sont signalées en rouge, avec la
+mention explicite que l'app n'en invente pas.
+
+### Suite v1458 : 25 assertions (`tests/v1458-etiquette-retour-marche.test.js`)
+Le marqueur est exposé par `buildLabelData`, la quantité reste le restant et le QR reste bâti sur le
+numéro de lot — non-régressions v1454 (A) ; rendu HTML : **quantité imprimée** (elle ne l'était pas
+du tout), bandeau retour présent et placé avant le lot, absent sur un lot normal, aucune ligne
+fantôme quand la quantité est inconnue (B) ; rendu canvas : même bandeau, même ordre, en gras (C) ;
+style inversé pour la thermique (D) ; écran d'étiquettes proposé seulement s'il y a des lignes
+retour, moteur d'impression existant réutilisé, boîtes sans DLC signalées, pas d'écran vide (E).
+
+**Sensibilité vérifiée par mutation réelle de `app.js`** : retirer la quantité et le bandeau du
+rendu HTML fait rougir 3 assertions, sans planter la suite.

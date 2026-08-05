@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1457'; // suite : voir tests/v1457-retours-marche.test.js
-const APP_MAJ = 'RETOURS DE MARCHE : RANGER LES INVENDUS EN BOITES. Ben : « dans l\u2019onglet retour marche je saisi les quantites retour de chaque parfums ; l\u2019app fait le delta puis propose de ranger chaque quantite pour chaque parfums. Sur cet ecran je choisi une repartition par boite […] puis l\u2019emplacement pour les ranger proprement et distinctement ». L\u2019ecran de retour existait deja (saisie par parfum, delta pre-calcule, congelateur / frigo / ecarte, recongelation interdite si deja decongele) ; il gagne une DEUXIEME ETAPE de rangement : une ligne = une boite, avec sa quantite, son emplacement et son rattachement. DEFAUT CORRIGE AU PASSAGE : la provenance etait reduite au PREMIER lot sorti (« compat affichage ») — tout le retour lui etait credite, et un lot pouvait recuperer PLUS de pieces qu\u2019il n\u2019en avait fourni pendant que les autres restaient courts. Desormais chaque lot est plafonne a ce qu\u2019il a reellement donne, et le surplus non imputable devient une ligne « RETOUR MARCHE » distincte (suffixe -RM, etiquette speciale) plutot que d\u2019etre impute au hasard. TROIS DECISIONS DE BEN APPLIQUEES : la DLC d\u2019origine est CONSERVEE — avant, elle etait recalculee et un retour au congelateur la PROLONGEAIT alors que les macarons venaient de passer la journee dehors ; une provenance inconnue donne une ligne non rattachee plutot qu\u2019un choix force ; les boites d\u2019origine sont recreditees en priorite. Une ligne non rattachee prend la DLC la plus courte des lots sortis, et si aucune n\u2019est connue le champ reste VIDE — une DLC inventee sur du produit fini serait plus dangereuse qu\u2019une DLC absente, qui se voit et se corrige. Suite v1457 : 40 assertions, dont la reconciliation « un lot ne recupere jamais plus qu\u2019il n\u2019a fourni », verifiee sensible par mutation reelle de app.js.';
+const APP_VERSION = 'v1458'; // suite : voir tests/v1458-etiquette-retour-marche.test.js
+const APP_MAJ = 'ETIQUETTE SPECIALE RETOUR MARCHE \u2014 ET LA QUANTITE QUI MANQUAIT. Ben : « l\u2019app me propose d\u2019editer une etiquette speciale retour marche ». FAIT : mention « RETOUR MARCHE » sur les DEUX moteurs d\u2019etiquette (canvas/PDF pour Labelife, HTML pour la feuille d\u2019impression), placee juste sous le nom du produit \u2014 la premiere chose a savoir sur ces macarons \u2014 en noir plein inverse, lisible sur une thermique monochrome ou une couleur ou une trame disparaitrait. Apres le rangement d\u2019un retour, l\u2019app propose directement les etiquettes des boites creees, et signale en rouge celles SANS DLC (aucune date connue sur les lots sortis) : a renseigner avant de vendre, l\u2019app n\u2019en invente pas. DEFAUT PLUS GRAVE TROUVE EN OUVRANT LES ETIQUETTES : la QUANTITE n\u2019etait pas imprimee du tout par le rendu HTML. Elle etait bien calculee et bien dessinee par le moteur canvas/PDF, mais ce rendu-la l\u2019omettait \u2014 l\u2019etiquette « recyclable » decidee en v1454 (Ben corrige la quantite au stylo a chaque prelevement) n\u2019avait donc RIEN a corriger sur ce chemin. Le correctif v1454 changeait QUELLE quantite est calculee, sans voir qu\u2019elle n\u2019etait jamais affichee : necessaire mais insuffisant. Corrige. Suite v1458 : 25 assertions, sensibilite verifiee par mutation reelle de app.js.';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
 const _APP_MAJ_v1448_ARCHIVE_INUTILISEE = 'LE CHAMP « N° LOT DE PRODUCTION » MENTAIT EN MODE DUO. Ben, capture à l\u2019appui : lançant Chocolat passion + Pistache en meringue commune, le champ affichait « 030826RAF » — ni CHP ni PIS, mais RAF (Coco Rafaello, une tout autre recette). CAUSE : la branche duo de saveProd() ne lit JAMAIS ce champ — chaque parfum reçoit son propre lot, calculé indépendamment. Sa valeur affichée venait de prodRefreshLot(), qui lit TOUJOURS la recette unique (f_rec) — or f_rec reste dans la page (juste masquée) en duo, avec la valeur de la DERNIÈRE recette affichée avant le passage en duo. Un champ qui ment ET n\u2019a aucun effet réel est pire qu\u2019un champ absent. Même défaut, plus discret, sur la case « diviser en 2 lots » (v1445/v1446) : cochée, ce champ n\u2019est pas plus lu par le lancement réel. FIX : le champ est désormais masqué dans ces deux cas ; à la place, les VRAIS numéros de lot qui seront utilisés sont prévisualisés — en mode duo dans le récapitulatif de répartition, et pour la division bicolore dans son propre encart — calculés avec EXACTEMENT la même formule que la sauvegarde réelle, jamais un second calcul qui pourrait diverger. Suite v1448 : 12 assertions (tests/v1448-lot-duo-preview.test.js), dont une réconciliation qui rejoue la vraie formule de sauvegarde et vérifie que l\u2019aperçu affiche bien 030826CHP-CO et 030826PIS-CO — jamais RAF.';
@@ -39606,6 +39606,7 @@ function retourSetDest(i, dest, silent){
 async function marketRetourExecuter(marketId){
   let done=0, ecartes=0, rm=0;
   const echecs=[];
+  const rmIds=[];   // lignes « retour marché » créées : ce sont les seules sans étiquette
   for(const entree of _retourPlan){
     if(entree.ecarte){ ecartes++; continue; }
     const boites = _retourBoites[entree.parfum] || [];
@@ -39618,7 +39619,8 @@ async function marketRetourExecuter(marketId){
         }else{
           const moves = await db.marketMoves.where('marketId').equals(marketId).toArray().catch(()=>[]);
           const lots = (marketLotsSortisParParfum(moves)[entree.parfum])||[];
-          await marketAddRetourNonRattache(marketId, entree.parfum, q, b.emp, { lotsSortis:lots });
+          const r = await marketAddRetourNonRattache(marketId, entree.parfum, q, b.emp, { lotsSortis:lots });
+          if(r && r.productionId!=null) rmIds.push(r.productionId);
           rm++;
         }
         done++;
@@ -39629,7 +39631,31 @@ async function marketRetourExecuter(marketId){
   if(echecs.length) toast(echecs[0]);
   else toast(done?`${done} boîte(s) rangée(s) ✓${rm?` · ${rm} en retour marché`:''}${ecartes?` · ${ecartes} écarté(s)`:''}`
                  :(ecartes?`${ecartes} parfum(s) écarté(s)`:'Aucun retour saisi'));
+  // [v1458] Ben : « l'app me propose d'editer une étiquette spéciale retour marché ». On propose
+  // l'impression des lignes RM qui viennent d'être créées — c'est le seul moment où elles n'ont
+  // aucune étiquette (les boîtes recréditées, elles, en ont déjà une : Ben corrige au stylo, ou
+  // réimprime via le bouton permanent de la vue des boîtes).
+  if(rmIds.length){ return marketRetourEtiquettesForm(rmIds, marketId); }
   marketDetail(marketId);
+}
+
+// [v1458] Propose d'imprimer les étiquettes des lignes « retour marché » tout juste créées.
+// Réutilise le moteur d'étiquette existant (buildLabelsPDF / shareLabelImage) — aucun second
+// chemin d'impression. Une par une : chaque boîte a son propre numéro et sa propre quantité.
+async function marketRetourEtiquettesForm(ids, marketId){
+  const prods = await db.productions.toArray().catch(()=>[]);
+  const lignes = ids.map(id=>prods.find(p=>+p.id===+id)).filter(Boolean);
+  if(!lignes.length){ marketDetail(marketId); return; }
+  const rows = lignes.map(p=>`<div class="sum-box">
+      <span><b>${esc(p.lotProduction||('#'+p.id))}</b><br><span class="note">${qty(round3(+p.qteRestante||0))} pièce(s)${p.dlcProduit?` · DLC ${fmtDate(p.dlcProduit)}`:' · <b style="color:#b3261e">DLC à renseigner</b>'} · ${esc(empNom(p.emplacement))}</span></span>
+      <button class="btn ghost sm" onclick="shareLabelImage(${p.id})">🖨 Étiquette</button>
+    </div>`).join('');
+  const sansDlc = lignes.filter(p=>!p.dlcProduit).length;
+  openModal(`<h3>↩ Étiquettes retour marché</h3>
+    <p class="note">${lignes.length} boîte(s) créée(s) sans rattachement à un lot d'origine. Leur étiquette porte la mention <b>RETOUR MARCHÉ</b> pour les distinguer d'un lot de production.</p>
+    ${sansDlc?`<p class="note" style="color:#b3261e">⚠ ${sansDlc} boîte(s) sans DLC : aucune date n'était connue sur les lots sortis. Renseigne-la depuis la fiche du lot avant de vendre — l'app n'en invente pas.</p>`:''}
+    ${rows}
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal();marketDetail(${marketId})">Fermer</button></div>`);
 }
 
 // Clôture : saisie du CA par mode + contrôle de cohérence vs quantités vendues.
@@ -51608,6 +51634,10 @@ async function labelToCanvas(d){
   }
   ctx.fillText(titre, tx, y);
   y += mm(titleMm) + mm(4);
+  // [v1458] BANDEAU « RETOUR MARCHÉ » — placé juste sous le nom, avant le lot : c'est la première
+  // chose à savoir sur ces macarons (revenus d'un marché, provenance non identifiée). En haut et
+  // en gras, il reste lisible même si l'étiquette est en partie masquée dans une pile.
+  if(d.retourMarche) drawLine('↩ RETOUR MARCHÉ', 5, true, 3);
   drawLine('Lot : '+d.lot, 4.5, false, 3);
   if(d.nbPieces!=null) drawLine((typeof qty==='function'?qty(d.nbPieces):d.nbPieces)+' pièces', 4.5, false, 3);
   if(d.emplacement) drawLine('Empl. : '+d.emplacement, 4.5, false, 3);
@@ -53459,6 +53489,11 @@ async function buildLabelData(prodId){
     produit: _nomAffiche,
     composant: _comp,
     nbPieces: _nbPieces,
+    // [v1458] Ben : « l'app me propose d'editer une étiquette spéciale retour marché ». Ces
+    // macarons sont revenus d'un marché, provenance non identifiée : leur étiquette doit se
+    // distinguer AU COUP D'ŒIL dans un frigo, sinon rien ne les différencie d'un lot de
+    // production normal — et c'est justement leur particularité qu'il faut garder en tête.
+    retourMarche: !!p.retourMarche,
     lot: p.lotProduction||'—',
     dlc: (function(){ const d=(typeof prodDlcEffective==='function')?prodDlcEffective(p):p.dlcProduit; return d ? fmtDate(d) : '—'; })(),
     // Fabrication = heure de FIN de production (prodTermineTs).
@@ -53474,11 +53509,19 @@ async function buildLabelData(prodId){
 // La lettre d'emplacement est affichée dans une pastille pour localiser la production.
 function renderLabelHTML(d){
   const pastille = d.empLettre ? `<span class="emp">${esc(d.empLettre)}</span>` : '';
+  // [v1458] LA QUANTITÉ MANQUAIT ICI. Elle était calculée (`nbPieces`) et imprimée par le moteur
+  // canvas/PDF, mais ce rendu HTML ne l'affichait pas — l'étiquette « recyclable » de Ben (il
+  // corrige la quantité au stylo à chaque prélèvement) n'avait donc rien à corriger sur ce chemin.
+  const pieces = (d.nbPieces!=null) ? `<div class="row">${esc(typeof qty==='function'?qty(d.nbPieces):String(d.nbPieces))} pièces</div>` : '';
+  // Bandeau retour marché : même information que sur le moteur canvas, même place (sous le nom).
+  const retour = d.retourMarche ? `<div class="rm">↩ RETOUR MARCHÉ</div>` : '';
   return `<div class="lab">
      <div class="q"><img src="${d.qr}"></div>
      <div class="t">
        <div class="prod">${esc(d.produit)}${pastille}</div>
+       ${retour}
        <div class="row">Lot ${esc(d.lot)}</div>
+       ${pieces}
        <div class="dlc">DLC ${esc(d.dlc)}</div>
        <div class="row">Fab. ${esc(d.fab)}</div>
      </div>
@@ -53508,6 +53551,10 @@ function printLabelSheet(labels, titre){
      .lab .prod .emp { display:inline-block; border:0.3mm solid #000; border-radius:1mm; padding:0 0.8mm; margin-left:1mm; font-size:2.6mm; line-height:1; }
      .lab .row { font-size:2.3mm; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
      .lab .dlc { font-size:2.7mm; font-weight:bold; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+     /* [v1458] Bandeau « retour marché » : inversé (noir plein) pour rester lisible sur une
+        imprimante thermique monochrome, où une couleur ou une trame disparaîtrait. */
+     .lab .rm { font-size:2.4mm; font-weight:bold; background:#000; color:#fff; padding:0.2mm 0.8mm;
+                display:inline-block; border-radius:0.6mm; margin:0.3mm 0; }
    </style></head><body>
    ${labels.map(renderLabelHTML).join('')}
    <script>window.onload=function(){setTimeout(function(){window.print();},300);};window.onafterprint=function(){window.close();};<\/script>

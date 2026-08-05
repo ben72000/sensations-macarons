@@ -166,7 +166,8 @@ const SUITES = [
   'v1454-assemblage-lot-entier.test.js',        // v1454 · assembler un lot de coques réparti en N boîtes : regroupement atomique amont (réconciliation « aucune coque créée ni perdue »), étiquette imprimant la quantité restante
   'v1455-transfert-boites.test.js',             // v1455 · transfert partiel de pièces entre deux boîtes d'un même lot (réconciliation, archivage si la source se vide, DLC la plus courte, rendu dans le fil de traçabilité)
   'v1456-reimpression-fusion.test.js',          // v1456 · réimpression d'étiquette proposée après une fusion (numéro de lot inchangé, aucune écriture en base) + bouton étiquette permanent par boîte
-  'v1457-retours-marche.test.js'                // v1457 · retours de marché rangés en boîtes : rattachement plafonné au réellement sorti, ligne « retour marché » quand la provenance est inconnue, DLC d'origine conservée
+  'v1457-retours-marche.test.js',               // v1457 · retours de marché rangés en boîtes : rattachement plafonné au réellement sorti, ligne « retour marché » quand la provenance est inconnue, DLC d'origine conservée
+  'v1458-etiquette-retour-marche.test.js'       // v1458 · mention RETOUR MARCHÉ sur les 2 moteurs d'étiquette + la quantité qui n'était pas imprimée du tout par le rendu HTML
 ];
 
 let allOk = true;
