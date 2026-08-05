@@ -167,7 +167,8 @@ const SUITES = [
   'v1455-transfert-boites.test.js',             // v1455 · transfert partiel de pièces entre deux boîtes d'un même lot (réconciliation, archivage si la source se vide, DLC la plus courte, rendu dans le fil de traçabilité)
   'v1456-reimpression-fusion.test.js',          // v1456 · réimpression d'étiquette proposée après une fusion (numéro de lot inchangé, aucune écriture en base) + bouton étiquette permanent par boîte
   'v1457-retours-marche.test.js',               // v1457 · retours de marché rangés en boîtes : rattachement plafonné au réellement sorti, ligne « retour marché » quand la provenance est inconnue, DLC d'origine conservée
-  'v1458-etiquette-retour-marche.test.js'       // v1458 · mention RETOUR MARCHÉ sur les 2 moteurs d'étiquette + la quantité qui n'était pas imprimée du tout par le rendu HTML
+  'v1458-etiquette-retour-marche.test.js',      // v1458 · mention RETOUR MARCHÉ sur les 2 moteurs d'étiquette + la quantité qui n'était pas imprimée du tout par le rendu HTML
+  'v1459-macarons-vendus-mois.test.js'          // v1459 · macarons vendus du mois sur l'accueil (dons et reprises exclus, marchés inclus) + date du jour dans le bandeau
 ];
 
 let allOk = true;

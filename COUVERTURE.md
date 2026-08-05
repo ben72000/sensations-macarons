@@ -4458,3 +4458,60 @@ retour, moteur d'impression existant réutilisé, boîtes sans DLC signalées, p
 
 **Sensibilité vérifiée par mutation réelle de `app.js`** : retirer la quantité et le bandeau du
 rendu HTML fait rougir 3 assertions, sans planter la suite.
+
+---
+
+## 2026-08-05 — MACARONS VENDUS SUR LE MOIS, ET LA DATE DU JOUR  (v1458 → **v1459**)
+
+**Demandé par Ben** : « Peux tu afficher sur l'écran d'accueil le nombre de macarons vendus sur le
+mois ? Et sur le tableau de bord indiquer la date du jour, pas seulement le mois ? »
+
+*(L'accueil **est** le tableau de bord — même écran, `renderDash`. Les deux demandes portent donc
+sur la même page.)*
+
+### Le piège : « vendus » n'est pas « sortis »
+`orderTotalMacarons` existe déjà et compte tous les macarons d'une commande, **dons compris**.
+C'est **voulu** : elle sert à lier les lots de production, et un macaron offert quitte bien le
+stock physiquement. La réutiliser telle quelle pour ce compteur aurait fait passer les dons pour du
+chiffre d'affaires.
+
+Un compteur distinct a donc été écrit (`orderMacaronsVendus`), et **les deux doivent coexister** :
+les confondre ferait soit disparaître les dons de la production, soit les faire passer pour des
+ventes. Les **reprises d'historique** sont également exclues — elles décrivent des ventes déjà
+faites ailleurs, les recompter gonflerait le mois courant.
+
+Côté marchés, la règle du « vendu » (`sortie − retour − don − perte`) **n'est pas redite** :
+`marketLineSummary` est réutilisée.
+
+**Période retenue** : la **date de la commande**, la même base que le compteur de commandes affiché
+juste à côté — et volontairement **pas** la date d'encaissement. Un paiement partiel ne dit pas
+quels macarons il couvre ; inventer cette répartition donnerait un compte faux d'apparence exacte.
+
+### La date
+Le bandeau affichait `month:'long', year:'numeric'`. Il montre désormais aussi le jour et le jour de
+la semaine. L'espacement de lettres du style (`.14em` + majuscules) a dû être resserré : la chaîne
+plus longue débordait sur un écran étroit.
+
+### Suite v1459 : 27 assertions (`tests/v1459-macarons-vendus-mois.test.js`)
+Chaque type de ligne compte pour ce qu'il vend, prestation à zéro (A) ; **les dons sont exclus des
+ventes mais restent comptés par `orderTotalMacarons`, et les deux fonctions divergent bien** (B) ;
+commande mixte, chiffres réels (C) ; périmètre du calcul d'accueil — reprises et histo exclus,
+filtre de mois, marchés ajoutés, chargement des mouvements seulement s'il y a un marché, échec côté
+marché n'empêchant pas l'accueil de s'afficher (D) ; affichage masqué en mode discret (E) ; date du
+jour dans le bandeau (F).
+
+### ⚠️ DEUX MUTATIONS BLANCHES AVANT D'EN TROUVER UNE VRAIE
+La vérification par mutation a d'abord donné **27 verts deux fois de suite** :
+1. Retirer la garde `if(ln.type==='don') return;` — sans effet, car la fonction n'a **aucune**
+   branche `don` : une ligne de don n'y contribue déjà rien.
+2. Ajouter une branche `don` en laissant la garde — sans effet non plus, la garde l'interceptant
+   avant.
+
+**Deux protections redondantes se masquaient mutuellement.** Il a fallu retirer la garde **et**
+ajouter la branche — la vraie erreur qu'on commettrait en recopiant `orderTotalMacarons` — pour
+obtenir 4 rouges, exactement sur les assertions concernant les dons.
+
+Leçon : une mutation qui laisse tout vert ne prouve pas que le test est aveugle ; elle peut aussi
+signaler qu'on a muté du code sans effet. Il faut alors comprendre **pourquoi** avant de conclure,
+et non déclarer le test insensible. La garde redondante a été **conservée** : elle documente
+l'intention et protège d'un futur copier-coller.

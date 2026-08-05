@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1458'; // suite : voir tests/v1458-etiquette-retour-marche.test.js
-const APP_MAJ = 'ETIQUETTE SPECIALE RETOUR MARCHE \u2014 ET LA QUANTITE QUI MANQUAIT. Ben : « l\u2019app me propose d\u2019editer une etiquette speciale retour marche ». FAIT : mention « RETOUR MARCHE » sur les DEUX moteurs d\u2019etiquette (canvas/PDF pour Labelife, HTML pour la feuille d\u2019impression), placee juste sous le nom du produit \u2014 la premiere chose a savoir sur ces macarons \u2014 en noir plein inverse, lisible sur une thermique monochrome ou une couleur ou une trame disparaitrait. Apres le rangement d\u2019un retour, l\u2019app propose directement les etiquettes des boites creees, et signale en rouge celles SANS DLC (aucune date connue sur les lots sortis) : a renseigner avant de vendre, l\u2019app n\u2019en invente pas. DEFAUT PLUS GRAVE TROUVE EN OUVRANT LES ETIQUETTES : la QUANTITE n\u2019etait pas imprimee du tout par le rendu HTML. Elle etait bien calculee et bien dessinee par le moteur canvas/PDF, mais ce rendu-la l\u2019omettait \u2014 l\u2019etiquette « recyclable » decidee en v1454 (Ben corrige la quantite au stylo a chaque prelevement) n\u2019avait donc RIEN a corriger sur ce chemin. Le correctif v1454 changeait QUELLE quantite est calculee, sans voir qu\u2019elle n\u2019etait jamais affichee : necessaire mais insuffisant. Corrige. Suite v1458 : 25 assertions, sensibilite verifiee par mutation reelle de app.js.';
+const APP_VERSION = 'v1459'; // suite : voir tests/v1459-macarons-vendus-mois.test.js
+const APP_MAJ = 'MACARONS VENDUS SUR LE MOIS, ET LA DATE DU JOUR. Ben : « Peux tu afficher sur l\u2019ecran d\u2019accueil le nombre de macarons vendus sur le mois ? Et sur le tableau de bord indiquer la date du jour, pas seulement le mois ? ». FAIT : la carte « CA du mois » affiche desormais aussi le nombre de macarons vendus, avec la part realisee en marche quand il y en a ; et le bandeau du tableau de bord indique le jour de la semaine, le jour, le mois et l\u2019annee (il ne montrait que le mois et l\u2019annee). LE PIEGE EVITE : « vendus » n\u2019est pas « sortis ». Une fonction comptait deja les macarons d\u2019une commande, DONS COMPRIS \u2014 c\u2019est voulu, elle sert a lier les lots de production (un macaron offert quitte bien le stock). La reutiliser ici aurait fait passer les dons pour du chiffre d\u2019affaires. Un compteur distinct a donc ete ecrit, et les deux coexistent. Les reprises d\u2019historique sont aussi exclues : elles decrivent des ventes deja faites ailleurs. Cote marches, la regle du « vendu » (sorti moins retours, dons et pertes) n\u2019est PAS redite \u2014 la fonction existante est reutilisee. Periode retenue : la DATE de la commande, comme le compteur de commandes juste a cote, et volontairement PAS la date d\u2019encaissement : un paiement partiel ne dit pas quels macarons il couvre, et inventer cette repartition donnerait un compte faux d\u2019apparence exacte. Suite v1459 : 27 assertions, sensibilite verifiee par mutation reelle de app.js.';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
 const _APP_MAJ_v1448_ARCHIVE_INUTILISEE = 'LE CHAMP « N° LOT DE PRODUCTION » MENTAIT EN MODE DUO. Ben, capture à l\u2019appui : lançant Chocolat passion + Pistache en meringue commune, le champ affichait « 030826RAF » — ni CHP ni PIS, mais RAF (Coco Rafaello, une tout autre recette). CAUSE : la branche duo de saveProd() ne lit JAMAIS ce champ — chaque parfum reçoit son propre lot, calculé indépendamment. Sa valeur affichée venait de prodRefreshLot(), qui lit TOUJOURS la recette unique (f_rec) — or f_rec reste dans la page (juste masquée) en duo, avec la valeur de la DERNIÈRE recette affichée avant le passage en duo. Un champ qui ment ET n\u2019a aucun effet réel est pire qu\u2019un champ absent. Même défaut, plus discret, sur la case « diviser en 2 lots » (v1445/v1446) : cochée, ce champ n\u2019est pas plus lu par le lancement réel. FIX : le champ est désormais masqué dans ces deux cas ; à la place, les VRAIS numéros de lot qui seront utilisés sont prévisualisés — en mode duo dans le récapitulatif de répartition, et pour la division bicolore dans son propre encart — calculés avec EXACTEMENT la même formule que la sauvegarde réelle, jamais un second calcul qui pourrait diverger. Suite v1448 : 12 assertions (tests/v1448-lot-duo-preview.test.js), dont une réconciliation qui rejoue la vraie formule de sauvegarde et vérifie que l\u2019aperçu affiche bien 030826CHP-CO et 030826PIS-CO — jamais RAF.';
@@ -8273,6 +8273,32 @@ async function renderDash(){
   });
   _nbEncMois += closedMk.filter(k=>mkInMonth(k.date)).length;
   const nbMonth = orders.filter(c=>{const d=new Date(c.date);return d.getMonth()===m&&d.getFullYear()===y;}).length;
+  // [v1459] MACARONS VENDUS SUR LE MOIS (demande de Ben). Deux sources, comme pour le CA :
+  //  · les COMMANDES du mois — dons exclus (`orderMacaronsVendus`), reprises d'historique exclues
+  //    (elles décrivent des ventes déjà faites ailleurs, les recompter gonflerait le mois courant)
+  //  · les MARCHÉS CLOS du mois — `marketLineSummary` sait déjà ce qui a été vendu
+  //    (sortie − retour − don − perte), on ne recalcule pas cette règle ici
+  // Période : la DATE de la commande / du marché, la même base que le compteur de commandes
+  // au-dessus. Volontairement PAS la date d'encaissement : un paiement partiel ne dit pas quels
+  // macarons il couvre, et inventer cette répartition donnerait un compte faux d'apparence exacte.
+  let macVendusMois = 0;
+  orders.forEach(o=>{
+    if(o.histo || estReprise(o)) return;
+    if(ymKey(o.date||'') !== _mkCourant) return;
+    macVendusMois += orderMacaronsVendus(o);
+  });
+  let _macMarches = 0;
+  try{
+    const _mkMois = closedMk.filter(k=>mkInMonth(k.date));
+    if(_mkMois.length){
+      const _allMoves = await db.marketMoves.toArray().catch(()=>[]);
+      _mkMois.forEach(k=>{
+        marketLineSummary(_allMoves.filter(mv=>+mv.marketId===+k.id))
+          .forEach(l=>{ _macMarches += Math.max(0, +l.vendu||0); });
+      });
+    }
+  }catch(e){ swallow(e,'macarons vendus marchés'); }
+  macVendusMois = round3(macVendusMois + _macMarches);
   // [A11-display] CA cumulé depuis le début : on sépare le fil de l'eau (hors reprises, base fiscale)
   // des reprises d'historique, pour afficher les deux clairement sans mélanger.
   const _caFilEau = money2(orders.filter(o=>!estReprise(o)).reduce((s,c)=>s+(+c.montant||0),0) + closedMk.reduce((s,k)=>s+k.montant,0));
@@ -8341,7 +8367,7 @@ async function renderDash(){
    <div class="home-hero"><img src="${HOME_PHOTO}" alt="Macarons Sensations Macarons">
      <div class="home-hero-caption">
        <span class="hhc-title">Tableau de bord</span>
-       <span class="hhc-sub">${now.toLocaleDateString('fr-FR',{month:'long',year:'numeric'})}</span>
+       <span class="hhc-sub">${now.toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</span>
        <span class="hhc-clock" id="homeClock">${now.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}</span>
        <span class="hhc-ca">${privacyModeEnabled()?'•••':euro(caMonth)}<span class="hhc-ca-lbl">CA ${esc(_moisCourantLbl)}</span></span>
        <span style="margin-top:6px;font-size:.62rem;opacity:.5;letter-spacing:.05em">${APP_VERSION}</span>
@@ -8358,7 +8384,8 @@ async function renderDash(){
    ${dlcAlert.length?`<div class="banner">⏰ <div><b>DLC matières proche</b> : ${dlcAlert.map(a=>`${esc(a.nom)} (${a.j<=0?'expiré':a.j+' j'})`).join(' · ')}</div></div>`:''}
    ${prodDlcAlert.length?`<div class="banner" style="background:#fdf3f2">🧁 <div><b>DLC produits finis</b> <span style="font-size:.76rem;color:#9a8a82">— touche un lot pour intervenir</span><br>${prodDlcAlert.slice(0,6).map(a=>`<span style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted" onclick="dlcActions(${a.id})">${esc(a.nom)} ${empIcon(a.emplacement)}${a.emplacement?' '+empLettre(a.emplacement):''} (${a.j<=0?'<b style="color:#b3261e">expiré</b>':a.j+' j'}, lot ${esc(a.lot)})</span>`).join(' · ')}${prodDlcAlert.length>6?` … +${prodDlcAlert.length-6}`:''}</div></div>`:''}
    <div class="cards">
-     <div class="card clickable accent" style="--card-accent:#3f7d52" onclick="caMonthDetail()" title="Voir le détail des encaissements du mois"><div class="corner">€</div><div class="lbl">CA ${esc(_moisCourantLbl)} ${kpiI('ca_mois')}</div><div class="val">${euro(caMonth)}</div><div class="sub">${_nbEncMois} rentrée(s) d'argent · voir le détail ›</div></div>
+     <div class="card clickable accent" style="--card-accent:#3f7d52" onclick="caMonthDetail()" title="Voir le détail des encaissements du mois"><div class="corner">€</div><div class="lbl">CA ${esc(_moisCourantLbl)} ${kpiI('ca_mois')}</div><div class="val">${euro(caMonth)}</div><div class="sub">${_nbEncMois} rentrée(s) d'argent · voir le détail ›</div>
+       <div class="sub" style="margin-top:2px;border-top:1px solid rgba(0,0,0,.07);padding-top:4px">🍬 <b>${qtyP(macVendusMois)}</b> macaron(s) vendu(s)${_macMarches>0?` <span style="color:#9a8a82">dont ${qtyP(_macMarches)} en marché</span>`:''}</div></div>
      <div class="card clickable accent" style="--card-accent:#c9a227" onclick="goView('rentabilite')" title="Voir la rentabilité par parfum"><div class="corner">📈</div><div class="lbl">Marge nette / macaron ${kpiI('marge_nette')}</div><div class="val">${privacyModeEnabled()?'•••':(margeNetteParMacaron!=null?euro(margeNetteParMacaron):'—')}</div><div class="sub">${margeNetteParMacaron!=null?(_piecesReprise>0?`hors ${qty(_piecesReprise)} pc de reprise ›`:'après coûts, charges & dons ›'):'pas encore de ventes ›'}</div></div>
      <div class="card clickable accent" style="--card-accent:#d98324" onclick="goView('rentabilite')" title="Impact des dons sur la marge"><div class="corner">🎁</div><div class="lbl">Coût des dons ${kpiI('cout_dons')}</div><div class="val">${privacyModeEnabled()?'•••':(coutDons!=null?euro(coutDons):'—')}</div><div class="sub">${(coutDons!=null&&piecesDon>0)?`${qty(piecesDon)} offert(s) · marge après dons ${euro(margeApresDons)} ›`:'aucun don enregistré ›'}</div></div>
      ${(nbLivraisons>0)?`<div class="card clickable accent" style="--card-accent:${livBeneficeNet>=0?'#3f7d52':'#b3261e'}" onclick="goView('rentabilite')" title="Impact des livraisons sur la marge"><div class="corner">🚚</div><div class="lbl">Impact livraisons</div><div class="val">${privacyModeEnabled()?'•••':`${livBeneficeNet>=0?'+':''}${euro(livBeneficeNet)}`}</div><div class="sub">${nbLivraisons} tournée(s) · coût ${euro(coutLivraisonBrut)} ›</div></div>`:''}
@@ -13335,6 +13362,23 @@ function orderTotalMacarons(o){
     else if(ln.type==='evenement') n += +ln.evQte||0;
     else if(ln.type==='vrac'||ln.type==='sachet') n += (ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0) + (+ln.sansParfum||0);
     else if(ln.type==='don'){ n += (ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0) + (ln.items||[]).reduce((s,p)=>s+(+p.qte||0),0); }
+    else if(ln.type==='grand') n += (ln.items||[]).reduce((s,p)=>s+(+p.qte||0),0);
+  });
+  return round3(n);
+}
+// [v1459] Macarons réellement VENDUS d'une commande — les DONS sont exclus. PURE.
+// Distinct de `orderTotalMacarons` ci-dessus, qui compte TOUT ce qui sort (dons compris) parce
+// qu'il sert à lier des lots de production : physiquement, un macaron offert sort quand même du
+// stock. Ici on répond à une autre question — « combien en ai-je vendu » — et un don, par
+// définition, n'est pas une vente. Les deux fonctions doivent coexister : les confondre ferait
+// soit disparaître les dons de la production, soit les faire passer pour du chiffre.
+function orderMacaronsVendus(o){
+  let n=0;
+  orderToLines(o).forEach(ln=>{
+    if(ln.type==='don') return;                       // offert : sorti du stock, mais pas vendu
+    if(ln.type==='coffret') n += +ln.taille||0;
+    else if(ln.type==='evenement') n += +ln.evQte||0;
+    else if(ln.type==='vrac'||ln.type==='sachet') n += (ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0) + (+ln.sansParfum||0);
     else if(ln.type==='grand') n += (ln.items||[]).reduce((s,p)=>s+(+p.qte||0),0);
   });
   return round3(n);
