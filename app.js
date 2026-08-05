@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1460'; // suite : voir tests/v1459-macarons-vendus-mois.test.js (corrige la v1459)
-const APP_MAJ = 'MACARONS VENDUS DU MOIS : DEUX DEFAUTS CORRIGES (corrige la v1459, qui avait ajoute la ligne mais sur une base de calcul incoherente). Ben, sur la ligne « macaron(s) vendu(s) » de la carte CA de l\u2019accueil : « je la vois mais le chiffre me parait faux ». L\u2019audit a trouve DEUX defauts distincts. ① PERIODE INCOHERENTE avec le CA de la MEME carte : les macarons comptaient les commandes DATEES du mois, le CA comptait les ENCAISSEMENTS \u2014 une commande de juillet payee en aout affichait son CA en aout et ses macarons en juillet, deux chiffres cote a cote decrivant deux choses differentes. ② DOUBLE COMPTAGE mere/fille : quand un client paie d\u2019avance (commande « mere ») puis vient chercher en plusieurs fois (des « filles », chacune avec ses propres lignes de macarons), la somme comptait la mere ET ses filles. CHOIX DE BEN : compter les macarons des commandes ENCAISSEES du mois, meme base que le CA \u2014 ce qui regle ② A LA RACINE, une fille n\u2019ayant jamais de paiement propre. Un paiement PARTIEL repartit les macarons au PRORATA du montant encaisse (exactement ce que fait deja le CA, qui etale l\u2019argent sur ses mois de paiement), le ratio etant plafonne a 1 pour qu\u2019un trop-percu ne fasse pas apparaitre plus de macarons que la commande n\u2019en contient. Le total est arrondi UNE fois, a la fin. AU PASSAGE : la date du jour etait deja affichee sur le bandeau « Tableau de bord » \u2014 verifie avant de coder, rien ajoute. Suite v1459 : 20 assertions, dont la reconciliation « les mois de paiement totalisent exactement la commande » ; sensibilite verifiee par mutation reelle de app.js (8 rouges).';
+const APP_VERSION = 'v1461'; // suite : voir tests/v1461-macarons-source-unique.test.js
+const APP_MAJ = 'LES MACARONS VENDUS COMPTES AU MEME ENDROIT QUE LE CA. Ben : « les macarons comptes ne semblent pas justes, premierement parce qu\u2019ils ne comptent pas les marches et deuxiemement meme isoles du marche le compte semble faux ». CAUSE RACINE : le tableau de bord refaisait sa PROPRE addition des macarons, a cote de celle du CA. Deux ecritures de la meme regle finissent toujours par diverger \u2014 ici sur le perimetre des marches ET sur le prorata des paiements partiels. Le compte vit desormais DANS caDuMois, la fonction qui produit deja le CA : un seul calcul, lu par la carte comme par le detail, impossible de se contredire. CE QUE CA REVELE SUR LES MARCHES : la cloture d\u2019un marche ne demande QUE les encaissements \u2014 un marche peut donc etre clos sans aucun comptage de sortie/retour saisi, et dans ce cas le nombre de macarons est INCONNU, pas nul. L\u2019app l\u2019additionnait comme un 0, faisant passer un compte incomplet pour un compte juste. Elle le SIGNALE maintenant : avertissement rouge sur la carte, et mention « non compte » sur la ligne du marche concerne dans le detail, au lieu d\u2019un zero trompeur. DEMANDE DE BEN FAITE : chaque ligne du detail du CA affiche desormais son nombre de macarons a cote du pourcentage \u2014 le total devient verifiable ligne par ligne. Suite v1461 : 30 assertions. La suite v1459 devient sans objet (son sujet, la boucle du tableau de bord, n\u2019existe plus) : ses cas ont ete PORTES dans v1461 avant son retrait, rien n\u2019est perdu.';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
 const _APP_MAJ_v1448_ARCHIVE_INUTILISEE = 'LE CHAMP « N° LOT DE PRODUCTION » MENTAIT EN MODE DUO. Ben, capture à l\u2019appui : lançant Chocolat passion + Pistache en meringue commune, le champ affichait « 030826RAF » — ni CHP ni PIS, mais RAF (Coco Rafaello, une tout autre recette). CAUSE : la branche duo de saveProd() ne lit JAMAIS ce champ — chaque parfum reçoit son propre lot, calculé indépendamment. Sa valeur affichée venait de prodRefreshLot(), qui lit TOUJOURS la recette unique (f_rec) — or f_rec reste dans la page (juste masquée) en duo, avec la valeur de la DERNIÈRE recette affichée avant le passage en duo. Un champ qui ment ET n\u2019a aucun effet réel est pire qu\u2019un champ absent. Même défaut, plus discret, sur la case « diviser en 2 lots » (v1445/v1446) : cochée, ce champ n\u2019est pas plus lu par le lancement réel. FIX : le champ est désormais masqué dans ces deux cas ; à la place, les VRAIS numéros de lot qui seront utilisés sont prévisualisés — en mode duo dans le récapitulatif de répartition, et pour la division bicolore dans son propre encart — calculés avec EXACTEMENT la même formule que la sauvegarde réelle, jamais un second calcul qui pourrait diverger. Suite v1448 : 12 assertions (tests/v1448-lot-duo-preview.test.js), dont une réconciliation qui rejoue la vraie formule de sauvegarde et vérifie que l\u2019aperçu affiche bien 030826CHP-CO et 030826PIS-CO — jamais RAF.';
@@ -7799,26 +7799,51 @@ async function caDuMois(mk){
   const orders = await db.orders.toArray().catch(()=>[]);
   const clients = await db.clients.toArray().catch(()=>[]);
   const clName = id => (clients.find(c=>c.id===id)||{}).nom || '—';
-  const lignesCmd = []; let totalCmd = 0;
+  // [v1461] LES MACARONS SONT COMPTÉS ICI, avec le CA, ligne par ligne. Avant, le tableau de bord
+  // refaisait sa PROPRE boucle : deux écritures de la même règle, donc deux réponses possibles à
+  // la même question — le défaut nommé en v1339. Désormais un seul calcul, lu par la carte comme
+  // par le détail ; et chaque ligne porte SA part, ce qui rend le total vérifiable à l'œil.
+  const lignesCmd = []; let totalCmd = 0; let totalMac = 0;
   orders.filter(o=>!estReprise(o)).forEach(o=>{
+    const macCmd = (typeof orderMacaronsVendus==='function') ? orderMacaronsVendus(o) : 0;
+    const totCmd = money2(+o.montant || ((typeof orderMontantRecalcule==='function') ? orderMontantRecalcule(o) : 0) || 0);
     paiementsDe(o).forEach(p=>{
       if(ymKey(p.date||o.date||'')!==mk) return;
       const m=+p.montant||0; if(!m) return;
       totalCmd += m;
-      lignesCmd.push({date:p.date||o.date||'', nom:clName(o.clientId), montant:m, moyen:p.moyen||'', oid:o.id});
+      // Paiement partiel : part de macarons au prorata du montant encaissé, plafonnée à 1
+      // (un trop-perçu ne crée pas de macarons). Sans base de montant, on ne devine pas : 0.
+      const mac = (macCmd>0 && totCmd>0) ? round3(macCmd * Math.min(1, m/totCmd)) : 0;
+      totalMac += mac;
+      lignesCmd.push({date:p.date||o.date||'', nom:clName(o.clientId), montant:m, moyen:p.moyen||'', oid:o.id, mac});
     });
   });
   lignesCmd.sort((a,b)=>(a.date||'').localeCompare(b.date||''));
-  let totalMk = 0; const lignesMk=[];
+  let totalMk = 0; const lignesMk=[]; let mkSansMouvement = 0;
   try{
     const markets = await db.markets.toArray();
+    // Les mouvements disent COMBIEN de macarons sont partis et revenus. Un marché peut être clos
+    // sans qu'aucun ne soit saisi (la clôture ne demande que les encaissements) : dans ce cas le
+    // nombre de macarons est INCONNU, pas nul — et on le dit, au lieu de l'additionner comme un 0.
+    const moves = await db.marketMoves.toArray().catch(()=>[]);
     markets.forEach(k=>{
       if(k.statut!=='clos' || ymKey(k.date||'')!==mk) return;
       const net = (typeof marketNetCA==='function') ? marketNetCA(k) : 0;
-      if(net>0){ totalMk+=net; lignesMk.push({date:k.date, nom:k.nom||'Marché', montant:net}); }
+      if(net<=0) return;
+      totalMk+=net;
+      const mv = moves.filter(x=>+x.marketId===+k.id);
+      let mac = 0, macConnu = false;
+      if(mv.length && typeof marketLineSummary==='function'){
+        macConnu = true;
+        marketLineSummary(mv).forEach(l=>{ mac += Math.max(0, +l.vendu||0); });
+      }
+      if(!macConnu) mkSansMouvement++;
+      totalMac += mac;
+      lignesMk.push({date:k.date, nom:k.nom||'Marché', montant:net, mac:round3(mac), macConnu, mkId:k.id});
     });
   }catch(e){swallow(e,'caDuMois')}
-  return { total: money2(totalCmd+totalMk), totalCmd: money2(totalCmd), totalMk: money2(totalMk), lignesCmd, lignesMk };
+  return { total: money2(totalCmd+totalMk), totalCmd: money2(totalCmd), totalMk: money2(totalMk),
+           lignesCmd, lignesMk, totalMac: round3(totalMac), mkSansMouvement };
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -8152,10 +8177,10 @@ async function caMonthDetail(mk){
   const rowsCmd = lignes.length ? lignes.map(l=>
     `<div class="sum-box" style="cursor:pointer" onclick="closeModal();cmdView(${l.oid})">
        <span>${fmtDate(l.date)} · ${esc(l.nom)}${l.moyen?` <span style="color:#9a8a82;font-size:.74rem">· ${esc(l.moyen)}</span>`:''}</span>
-       <span style="display:flex;flex-direction:column;align-items:flex-end;line-height:1.3"><b>${euro(l.montant)}</b><span style="font-size:.68rem;color:#9a8a82">${pctDuTotal(l.montant, total)}</span></span></div>`).join('')
+       <span style="display:flex;flex-direction:column;align-items:flex-end;line-height:1.3"><b>${euro(l.montant)}</b><span style="font-size:.68rem;color:#9a8a82">${pctDuTotal(l.montant, total)}${l.mac>0?` · 🍬 ${qtyP(Math.round(l.mac))}`:''}</span></span></div>`).join('')
     : '<p class="note">Aucun encaissement de commande ce mois.</p>';
   const rowsMk = mkLignes.length ? `<h3 style="font-size:1rem;margin:14px 0 8px">Marchés</h3>`+mkLignes.map(l=>
-    `<div class="sum-box"><span>${fmtDate(l.date)} · ${esc(l.nom)}</span><span style="display:flex;flex-direction:column;align-items:flex-end;line-height:1.3"><b>${euro(l.montant)}</b><span style="font-size:.68rem;color:#9a8a82">${pctDuTotal(l.montant, total)}</span></span></div>`).join('') : '';
+    `<div class="sum-box"><span>${fmtDate(l.date)} · ${esc(l.nom)}</span><span style="display:flex;flex-direction:column;align-items:flex-end;line-height:1.3"><b>${euro(l.montant)}</b><span style="font-size:.68rem;color:${l.macConnu===false?'#b3261e':'#9a8a82'}">${pctDuTotal(l.montant, total)}${l.macConnu===false?' · 🍬 non compté':(l.mac>0?` · 🍬 ${qtyP(Math.round(l.mac))}`:'')}</span></span></div>`).join('') : '';
   openModal(`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px">
       <button class="btn ghost sm" onclick="caMonthDetail('${_mkPrev}')" title="Mois précédent">‹</button>
       <h3 style="margin:0;text-align:center;flex:1">Détail du CA — ${esc((typeof monthLabel==='function') ? monthLabel(mk) : mk)}</h3>
@@ -8273,50 +8298,17 @@ async function renderDash(){
   });
   _nbEncMois += closedMk.filter(k=>mkInMonth(k.date)).length;
   const nbMonth = orders.filter(c=>{const d=new Date(c.date);return d.getMonth()===m&&d.getFullYear()===y;}).length;
-  // [v1459] MACARONS VENDUS SUR LE MOIS — MÊME BASE QUE LE CA AFFICHÉ AU-DESSUS (choix de Ben,
-  // 05/08). Les deux lignes de cette carte décrivent donc le même mois, sur les mêmes commandes.
-  //
-  // AVANT, deux défauts cohabitaient :
-  //  ① la période différait du CA : les macarons comptaient les commandes DATÉES du mois, le CA
-  //    les ENCAISSEMENTS. Une commande de juillet payée en août affichait son CA en août et ses
-  //    macarons en juillet — deux chiffres côte à côte qui parlaient de choses différentes.
-  //  ② DOUBLE COMPTAGE mère/fille : quand un client paie d'avance (la « mère ») puis vient
-  //    chercher en plusieurs fois (des « filles », chacune avec ses propres lignes), la somme
-  //    comptait la mère ET ses filles. Passer à la base « encaissé » le règle À LA RACINE : une
-  //    fille n'a jamais de paiement propre (RÈGLE D'OR, cf. paiementsDe), donc elle pèse zéro ici.
-  //
-  // PRORATA : un paiement partiel ne dit pas QUELS macarons il couvre. On répartit donc au
-  // prorata du montant encaissé — exactement ce que fait déjà le CA, qui étale l'argent d'une
-  // commande sur ses mois de paiement. Le ratio est plafonné à 1 : un trop-perçu ne peut pas
-  // faire apparaître plus de macarons que la commande n'en contient.
-  let macVendusMois = 0;
-  orders.forEach(o=>{
-    if(o.histo || estReprise(o)) return;
-    const macTotal = orderMacaronsVendus(o);
-    if(macTotal<=0) return;
-    const paies = paiementsDe(o);                 // fille ⇒ [] : plus de double comptage
-    if(!paies.length) return;
-    const totalCmd = money2(+o.montant || orderMontantRecalcule(o) || 0);
-    if(totalCmd<=0) return;                       // pas de base de prorata : on n'invente pas
-    const encMois = paies.reduce((s,p)=>
-      (ymKey(p.date||o.date||'')===_mkCourant) ? s+(+p.montant||0) : s, 0);
-    if(encMois<=0) return;
-    macVendusMois += macTotal * Math.min(1, encMois/totalCmd);
-  });
-  let _macMarches = 0;
-  try{
-    const _mkMois = closedMk.filter(k=>mkInMonth(k.date));
-    if(_mkMois.length){
-      const _allMoves = await db.marketMoves.toArray().catch(()=>[]);
-      _mkMois.forEach(k=>{
-        marketLineSummary(_allMoves.filter(mv=>+mv.marketId===+k.id))
-          .forEach(l=>{ _macMarches += Math.max(0, +l.vendu||0); });
-      });
-    }
-  }catch(e){ swallow(e,'macarons vendus marchés'); }
-  // Le prorata peut donner des décimales (paiement partiel) : on arrondit le TOTAL du mois, pas
-  // chaque commande — arrondir commande par commande accumulerait l'erreur.
-  macVendusMois = Math.round(round3(macVendusMois + _macMarches));
+  // [v1461] LE COMPTE VIENT DÉSORMAIS DE caDuMois — plus de boucle propre au tableau de bord.
+  // Ben : « ils ne comptent pas les marchés » et « même isolés du marché le compte semble faux ».
+  // CAUSE RACINE : la carte refaisait sa PROPRE addition, à côté de celle du CA. Deux écritures
+  // de la même règle finissent toujours par diverger (v1339) — ici sur le périmètre des marchés
+  // et sur le prorata des paiements partiels. Un seul calcul, un seul résultat, vérifiable ligne
+  // par ligne dans le détail.
+  const macVendusMois = Math.round(+_caMoisObj.totalMac || 0);
+  const _macMarches = round3((_caMoisObj.lignesMk||[]).reduce((s,l)=>s+(+l.mac||0), 0));
+  // Marchés clos SANS mouvement saisi : leurs macarons sont INCONNUS, pas nuls. Les taire ferait
+  // passer un compte incomplet pour un compte juste — on le dit sur la carte.
+  const _mkSansMvt = +_caMoisObj.mkSansMouvement || 0;
   // [A11-display] CA cumulé depuis le début : on sépare le fil de l'eau (hors reprises, base fiscale)
   // des reprises d'historique, pour afficher les deux clairement sans mélanger.
   const _caFilEau = money2(orders.filter(o=>!estReprise(o)).reduce((s,c)=>s+(+c.montant||0),0) + closedMk.reduce((s,k)=>s+k.montant,0));
@@ -8403,7 +8395,7 @@ async function renderDash(){
    ${prodDlcAlert.length?`<div class="banner" style="background:#fdf3f2">🧁 <div><b>DLC produits finis</b> <span style="font-size:.76rem;color:#9a8a82">— touche un lot pour intervenir</span><br>${prodDlcAlert.slice(0,6).map(a=>`<span style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted" onclick="dlcActions(${a.id})">${esc(a.nom)} ${empIcon(a.emplacement)}${a.emplacement?' '+empLettre(a.emplacement):''} (${a.j<=0?'<b style="color:#b3261e">expiré</b>':a.j+' j'}, lot ${esc(a.lot)})</span>`).join(' · ')}${prodDlcAlert.length>6?` … +${prodDlcAlert.length-6}`:''}</div></div>`:''}
    <div class="cards">
      <div class="card clickable accent" style="--card-accent:#3f7d52" onclick="caMonthDetail()" title="Voir le détail des encaissements du mois"><div class="corner">€</div><div class="lbl">CA ${esc(_moisCourantLbl)} ${kpiI('ca_mois')}</div><div class="val">${euro(caMonth)}</div><div class="sub">${_nbEncMois} rentrée(s) d'argent · voir le détail ›</div>
-       <div class="sub" style="margin-top:2px;border-top:1px solid rgba(0,0,0,.07);padding-top:4px">🍬 <b>${qtyP(macVendusMois)}</b> macaron(s) vendu(s)${_macMarches>0?` <span style="color:#9a8a82">dont ${qtyP(_macMarches)} en marché</span>`:''}</div></div>
+       <div class="sub" style="margin-top:2px;border-top:1px solid rgba(0,0,0,.07);padding-top:4px">🍬 <b>${qtyP(macVendusMois)}</b> macaron(s) vendu(s)${_macMarches>0?` <span style="color:#9a8a82">dont ${qtyP(_macMarches)} en marché</span>`:''}${_mkSansMvt>0?`<br><span style="color:#b3261e;font-size:.9em">⚠ ${_mkSansMvt} marché(s) sans comptage saisi — leurs macarons manquent</span>`:''}</div></div>
      <div class="card clickable accent" style="--card-accent:#c9a227" onclick="goView('rentabilite')" title="Voir la rentabilité par parfum"><div class="corner">📈</div><div class="lbl">Marge nette / macaron ${kpiI('marge_nette')}</div><div class="val">${privacyModeEnabled()?'•••':(margeNetteParMacaron!=null?euro(margeNetteParMacaron):'—')}</div><div class="sub">${margeNetteParMacaron!=null?(_piecesReprise>0?`hors ${qty(_piecesReprise)} pc de reprise ›`:'après coûts, charges & dons ›'):'pas encore de ventes ›'}</div></div>
      <div class="card clickable accent" style="--card-accent:#d98324" onclick="goView('rentabilite')" title="Impact des dons sur la marge"><div class="corner">🎁</div><div class="lbl">Coût des dons ${kpiI('cout_dons')}</div><div class="val">${privacyModeEnabled()?'•••':(coutDons!=null?euro(coutDons):'—')}</div><div class="sub">${(coutDons!=null&&piecesDon>0)?`${qty(piecesDon)} offert(s) · marge après dons ${euro(margeApresDons)} ›`:'aucun don enregistré ›'}</div></div>
      ${(nbLivraisons>0)?`<div class="card clickable accent" style="--card-accent:${livBeneficeNet>=0?'#3f7d52':'#b3261e'}" onclick="goView('rentabilite')" title="Impact des livraisons sur la marge"><div class="corner">🚚</div><div class="lbl">Impact livraisons</div><div class="val">${privacyModeEnabled()?'•••':`${livBeneficeNet>=0?'+':''}${euro(livBeneficeNet)}`}</div><div class="sub">${nbLivraisons} tournée(s) · coût ${euro(coutLivraisonBrut)} ›</div></div>`:''}

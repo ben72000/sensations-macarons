@@ -144,6 +144,7 @@ async function testReconciliation(){
       orders:  { toArray: async () => JEU.orders },
       clients: { toArray: async () => JEU.clients },
       markets: { toArray: async () => JEU.markets },
+      marketMoves: { toArray: async () => [] },
     };
     const estReprise   = o => !!(o && o.reprise);
     const paiementsDe  = o => (o && Array.isArray(o.paiements)) ? o.paiements : [];
@@ -153,6 +154,14 @@ async function testReconciliation(){
     const ymKey    = d => monthKey(d);
     const today    = () => '2026-08-03';
     ${extractConstLine('money2')}
+    ${extractConstLine('round3')}
+    // [v1461] caDuMois compte désormais aussi les macarons : ces trois-là lui sont devenus
+    // nécessaires. Neutralisés ici — cette suite vérifie le CA, pas le comptage de macarons
+    // (couvert par v1461-macarons-source-unique).
+    const marketMoves = [];
+    const marketLineSummary = () => [];
+    const orderMacaronsVendus = () => 0;
+    const orderMontantRecalcule = () => 0;
     ${extractFunction('_caCleGran')}
     ${extractFunction('_caLundiDe')}
     ${extractFunction('ymdLocal')}

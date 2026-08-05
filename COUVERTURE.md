@@ -4563,3 +4563,52 @@ code n'affirme plus le contraire de ce qu'il fait** (E).
 
 **Sensibilité vérifiée par mutation réelle de `app.js`** : revenir à la base « date de commande »
 fait rougir 8 assertions, dont celle du double comptage mère/fille.
+
+---
+
+## 2026-08-05 — LES MACARONS COMPTÉS AU MÊME ENDROIT QUE LE CA  (v1460 → **v1461**)
+
+**Signalé par Ben** : « les macarons comptés ne semblent pas justes, premièrement parce qu'ils ne
+comptent pas les marchés et deuxièmement même isolés du marché le compte semble faux ». Il demande
+aussi d'afficher, à côté du %, le nombre de macarons sur **chaque ligne** du détail.
+
+### 🚨 La cause racine
+Le tableau de bord refaisait sa **propre addition** des macarons, à côté de celle du CA. Deux
+écritures de la même règle finissent toujours par diverger — c'est le défaut nommé en v1339. Elles
+divergeaient ici sur **deux** points à la fois : le périmètre des marchés, et le prorata des
+paiements partiels. Les corrections successives (v1459, v1460) traitaient la formule sans traiter la
+**duplication** : tant que le calcul existait à deux endroits, il pouvait redevenir faux.
+
+Le compte vit désormais **dans `caDuMois`**, la fonction qui produit déjà le CA. Elle renvoie
+`totalMac` et, sur **chaque ligne**, la part de macarons correspondante. La carte n'y lit plus qu'un
+total ; le détail affiche la part par ligne. Carte et détail ne peuvent plus se contredire par
+construction — et le total devient vérifiable à l'œil, ce que Ben demandait précisément.
+
+### Ce que ça révèle sur les marchés
+La clôture d'un marché **n'exige aucun comptage** de sortie/retour : elle ne demande que les
+encaissements. Un marché clos sans mouvement a donc un nombre de macarons **inconnu, pas nul**.
+L'app l'additionnait comme un `0`, ce qui faisait passer un compte **incomplet** pour un compte
+juste. Elle le signale maintenant : avertissement rouge sur la carte (« N marché(s) sans comptage
+saisi — leurs macarons manquent ») et mention « 🍬 non compté » sur la ligne du marché dans le
+détail, au lieu d'un zéro trompeur.
+
+### Suite v1461 : 30 assertions (`tests/v1461-macarons-source-unique.test.js`)
+Macarons comptés avec le CA, part portée par chaque ligne (A) ; **les marchés sont comptés**, ligne
+et total (B) ; marché sans mouvement — signalé, aucun macaron inventé (C) ; non-régressions des
+corrections précédentes : mère/fille comptée une fois, prorata sur paiement partiel avec
+réconciliation sur deux mois, reprise exclue, trop-perçu plafonné, commande non payée, montant nul,
+paiement sans date (D) ; gardes statiques que la carte **lit** la source unique et ne recalcule plus
+(E) ; macarons affichés par ligne dans le détail (F). Sensibilité vérifiée par mutation réelle.
+
+### ⚠️ Retrait de la suite v1459
+Son sujet — la boucle propre au tableau de bord — **n'existe plus**. Ses cas ont d'abord été
+**portés dans v1461** (commande non payée, montant nul, paiement sans date, commande historique),
+puis la suite a été retirée de `run-all.js`. Vérifié au passage, plutôt que supposé : `o.histo` est
+**déjà** couvert par `estReprise` (qui renvoie `true` si `o.histo===true`) — l'ancienne double
+condition était redondante, son retrait ne change rien.
+
+### Deux harnais de test cassés par ce refactor (et pourquoi ce n'étaient pas des bugs)
+`v1444` construisait `caDuMois` sans les dépendances que celle-ci a acquises (`round3`,
+`marketMoves`, `marketLineSummary`…) → complété, en neutralisant explicitement le comptage de
+macarons puisque cette suite vérifie le CA. `v1459` extrayait une boucle supprimée → retirée comme
+ci-dessus. Diagnostiqués avant conclusion : aucun des deux ne signalait un défaut applicatif.
