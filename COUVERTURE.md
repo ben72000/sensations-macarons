@@ -4165,3 +4165,196 @@ vide ne vaut jamais 0 € ».
 tronque (limite connue, cf. v1446/v1449). L'assertion qui vérifie que les 3 modes d'emballage
 restent proposés lit donc le **texte brut** de la fonction plutôt que son extraction. Le code
 applicatif est correct ; c'est l'outil de lecture qui ne sait pas parser cette forme.
+
+---
+
+## 2026-08-04 — SUPPRIMER UNE CHARGE DEPUIS SA FICHE  (v1452 → **v1453**)
+
+**Demandé par Ben** :
+> « Je veux Pouvoir supprimer des charges en cas d'erreur de saisie. Actuellement 3 lignes
+> identifiées dans « autre » qui doivent être supprimées (rajout manuel ligne marketing pour
+> entrepremans pour l'année passée et celle qui démarre en septembre) »
+
+### Ce qui existait déjà
+La suppression d'une charge (`delCharge`) et d'un modèle de charge récurrente (`recurDel`)
+existaient **toutes les deux** avant ce correctif, accessibles depuis l'écran « Voir / gérer les
+charges » et « Charges mensuelles récurrentes ». Mais **nulle part dans la fiche d'une charge
+elle-même** — celle qu'on ouvre justement en la relisant pour repérer une erreur de saisie. D'où
+le blocage de Ben : il avait trouvé les 3 lignes fautives, mais aucun moyen de les supprimer
+depuis l'endroit où il les regardait.
+
+### Le fix
+Bouton « 🗑 Supprimer » ajouté directement dans le formulaire d'édition d'une charge, visible
+uniquement pour une charge **existante** (rien à supprimer sur une nouvelle saisie).
+
+Second point, plus subtil : « celle qui démarre en septembre » sent la charge **récurrente** (le
+formulaire des modèles a justement un champ « À partir de (mois) »). Supprimer l'**instance** du
+mois ne corrige pas une date de départ fausse sur le **modèle** — qui la regénérerait le mois
+suivant. Un rappel explicite s'affiche donc quand une charge porte un lien vers un modèle
+récurrent (`c.recurId`), avec un accès direct à l'éditeur des charges récurrentes, pour que Ben
+corrige la bonne chose plutôt que de la voir revenir.
+
+### Suite v1453 : 14 assertions (`tests/v1453-charge-delete.test.js`)
+Câblage réel du bouton (A) ; rendu HTML vérifié dans les 3 cas — nouvelle charge (pas de bouton),
+charge simple existante (bouton présent, pas de rappel), charge récurrente (bouton présent **et**
+rappel) (B) ; non-régression sur `delCharge` lui-même (C). Sensibilité confirmée par mutation
+réelle de `app.js` (retirer le bouton fait échouer 4 assertions).
+
+---
+
+## 2026-08-04 — ASSEMBLER UN LOT DE COQUES RÉPARTI EN PLUSIEURS BOÎTES  (v1453 → **v1454**)
+
+**Demandé par Ben**, après une discussion d'architecture qu'il a explicitement voulue avant tout code :
+> « Si j'ai 200 coques réparties en 6 boîtes je dois faire mon assemblage à 6 reprises, alors que
+> dans la réalité je sors l'ensemble des coques de leurs boites (à ce stade les boites n'existent
+> plus que sur l'application et plus dans la réalité), les dispose sur mon plan de travail et les
+> garnis ensuite, puis les répartis en boîte. »
+
+### Le diagnostic
+La boîte est un artefact de **rangement**, pas une unité de **travail**. Au moment d'assembler, elle
+doit disparaître du choix ; elle réapparaît à la répartition des macarons garnis. Ben garde par
+ailleurs la mise en boîtes des coques — « je m'en sers pour savoir où elles sont rangées ».
+
+### Pourquoi le moteur d'assemblage n'a PAS été touché
+`prodAssembleSave` est très intriqué : capacité, décrément et `assembleFrom` supposent un lot de
+coques unique, et s'y ajoutent le 2ᵉ lot bicolore (v1413), le mode 3 parties chantache (v1248), les
+gardes dégustation et `sansMelange` (v1426). Le rendre multi-sources aurait touché tout ça à la fois.
+
+À la place : une étape **amont** qui regroupe les boîtes du lot en une seule, puis le formulaire
+d'assemblage normal s'ouvre dessus. Deux mécanismes éprouvés au lieu d'une réécriture du plus
+délicat. Le regroupement **décrit ce qui vient de se passer en atelier** — ce n'est pas un
+contournement : les coques sont réellement hors de leurs boîtes.
+
+`regrouperBoitesLot` réutilise `_fusionValide`/`_fusionCalcul` (v1376/v1416) mais en **une seule
+transaction** : enchaîner N−1 appels à `fusionnerBoites` aurait fait N−1 sauvegardes de sécurité,
+N−1 toasts et N−1 entrées d'audit pour un seul geste métier. Boîtes absorbées **archivées**, jamais
+supprimées (invariant v1416). DLC retenue : toujours la **plus courte** des boîtes regroupées.
+
+### Fork tranché par Ben
+L'assemblage reste **toujours à l'intérieur d'un seul lot mère** — pas de mélange de deux
+productions différentes du même parfum.
+
+### L'étiquette : quantité restante, pas produite
+Ben veut une étiquette « recyclée » : il corrige la quantité au stylo à chaque prélèvement, le QR
+renvoie à la quantité réelle du moment. Or `buildLabelData` imprimait la quantité **produite** — une
+étiquette partant de là serait déjà fausse à l'impression sur une boîte issue d'un lot entamé.
+Passée à `prodQteStock` (règle v1429 : une information de stock montre le stock), repli conservé
+pour les lots anciens sans `qteRestante`.
+
+**Décision d'architecture liée** : le QR encode `traceUrl(p.lotProduction)`, donc une URL construite
+sur le **numéro de lot**. Un numéro qui changerait avec la quantité (idée initiale de Ben :
+`…-B-30` → `…-B-25`) rendrait le QR imprimé **mort** au premier prélèvement, et ferait collisionner
+la boîte de 30 tombée à 25 avec celle de 25. Le numéro reste donc **stable** ; c'est la quantité
+imprimée (et le stylo) qui varie.
+
+### Suite v1454 : 33 assertions (`tests/v1454-assemblage-lot-entier.test.js`)
+DLC la plus courte retenue (A) ; **réconciliation sur le cas exact de Ben** — 6 boîtes / 200 coques :
+la gardée porte bien les 200, aucune coque créée ni perdue au total, DLC la plus courte retenue même
+si ce n'est pas celle de la boîte gardée, 5 boîtes archivées et non supprimées, historique de fusion
+complet, sauvegarde et audit écrits (B) ; cas limites — une seule boîte, lot encore en vrac, boîte
+déjà fusionnée : succès **sans aucune écriture** (C) ; câblage du bouton de Stock par parfum, avec
+non-régression du chemin v1426 à une seule boîte (D) ; étiquette imprimant la quantité restante (E).
+
+**Sensibilité vérifiée par mutation réelle de `app.js`** : faire que la boîte gardée n'accumule pas
+les quantités absorbées fait échouer les deux assertions de réconciliation. ⚠️ La première tentative
+de mutation n'avait pas pris (chaîne introuvable, indentation) et le test est resté vert — refaite
+correctement, elle rougit bien. Une mutation qui ne s'applique pas ne prouve rien.
+
+---
+
+## 2026-08-05 — TRANSFÉRER DES MACARONS D'UNE BOÎTE À UNE AUTRE  (v1454 → **v1455**)
+
+**Demandé par Ben** :
+> « Lorsque je les répartis en boites une fois garnis je dois pouvoir facilement transférer
+> manuellement un ou plusieurs macarons d'une boîte à une autre (pour gérer les erreurs de
+> saisies) […] aussi pouvoir facilement gérer le cas d'une casse lors d'une mise en boîte. »
+
+### L'audit avant d'écrire quoi que ce soit
+Deux des trois besoins étaient **déjà couverts** — les chercher a évité d'en réécrire une seconde
+version :
+- **Répartition en boîtes** : `prodPreparerBoites` (moteur unique depuis v1389).
+- **Casse** : `declareLossForm` couvre les 4 stades (produits finis, coques, ganache/crémeux,
+  dégustation), avec motif, coût, et le cas « coques cassées récupérables → dégustation ». Un bouton
+  « ⚠ Perte » était déjà présent **par boîte** dans la vue des boîtes.
+
+Le seul morceau réellement absent : le **transfert partiel**. La fusion existait, mais elle vide
+toujours une boîte entièrement — elle ne sait pas déplacer 3 macarons.
+
+### Les trois règles posées
+- **Même lot obligatoire.** Transférer entre deux lots mélangerait deux fabrications sous une même
+  étiquette. C'est ce que `_fusionValide` refuse déjà, et pour la même raison — donc réutilisé tel
+  quel plutôt que redit.
+- **Un transfert total archive la boîte de départ** (`fusionneeDans`, invariant v1416) au lieu de la
+  laisser vide avec une étiquette qui ne correspond plus à rien. Cohérent avec la décision de Ben :
+  une boîte qui tombe à zéro est archivée, pas ré-étiquetée.
+- **La DLC d'arrivée devient la plus courte des deux**, jamais celle qui arrange.
+
+### La traçabilité devait suivre, sinon la fonctionnalité mentait
+Enregistrer un transfert sans que le fil de traçabilité sache l'afficher aurait produit un
+historique **muet** : la quantité change, rien ne dit pourquoi. `construireFilTracabilite` rend donc
+les transferts **dans les deux sens** (côté boîte qui reçoit *et* côté boîte qui donne), avec lien
+cliquable vers l'autre boîte. Icône **⇄ distincte du 🔗 de la fusion** : les confondre ferait croire
+qu'une boîte a disparu alors qu'elle survit avec le reste.
+
+### Suite v1455 : 34 assertions (`tests/v1455-transfert-boites.test.js`)
+Transfert partiel, les deux boîtes survivent, historique posé des deux côtés (A) ; transfert total,
+source archivée et non supprimée, numéro de lot conservé (B) ; DLC la plus courte retenue dans les
+deux sens (C) ; refus — quantité supérieure au stock, même boîte, quantité nulle, autre lot — avec
+vérification qu'**aucune écriture ni sauvegarde inutile** n'a lieu sur un refus (D) ; rendu du fil de
+traçabilité dans les deux sens, sans étape inventée quand il n'y a pas eu de transfert (E) ; câblage
+du bouton et de l'icône (F). **Réconciliation « aucune pièce créée ni perdue » sur chaque scénario.**
+
+**Sensibilité vérifiée par mutation réelle de `app.js`** : empêcher la source de se décrémenter fait
+échouer la réconciliation. ⚠️ Contrairement à la v1454, la mutation a été **vérifiée comme
+appliquée** (assertion sur le compte d'occurrences *et* relecture du fichier écrit) avant d'en tirer
+une conclusion — la leçon de la v1454, où une mutation muette avait laissé le test vert à tort.
+
+---
+
+## 2026-08-05 — RÉIMPRIMER L'ÉTIQUETTE APRÈS UNE FUSION  (v1455 → **v1456**)
+
+**Demandé par Ben** : « en cas de fusion de boîte je dois pouvoir réimprimer une étiquette mise à
+jour ».
+
+### Pourquoi la fusion est le cas particulier
+Sur un **prélèvement**, Ben corrige la quantité au stylo — c'est la décision « étiquette recyclée »
+(v1454) : le QR reste valide parce que le numéro de lot ne bouge pas. Après une **fusion**, il n'y a
+rien à corriger à la main : la boîte gardée contient d'autres pièces qu'annoncé, sa DLC a pu
+raccourcir, et l'étiquette de la boîte absorbée n'a plus d'objet. C'est le seul moment où
+l'étiquette devient fausse sans recours.
+
+La réimpression est donc **proposée** juste après la fusion, avec la quantité et la DLC réelles
+affichées avant d'imprimer — et jamais imposée. Le retour à la vue d'ensemble est confié à cette
+proposition plutôt que déclenché en parallèle : ouvrir les deux écrans à la suite ferait disparaître
+le premier avant qu'on l'ait lu.
+
+**Le numéro de lot ne change pas.** On réimprime le même numéro avec la bonne quantité : une
+réimpression, pas une nouvelle identité. Un bouton « 🖨 Étiquette » permanent a aussi été ajouté sur
+chaque boîte, pour réimprimer à tout moment (après un transfert, un regroupement, ou une étiquette
+abîmée).
+
+### Suite v1456 : 19 assertions (`tests/v1456-reimpression-fusion.test.js`)
+La proposition affiche la quantité réelle après fusion, la DLC, et dit explicitement que le numéro
+ne change pas ; « Plus tard » ramène à la vue des boîtes ; sans écran de retour, aucun appel bancal
+n'est généré ; pas de ligne DLC quand il n'y en a pas ; boîte introuvable → on ramène quand même
+Ben à sa vue plutôt que de le laisser sur un écran mort (A) ; câblage de la fusion et du bouton
+permanent (B) ; **gardes de non-régression** — la proposition n'écrit rien en base et ne régénère
+aucun numéro de lot, le QR reste bâti sur le numéro (C). Sensibilité vérifiée par mutation réelle.
+
+### ⚠️ INCIDENT D'OUTILLAGE — app.js VIDÉ PENDANT CETTE LIVRAISON
+Une mise à jour d'`APP_MAJ` par script Python a **tronqué `app.js` à 0 octet** : `open(p,'w')` vide
+le fichier *avant* l'écriture, et l'écriture a échoué sur un caractère mal échappé. Le fichier est
+resté vide.
+
+**Le piège qui a failli le masquer** : `node --check` a répondu **OK** sur ce fichier vide — un
+fichier vide est du JavaScript valide. Le contrôle de syntaxe habituel a donc donné un faux signal
+rassurant. Ce qui a alerté, c'est un `grep` de `APP_VERSION` qui ne renvoyait rien.
+
+**Récupération** : le répertoire de la version précédente contenait `app.js` intact ; seules les
+modifications de cette livraison (une fonction, deux branchements) ont été réappliquées. Les 17
+suites repassent au vert, y compris celles de v1454 et v1455 — rien n'a été perdu.
+
+**Deux règles retenues** : (1) toute réécriture de fichier par script passe désormais par un
+**fichier temporaire puis un remplacement atomique**, pour qu'un échec ne puisse jamais laisser un
+fichier vide ; (2) `node --check` ne suffit pas à prouver qu'un fichier est intact — il faut aussi
+vérifier sa **taille** et la présence d'un marqueur connu.

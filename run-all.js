@@ -161,7 +161,11 @@ const SUITES = [
   'v1449-bicolore-duo.test.js',                 // v1449 · un parfum bicolore combiné à d'autres (mode duo/trio) se divise aussi par couleur — moteur partagé _sousLotsCoques, case à cocher supprimée, reproduction exacte du scénario chiffré de Ben (Pistache 120 + Chocolat passion 60/60)
   'v1450-pourcentage-ca.test.js',                // v1450 · pourcentage de CA affiché sous chaque ligne des 3 écrans de détail encaissement (mois, période glissante, catégorie URSSAF) — moteur partagé pctDuTotal, réconciliation à 100%
   'v1451-pourcentage-ca-suite.test.js',         // v1451 · pourcentage de CA étendu à 3 écrans de plus (CA facturé/encaissé par période, journal des avoirs, panier moyen ventilé) — reprises et total officiel gardés séparés
-  'v1452-sachet-coffret10.test.js'              // v1452 · sachet (1–3 macarons, 2,50 €/mac.) + coffret de 10 à 22 € : branchement du nouveau type de ligne dans les ~14 points de dispatch, réconciliation prix saisie/stocké, garde « jamais 0 € »
+  'v1452-sachet-coffret10.test.js',             // v1452 · sachet (1–3 macarons, 2,50 €/mac.) + coffret de 10 à 22 € : branchement du nouveau type de ligne dans les ~14 points de dispatch, réconciliation prix saisie/stocké, garde « jamais 0 € »
+  'v1453-charge-delete.test.js',                // v1453 · bouton Supprimer ajouté directement dans la fiche d'une charge, avec rappel si elle vient d'un modèle récurrent (supprimer l'instance ne corrige pas le modèle)
+  'v1454-assemblage-lot-entier.test.js',        // v1454 · assembler un lot de coques réparti en N boîtes : regroupement atomique amont (réconciliation « aucune coque créée ni perdue »), étiquette imprimant la quantité restante
+  'v1455-transfert-boites.test.js',             // v1455 · transfert partiel de pièces entre deux boîtes d'un même lot (réconciliation, archivage si la source se vide, DLC la plus courte, rendu dans le fil de traçabilité)
+  'v1456-reimpression-fusion.test.js'           // v1456 · réimpression d'étiquette proposée après une fusion (numéro de lot inchangé, aucune écriture en base) + bouton étiquette permanent par boîte
 ];
 
 let allOk = true;

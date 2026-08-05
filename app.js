@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1452'; // suite : voir tests/v1452-sachet-coffret10.test.js
-const APP_MAJ = 'SACHET (1 À 3 MACARONS) ET COFFRET DE 10 À 22 \u20ac. Ben : « Rajouter offre dans commande permettant de vendre : un coffret de 10 macarons à 22\u20ac. L\u2019emballage par défaut est la boîte blanche de 8/10 macarons. Assure toi de rendre les autres emballages selectionnables aussi telle que c\u2019est déjà le cas aujourd\u2019hui. — un sachet pouvant contenir de 1 à 3 macarons. Prix : 2,5\u20ac par macaron. De manière générale introduire ce nouvel emballage dans tous les écrans de commande, y compris vrac. » LE SACHET est un nouveau type de ligne de commande complet : bouton « + Sachet », grille de parfums avec compteur de remplissage (comme le coffret), macarons « sans parfum déterminé » supportés, remise de ligne, validation (au moins 1, jamais plus de 3). UN TYPE DE LIGNE EST LU PAR ~137 ENDROITS de l\u2019app (production, prix, factures, exports, analytics) et un type inconnu n\u2019y plante pas : il est ignoré en silence, ou tombe dans un repli prévu pour autre chose. Le sachet a donc été branché un par un : enregistrement et réouverture (sans quoi la ligne disparaîtrait à la sauvegarde), prix en saisie ET prix stocké (sans quoi une commande enregistrée vaudrait 0\u20ac), besoins en macarons et comptage pour la production, coût matières et marge, libellés de facture et de devis, export, analytics client, et sa propre catégorie dans le mix produit (sinon il aurait été compté parmi les DONS, à 0\u20ac). LE COFFRET DE 10 : ajouté au catalogue à 22\u20ac par une migration idempotente distincte du seed initial (celui-ci ne s\u2019exécute que sur un catalogue vide — une base existante ne l\u2019aurait jamais reçu), avec création de la boîte blanche 8/10 si absente. Choisir la taille 10 pré-sélectionne cette boîte : c\u2019est un DÉFAUT, pas un verrou — les trois modes d\u2019emballage et toute la liste restent sélectionnables comme avant. Suite v1452 : 42 assertions, dont une réconciliation prix saisie/prix enregistré, un aller-retour enregistrement→réouverture, et une garde « un sachet ne vaut jamais 0\u20ac » — sensibilité vérifiée par mutation réelle de app.js (8 assertions rouges).';
+const APP_VERSION = 'v1456'; // suite : voir tests/v1456-reimpression-fusion.test.js
+const APP_MAJ = 'REIMPRIMER L\u2019ETIQUETTE APRES UNE FUSION. Ben : « en cas de fusion de boite je dois pouvoir reimprimer une etiquette mise a jour ». POURQUOI LA FUSION EST LE CAS PARTICULIER : sur un prelevement, Ben corrige la quantite au stylo (decision « etiquette recyclee »). Apres une fusion, il n\u2019y a rien a corriger a la main : la boite gardee contient d\u2019autres pieces qu\u2019annonce, sa DLC a pu raccourcir, et l\u2019etiquette de la boite absorbee n\u2019a plus d\u2019objet. La reimpression est donc PROPOSEE au moment exact ou elle devient necessaire, sans etre imposee, avec la quantite et la DLC reelles affichees avant d\u2019imprimer. CE QUI NE CHANGE PAS : le numero de lot. Le QR encode l\u2019adresse batie sur ce numero \u2014 le faire varier rendrait mortes toutes les etiquettes deja imprimees. On reimprime le MEME numero avec la bonne quantite : une reimpression, pas une nouvelle identite. AJOUTE AUSSI : un bouton « Etiquette » permanent sur chaque boite, pour reimprimer a tout moment. Suite v1456 : 19 assertions, dont la garde que la proposition n\u2019ECRIT rien en base et ne regenere aucun numero de lot \u2014 sensibilite verifiee par mutation reelle de app.js.';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
 const _APP_MAJ_v1448_ARCHIVE_INUTILISEE = 'LE CHAMP « N° LOT DE PRODUCTION » MENTAIT EN MODE DUO. Ben, capture à l\u2019appui : lançant Chocolat passion + Pistache en meringue commune, le champ affichait « 030826RAF » — ni CHP ni PIS, mais RAF (Coco Rafaello, une tout autre recette). CAUSE : la branche duo de saveProd() ne lit JAMAIS ce champ — chaque parfum reçoit son propre lot, calculé indépendamment. Sa valeur affichée venait de prodRefreshLot(), qui lit TOUJOURS la recette unique (f_rec) — or f_rec reste dans la page (juste masquée) en duo, avec la valeur de la DERNIÈRE recette affichée avant le passage en duo. Un champ qui ment ET n\u2019a aucun effet réel est pire qu\u2019un champ absent. Même défaut, plus discret, sur la case « diviser en 2 lots » (v1445/v1446) : cochée, ce champ n\u2019est pas plus lu par le lancement réel. FIX : le champ est désormais masqué dans ces deux cas ; à la place, les VRAIS numéros de lot qui seront utilisés sont prévisualisés — en mode duo dans le récapitulatif de répartition, et pour la division bicolore dans son propre encart — calculés avec EXACTEMENT la même formule que la sauvegarde réelle, jamais un second calcul qui pourrait diverger. Suite v1448 : 12 assertions (tests/v1448-lot-duo-preview.test.js), dont une réconciliation qui rejoue la vraie formule de sauvegarde et vérifie que l\u2019aperçu affiche bien 030826CHP-CO et 030826PIS-CO — jamais RAF.';
@@ -18368,6 +18368,24 @@ function construireFilTracabilite(prod, moves, orders, clients){
       liens: f.deId!=null ? [{kind:'prod', id:f.deId, label:'voir la boîte '+lot}] : []});
   });
 
+  // [v1455] TRANSFERTS PARTIELS entre boîtes du même lot (correction d'une erreur de répartition).
+  // Distincts de la fusion : la boîte de départ SURVIT avec le reste. Les deux sens sont rendus —
+  // sur la boîte qui reçoit comme sur celle qui donne — sinon l'histoire ne se lirait que d'un côté.
+  // Un transfert TOTAL n'apparaît pas ici : il archive la source et se raconte déjà en « fusion ».
+  const transferts = Array.isArray(prod.transfertHisto) ? prod.transfertHisto : [];
+  transferts.forEach(t=>{
+    if(!t) return;
+    const q = round3(+t.qte||0);
+    const entrant = t.sens === 'entrant';
+    const lotAutre = entrant ? (t.deLot || ('#'+t.deId)) : (t.versLot || ('#'+t.versId));
+    const idAutre  = entrant ? t.deId : t.versId;
+    etapes.push({ts:_iso(t.ts), type:'transfert', sens:t.sens||'', qteTransferee:q, lotAutre,
+      texte: entrant
+        ? `transfert : ${qty(q)} pièce(s) reçue(s) de la boîte ${lotAutre}`
+        : `transfert : ${qty(q)} pièce(s) déplacée(s) vers la boîte ${lotAutre}`,
+      liens: idAutre!=null ? [{kind:'prod', id:idAutre, label:'voir la boîte '+lotAutre}] : []});
+  });
+
   // [v1416] Vue depuis la boîte ABSORBÉE : elle doit dire clairement où son contenu est parti,
   // avec un lien vers la boîte qui l'a reçue. Sans ça, on tomberait sur une fiche à zéro pièce
   // sans explication.
@@ -18575,12 +18593,14 @@ async function traceProd(prodId){
     </div></div>`:''}
     ${_fil.length?`<div style="margin-top:12px"><h3 style="font-size:1rem;margin:0 0 8px">🕘 Fil de traçabilité <span style="font-weight:400;font-size:.78rem;color:#9a8a82">— du plus récent au plus ancien</span></h3>
       ${_fil.map(e=>{
-        const ico = e.type==='prelevement' ? '📤' : (e.type==='creation' ? '✨' : ((e.type==='fusion'||e.type==='fusion-sortante') ? '🔗' : empIcon(e.lieu)));
+        // [v1455] Le transfert a son icône propre (⇄) : le confondre avec la fusion (🔗) ferait
+        // croire qu'une boîte a disparu alors qu'elle survit avec le reste.
+        const ico = e.type==='prelevement' ? '📤' : (e.type==='creation' ? '✨' : (e.type==='transfert' ? '⇄' : ((e.type==='fusion'||e.type==='fusion-sortante') ? '🔗' : empIcon(e.lieu))));
         const lieuTxt = e.type==='emplacement' ? `${esc(empNom(e.lieu))} (${empLettre(e.lieu)})${e.motif?` · ${esc(e.motif)}`:''}` : '';
         const corps = e.type==='emplacement' ? `rangé en ${lieuTxt}` : esc(e.texte);
         const liens = (e.liens||[]).map(l=>
           `<span onclick="traceGo('${l.kind}',${l.id})" style="color:var(--caramel,#AA7C39);cursor:pointer;font-weight:600;text-decoration:underline">${esc(l.label)}</span>`).join(' · ');
-        const couleur = e.type==='prelevement' ? '#b3261e' : (e.type==='creation' ? '#3f7d52' : ((e.type==='fusion'||e.type==='fusion-sortante') ? '#6a4a8a' : '#c9b89f'));
+        const couleur = e.type==='prelevement' ? '#b3261e' : (e.type==='creation' ? '#3f7d52' : (e.type==='transfert' ? '#2f6f8f' : ((e.type==='fusion'||e.type==='fusion-sortante') ? '#6a4a8a' : '#c9b89f')));
         // Le lot affiché en tête de ligne : celui de la boîte ABSORBÉE pour ses mouvements
         // d'avant-fusion, sinon celui de la boîte courante.
         const lotLigne = e.lotSource || prod.lotProduction || ('#'+prod.id);
@@ -28303,9 +28323,23 @@ async function stockParfumDetail(nom){
   const _ligneComposantAssemblable = p => {
     const pret = prodStatut(p)==='termine' && round3(+p.qteRestante||0)>0;
     const quoi = prodComposant(p)==='coques' ? 'de la garniture' : 'des coques';
+    // [v1454] Ben : « si j'ai 200 coques réparties en 6 boîtes je dois faire mon assemblage à 6
+    // reprises ». On compte les boîtes SŒURS de ce lot (même etiquetteDe, avec du stock) : s'il y
+    // en a plusieurs, le bouton passe par prodAssembleLotEntier, qui les regroupe d'abord. Sinon
+    // il appelle prodAssembleForm directement — comportement v1426 strictement inchangé.
+    const _pid = (p.etiquetteDe!=null) ? +p.etiquetteDe : +p.id;
+    const _soeurs = (p.etiquetteDe!=null)
+      ? composants.filter(x => x && x.etiquetteDe!=null && +x.etiquetteDe===_pid && round3(+x.qteRestante||0)>0)
+      : [];
+    const _nbBoites = _soeurs.length;
+    const _multi = _nbBoites > 1;
+    const _totalLot = _multi ? round3(_soeurs.reduce((s,x)=>s+(+x.qteRestante||0),0)) : 0;
     const action = pret
-      ? `<button class="btn gold sm" onclick="event.stopPropagation();closeModal();prodAssembleForm(${p.id},{sansMelange:true})" title="Assembler ce sous-lot avec ${esc(quoi)} du même parfum">🔗 Assembler</button>
-         <span style="font-size:.72rem;color:#9a8a82">avec ${esc(quoi)} de ${esc(nom)}</span>`
+      ? (_multi
+          ? `<button class="btn gold sm" onclick="event.stopPropagation();closeModal();prodAssembleLotEntier(${p.id},{sansMelange:true})" title="Regroupe les ${_nbBoites} boîtes de ce lot puis assemble le tout">🔗 Assembler tout le lot (${_nbBoites} boîtes)</button>
+             <span style="font-size:.72rem;color:#9a8a82">${qty(_totalLot)} pièces au total · avec ${esc(quoi)} de ${esc(nom)}</span>`
+          : `<button class="btn gold sm" onclick="event.stopPropagation();closeModal();prodAssembleForm(${p.id},{sansMelange:true})" title="Assembler ce sous-lot avec ${esc(quoi)} du même parfum">🔗 Assembler</button>
+             <span style="font-size:.72rem;color:#9a8a82">avec ${esc(quoi)} de ${esc(nom)}</span>`)
       : `<span style="font-size:.74rem;color:#9a8a82">⏳ Production non terminée — à terminer avant d'assembler.</span>`;
     return `<div style="margin-bottom:8px">${_ligneBatchEpure(p)}
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 10px 0">${action}</div>
@@ -36406,13 +36440,25 @@ async function renderChargesList(){
 }
 async function chargeForm(id){
   const c = id ? await db.charges.get(id) : {};
+  // [v1453] Ben : « je veux pouvoir supprimer des charges en cas d'erreur de saisie ». La
+  // suppression existe déjà (delCharge, via l'écran « Voir / gérer les charges ») — mais nulle
+  // part DANS cette fiche, là où on repère justement l'erreur en la relisant. On ajoute le bouton
+  // ici, au bon endroit, plutôt que d'expliquer un détour par un autre écran.
+  const noteRecur = c.recurId
+    ? `<p class="note" style="color:#8a6d3b;margin-top:-4px">🔁 Cette charge vient d'un modèle <b>récurrent</b>. La supprimer n'efface que <b>ce mois-ci</b> — si la date de départ ou le montant du modèle est faux, corrige-le plutôt dans <a href="#" onclick="closeModal();recurringChargesForm();return false;">Charges mensuelles récurrentes</a>, sinon l'erreur reviendra chaque mois.</p>`
+    : '';
   openModal(`<h3>${id?'Modifier':'Nouvelle'} charge</h3>
     <p class="note">Les charges sont les dépenses <b>hors stock</b> (assurance, hébergement, loyer, stand…). Les <b>matières premières et emballages</b> se saisissent en réception de lot, pas ici.</p>
+    ${noteRecur}
     <div class="field"><label>Date *</label><input type="date" id="ch_date" value="${esc(c.date||'')}"></div>
     <div class="field"><label>Catégorie *</label><select id="ch_cat">${(c.categorie && !CHARGE_CATS.includes(c.categorie)?[c.categorie]:[]).concat(CHARGE_CATS).map(x=>`<option ${c.categorie===x?'selected':''}>${esc(x)}</option>`).join('')}</select></div>
     <div class="field"><label>Libellé</label><input id="ch_lib" value="${esc(c.libelle||'')}" placeholder="ex : Assurance pro, hébergement site…"></div>
     <div class="field"><label>Montant (€) *</label><input type="number" step="0.01" min="0" id="ch_mt" value="${c.montant||''}"></div>
-    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveCharge(${id||0})">Enregistrer</button></div>`);
+    <div class="modal-actions">
+      ${id?`<button class="btn ghost" style="color:#b3261e;border-color:#e3b8b3" onclick="delCharge(${id})">🗑 Supprimer</button>`:''}
+      <button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn" onclick="saveCharge(${id||0})">Enregistrer</button>
+    </div>`);
 }
 async function saveCharge(id){
   const date=val('ch_date'), categorie=val('ch_cat'), libelle=val('ch_lib'), montant=money2(+val('ch_mt')||0);
@@ -51608,8 +51654,10 @@ async function vueBoitesDuLot(prodId){
         </select>
         <button class="btn ghost sm" onclick="boiteDeplacer(${x.id},${prodId})">↔ Déplacer</button>
         ${peutFusionner?`<button class="btn ghost sm" onclick="boiteFusionner(${x.id},${prodId})">🔀 Fusionner</button>`:''}
+        ${peutFusionner?`<button class="btn ghost sm" onclick="boiteTransfererForm(${x.id},${prodId})">⇄ Transférer</button>`:''}
         <button class="btn ghost sm" onclick="closeModal();prodEtiquetteBoites(${x.id})">📦 ${aDesBoites?'Re-répartir':'Mettre en boîtes'}</button>
         <button class="btn ghost sm" onclick="closeModal();traceProd(${x.id})">🕘 Traçabilité</button>
+        <button class="btn ghost sm" onclick="closeModal();shareLabelImage(${x.id})" title="Réimprimer l'étiquette avec la quantité et la DLC à jour">🖨 Étiquette</button>
         <button class="btn ghost sm" style="color:#b3261e" onclick="closeModal();declareLossForm(${x.id})">⚠ Perte</button>
       </div>
     </div>`;
@@ -51639,6 +51687,37 @@ async function vueBoitesDuLot(prodId){
 // un écran sans rapport, au milieu d'une fusion lancée depuis un autre endroit.
 async function boiteFusionner(boiteId, retourId){
   return fusionEtape2(boiteId, +retourId);
+}
+
+// [v1455] FORMULAIRE DE TRANSFERT PARTIEL. Une quantité, une boîte de destination — rien d'autre.
+// Le retour est passé de main en main (même raison qu'en fusion ci-dessus : pas de variable
+// globale, qui survivrait à une annulation et rouvrirait plus tard un écran sans rapport).
+async function boiteTransfererForm(boiteId, retourId){
+  const src = await db.productions.get(+boiteId).catch(()=>null);
+  if(!src){ toast('Boîte introuvable'); return; }
+  const soeurs = await _fusionBoitesDuLot(src.etiquetteDe, +boiteId);
+  if(!soeurs.length){ toast('Aucune autre boîte de ce lot pour recevoir le transfert'); return; }
+  const dispo = round3(Math.max(0, +src.qteRestante||0));
+  const opts = soeurs.map(b=>`<option value="${b.id}">${esc(b.lotProduction||('#'+b.id))} — ${qty(round3(+b.qteRestante||0))} pc · ${esc(empNom(b.emplacement))}</option>`).join('');
+  openModal(`<h3>⇄ Transférer des pièces</h3>
+    <p class="note">Depuis <b>${esc(src.lotProduction||('#'+src.id))}</b> (${qty(dispo)} pièce(s) disponibles).
+    Sert à corriger une erreur de répartition. La DLC de la boîte d'arrivée devient la plus courte des deux.</p>
+    <div class="field"><label>Quantité à transférer</label>
+      <input type="number" id="tr_qte" min="1" step="1" max="${dispo}" value="1"></div>
+    <div class="field"><label>Vers quelle boîte</label>
+      <select id="tr_dest">${opts}</select></div>
+    <p class="note" style="color:#8a6d3b">Si tu transfères la totalité, la boîte de départ sera archivée (son historique reste consultable).</p>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn" onclick="boiteTransfererGo(${+boiteId},${retourId!=null?+retourId:'null'})">Transférer</button></div>`);
+}
+async function boiteTransfererGo(boiteId, retourId){
+  const q = +val('tr_qte');
+  const dest = +val('tr_dest');
+  const r = await transfererEntreBoites(+boiteId, dest, q);
+  if(!r.ok){ toast(r.raison || 'Transfert impossible'); return; }
+  closeModal();
+  toast(r.sourceVidee ? `${qty(r.qte)} pièce(s) transférée(s) ✓ — boîte de départ archivée` : `${qty(r.qte)} pièce(s) transférée(s) ✓`);
+  if(retourId!=null && typeof vueBoitesDuLot==='function') vueBoitesDuLot(+retourId);
 }
 
 // Déplace UNE boîte vers l'emplacement choisi dans son menu, puis rafraîchit la vue d'ensemble.
@@ -52787,16 +52866,194 @@ async function fusionnerBoites(idA, idB, retourId){
   }catch(e){ swallow(e, 'audit fusion-boite'); }
   toast('Boîtes fusionnées ✓ · traçabilité conservée');
   if(typeof view !== 'undefined' && view === 'stockparfums' && typeof renderStockParfums === 'function') renderStockParfums();
-  // [v1422] Fusion lancée depuis la vue d'ensemble des boîtes : on y retourne, à jour. Sans ça,
-  // Ben perdait son écran juste après l'action et devait repartir de l'alerte DLC.
-  if(retourId!=null && typeof vueBoitesDuLot === 'function') vueBoitesDuLot(+retourId);
+  // [v1456] Ben : « en cas de fusion de boîte je dois pouvoir réimprimer une étiquette mise à
+  // jour ». La fusion est LE cas où l'étiquette en place devient fausse sans recours : la boîte
+  // gardée contient d'autres pièces qu'annoncé, et sa DLC a pu raccourcir. Contrairement à un
+  // prélèvement (que Ben corrige au stylo), il n'y a rien à corriger à la main ici — et
+  // l'étiquette de la boîte absorbée n'a plus d'objet. On PROPOSE donc la réimpression au moment
+  // exact où elle devient nécessaire, sans l'imposer.
+  // Le retour à la vue d'ensemble est confié à la proposition : ouvrir les deux écrans à la
+  // suite ferait disparaître le premier avant qu'on l'ait lu.
+  await proposerReimpressionEtiquette(idA, retourId, 'fusion');
   return { ok:true, garde:idA };
+}
+
+// [v1456] PROPOSE de réimprimer l'étiquette d'une boîte dont le contenu vient de changer.
+// Le NUMÉRO DE LOT ne change pas (décision de l'étiquette recyclable, v1454 : le QR encode l'URL
+// bâtie sur ce numéro — le faire varier rendrait mortes toutes les étiquettes déjà imprimées).
+// Ce qui change sur le papier, c'est la QUANTITÉ et la DLC : une réimpression, pas une nouvelle
+// identité. `retourId` : vue d'ensemble à rouvrir ensuite, passée de main en main (jamais une
+// variable globale, qui survivrait à une annulation et rouvrirait un écran sans rapport).
+// N'ÉCRIT RIEN en base : elle propose, elle ne modifie pas.
+async function proposerReimpressionEtiquette(prodId, retourId, contexte){
+  const p = await db.productions.get(+prodId).catch(()=>null);
+  const retour = (retourId!=null) ? +retourId : null;
+  const _rouvrir = () => { if(retour!=null && typeof vueBoitesDuLot==='function') vueBoitesDuLot(retour); };
+  if(!p){ _rouvrir(); return; }
+  const q = round3(Math.max(0, +p.qteRestante||0));
+  const dlc = (typeof prodDlcEffective==='function') ? prodDlcEffective(p) : p.dlcProduit;
+  const motif = contexte==='fusion'
+    ? 'Cette boîte contient désormais le contenu des deux — son étiquette n\'est plus à jour.'
+    : 'Le contenu de cette boîte a changé — son étiquette n\'est plus à jour.';
+  openModal(`<h3>🖨 Réimprimer l'étiquette ?</h3>
+    <p class="note">${motif}</p>
+    <div class="sum-box"><span>Boîte <b>${esc(p.lotProduction||('#'+p.id))}</b></span>
+      <b>${qty(q)} pièce(s)</b></div>
+    ${dlc?`<div class="sum-box"><span>DLC à imprimer</span><b>${fmtDate(dlc)}</b></div>`:''}
+    <p class="note" style="margin-top:8px">Le numéro de lot et son QR ne changent pas : seule la quantité imprimée est à corriger.</p>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal();${retour!=null?`vueBoitesDuLot(${retour})`:''}">Plus tard</button>
+      <button class="btn" onclick="closeModal();shareLabelImage(${+p.id})">🖨 Réimprimer</button>
+    </div>`);
+}
+
+// [v1455] TRANSFÉRER DES PIÈCES D'UNE BOÎTE À UNE AUTRE (partiel). Ben : « lorsque je les
+// répartis en boites une fois garnis je dois pouvoir facilement transférer manuellement un ou
+// plusieurs macarons d'une boîte à une autre (pour gérer les erreurs de saisies) ».
+//
+// DIFFÉRENT DE LA FUSION : la fusion vide entièrement une boîte dans une autre. Ici on déplace
+// une QUANTITÉ. Si ce transfert vide la source, on retombe exactement sur une fusion — et on
+// l'archive comme telle (`fusionneeDans`), plutôt que de laisser traîner une boîte vide avec une
+// étiquette qui ne correspond plus à rien. Règle cohérente avec la décision de Ben : « prélèvement
+// qui vide complètement une boîte → pas de nouvelle étiquette, la boîte est archivée ».
+//
+// MÊME LOT UNIQUEMENT : transférer entre deux lots mélangerait des fabrications distinctes sous
+// une même étiquette — c'est ce que `_fusionValide` refuse déjà, et pour la même raison.
+// DLC de la destination : la PLUS COURTE des deux (sécurité alimentaire), jamais celle qui arrange.
+async function transfererEntreBoites(sourceId, destId, qte){
+  const src = await db.productions.get(+sourceId).catch(()=>null);
+  const dst = await db.productions.get(+destId).catch(()=>null);
+  const q = round3(Math.max(0, +qte||0));
+  if(!src || !dst) return { ok:false, raison:'Boîte introuvable.' };
+  if(+src.id === +dst.id) return { ok:false, raison:'Choisis deux boîtes différentes.' };
+  if(q <= 0) return { ok:false, raison:'Indique une quantité à transférer.' };
+  // On réutilise la validation de la fusion : mêmes règles de compatibilité (même lot, même
+  // parfum, même stade, pas de boîte orpheline). Elle refuse aussi deux boîtes vides.
+  const v = _fusionValide(src, dst);
+  if(!v.ok) return { ok:false, raison:v.raison };
+  const dispo = round3(Math.max(0, +src.qteRestante||0));
+  if(q > dispo + 1e-9) return { ok:false, raison:`Maximum ${qty(dispo)} pièce(s) dans la boîte de départ.` };
+  const videLaSource = (q >= dispo - 1e-9);
+  try{ await snapshotBackup('avant-transfert-boites'); }catch(e){ swallow(e,'transfererEntreBoites snapshot'); }
+  const ts = Date.now();
+  const nowIso = new Date().toISOString();
+  const entree = { deId:+src.id, deLot:src.lotProduction||'', versId:+dst.id, versLot:dst.lotProduction||'', qte:q, ts };
+  try{
+    await db.transaction('rw', db.productions, async () => {
+      const patchDst = {
+        qteRestante: round3((+dst.qteRestante||0) + q),
+        dlcProduit: _fusionDlcPlusCourte(dst.dlcProduit, src.dlcProduit),
+        transfertHisto: (Array.isArray(dst.transfertHisto)?dst.transfertHisto.slice():[]).concat([Object.assign({sens:'entrant'}, entree)])
+      };
+      await db.productions.update(+dst.id, patchDst);
+      if(videLaSource){
+        // Transfert total = fusion. Même archivage que fusionnerBoites (invariant v1416) : la
+        // ligne survit, à zéro, avec le marqueur qui la masque des listes de stock vivant.
+        await db.productions.update(+src.id, {
+          qteRestante: 0, fusionneeDans: +dst.id, fusionneeTs: ts,
+          fusionneeVersLot: dst.lotProduction || ('#'+dst.id),
+          transfertHisto: (Array.isArray(src.transfertHisto)?src.transfertHisto.slice():[]).concat([Object.assign({sens:'sortant'}, entree)])
+        });
+      } else {
+        await db.productions.update(+src.id, {
+          qteRestante: round3(dispo - q),
+          transfertHisto: (Array.isArray(src.transfertHisto)?src.transfertHisto.slice():[]).concat([Object.assign({sens:'sortant'}, entree)])
+        });
+      }
+    });
+  }catch(e){ console.error('transfererEntreBoites', e); toast('Échec du transfert'); return { ok:false }; }
+  try{
+    await db.auditLog.add({ ts, tbl:'productions', op:'transfert-boite', cle:+dst.id,
+      resume:_auditResume({ de:{ id:+src.id, lot:src.lotProduction }, vers:{ id:+dst.id, lot:dst.lotProduction },
+        qte:q, sourceVidee:videLaSource }),
+      ecran:(typeof view!=='undefined' && view)?String(view):'', v:APP_VERSION });
+  }catch(e){ swallow(e,'audit transfert-boite'); }
+  void nowIso;
+  return { ok:true, sourceVidee:videLaSource, qte:q };
 }
 
 // Les autres boîtes du même lot qu'une boîte donnée (avec stock), hors elle-même.
 async function _fusionBoitesDuLot(etiquetteDe, exclureId){
   return (await db.productions.toArray().catch(() => []))
     .filter(p => p.etiquetteDe === etiquetteDe && p.id !== exclureId && round3(+p.qteRestante || 0) > 0);
+}
+
+// [v1454] REGROUPER TOUTES LES BOÎTES D'UN LOT EN UNE SEULE. Ben : « si j'ai 200 coques réparties
+// en 6 boîtes je dois faire mon assemblage à 6 reprises, alors que dans la réalité je sors
+// l'ensemble des coques de leurs boites (à ce stade les boites n'existent plus que sur
+// l'application et plus dans la réalité), les dispose sur mon plan de travail et les garnis ».
+// Le regroupement DÉCRIT ce qui vient de se passer en atelier — ce n'est pas un artifice pour
+// contourner le sélecteur.
+//
+// Réutilise _fusionValide/_fusionCalcul (éprouvés v1376/v1416) mais en UNE SEULE transaction :
+// enchaîner N-1 appels à fusionnerBoites ferait N-1 sauvegardes de sécurité, N-1 toasts et N-1
+// entrées d'audit pour UN seul geste métier. Ici : une sauvegarde, une écriture atomique, une
+// entrée d'audit qui nomme toutes les boîtes absorbées.
+//
+// Les boîtes absorbées sont ARCHIVÉES (qteRestante:0 + fusionneeDans), jamais supprimées —
+// invariant v1416, c'est ce qui garde la traçabilité de chacune consultable après coup.
+async function regrouperBoitesLot(prodId){
+  const p = await db.productions.get(+prodId).catch(()=>null);
+  if(!p) return { ok:false, raison:'Lot introuvable' };
+  const prods = await db.productions.toArray().catch(()=>[]);
+  const parentId = (p.etiquetteDe!=null) ? +p.etiquetteDe : +p.id;
+  // Seules les BOÎTES (etiquetteDe posé) se fusionnent : le parent porte le reste non réparti et
+  // _fusionValide le refuse explicitement. C'est voulu — on ne fusionne pas du vrac dans une boîte.
+  const boites = prods.filter(x => x && !prodEstFusionnee(x)
+    && x.etiquetteDe != null && +x.etiquetteDe === parentId
+    && round3(+x.qteRestante||0) > 0);
+  if(boites.length <= 1) return { ok:true, gardeId:(boites[0]? +boites[0].id : +prodId), nbFusionnees:0 };
+  // La boîte gardée = la première dans l'ordre des numéros de lot (B1 avant B2) : le numéro qui
+  // survit est le plus lisible. La DLC, elle, ne dépend PAS de ce choix — _fusionCalcul retient
+  // toujours la plus courte des deux, à chaque étape de la chaîne.
+  boites.sort((a,b)=>String(a.lotProduction||'').localeCompare(String(b.lotProduction||'')));
+  const garde = boites[0];
+  const autres = boites.slice(1);
+  let etat = Object.assign({}, garde);
+  const archives = [];
+  for(const b of autres){
+    const v = _fusionValide(etat, b);
+    if(!v.ok) return { ok:false, raison:v.raison };
+    const calc = _fusionCalcul(etat, b, round3);
+    etat = Object.assign({}, etat, calc.patch);
+    archives.push({ id:+b.id, lot:b.lotProduction||('#'+b.id), qte:round3(Math.max(0,+b.qteRestante||0)) });
+  }
+  try{ await snapshotBackup('avant-regroupement-boites'); }catch(e){ swallow(e,'regrouperBoitesLot snapshot'); }
+  const patchGarde = {
+    qteRestante: etat.qteRestante, qteReelle: etat.qteReelle,
+    qteProduite: etat.qteProduite, qteTheorique: etat.qteTheorique,
+    dlcProduit: etat.dlcProduit, fusionHisto: etat.fusionHisto
+  };
+  try{
+    await db.transaction('rw', db.productions, async () => {
+      await db.productions.update(+garde.id, patchGarde);
+      for(const a of archives){
+        await db.productions.update(a.id, {
+          qteRestante: 0, fusionneeDans: +garde.id, fusionneeTs: Date.now(),
+          fusionneeVersLot: garde.lotProduction || ('#'+garde.id)
+        });
+      }
+    });
+  }catch(e){ console.error('regrouperBoitesLot', e); toast('Échec du regroupement'); return { ok:false }; }
+  try{
+    await db.auditLog.add({ ts:Date.now(), tbl:'productions', op:'regroupement-boites', cle:+garde.id,
+      resume:_auditResume({ garde:{ id:+garde.id, lot:garde.lotProduction }, absorbees:archives,
+        qteRestanteApres:patchGarde.qteRestante, dlcRetenue:patchGarde.dlcProduit }),
+      ecran:(typeof view!=='undefined' && view)?String(view):'', v:APP_VERSION });
+  }catch(e){ swallow(e,'audit regroupement-boites'); }
+  return { ok:true, gardeId:+garde.id, nbFusionnees:archives.length };
+}
+
+// [v1454] ASSEMBLER TOUT UN LOT DE COQUES, quelles que soient ses boîtes. Regroupe d'abord (voir
+// ci-dessus), puis ouvre le formulaire d'assemblage NORMAL sur la ligne unique qui en résulte.
+// Le moteur d'assemblage (prodAssembleSave) n'est pas touché : il continue de voir un seul lot de
+// coques, ce qu'il sait déjà faire — y compris le 2e lot bicolore, la chantache et les gardes
+// dégustation. Deux mécanismes éprouvés au lieu d'une réécriture du plus délicat.
+async function prodAssembleLotEntier(prodId, opts){
+  const r = await regrouperBoitesLot(prodId);
+  if(!r.ok){ toast(r.raison || 'Regroupement impossible'); return; }
+  if(r.nbFusionnees > 0) toast(`${r.nbFusionnees+1} boîtes regroupées ✓ — assemblage sur le lot entier`);
+  return prodAssembleForm(r.gardeId, opts);
 }
 
 // Petit descriptif d'une boîte pour les écrans de fusion.
@@ -52948,8 +53205,15 @@ async function buildLabelData(prodId){
   else if(_comp==='ganache') _nomAffiche = ((typeof garnLabel==='function'?garnLabel(p):'ganache').charAt(0).toUpperCase()+ (typeof garnLabel==='function'?garnLabel(p):'ganache').slice(1)) + ' ' + _parfum;
   else if(_comp==='degustation') _nomAffiche = _parfum + ' (dégustation)';
   // sinon (complet/assemble) on garde le nom du produit fini.
-  // Nombre de pièces du lot (réel sinon théorique).
-  const _nbPieces = (p.qteReelle!=null)?p.qteReelle:(p.qteProduite!=null?p.qteProduite:(p.qteTheorique!=null?p.qteTheorique:null));
+  // [v1454] QUANTITÉ IMPRIMÉE = CE QUI RESTE, pas ce qui a été produit. Ben veut une étiquette
+  // « recyclée » : il corrige la quantité au stylo à chaque prélèvement, et le QR renvoie à la
+  // quantité réelle du moment dans l'app. Une étiquette qui démarre sur la quantité PRODUITE
+  // serait déjà fausse à l'impression pour une boîte issue d'un lot entamé — le stylo devrait
+  // corriger dès le premier jour. Même règle que v1429 : une information de stock montre le stock.
+  // Repli sur la produite pour les lots anciens sans qteRestante (prodQteStock fait déjà ce repli).
+  const _nbPieces = (typeof prodQteStock==='function')
+    ? prodQteStock(p)
+    : ((p.qteReelle!=null)?p.qteReelle:(p.qteProduite!=null?p.qteProduite:(p.qteTheorique!=null?p.qteTheorique:null)));
   return {
     produit: _nomAffiche,
     composant: _comp,
