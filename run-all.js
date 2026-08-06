@@ -168,7 +168,8 @@ const SUITES = [
   'v1456-reimpression-fusion.test.js',          // v1456 · réimpression d'étiquette proposée après une fusion (numéro de lot inchangé, aucune écriture en base) + bouton étiquette permanent par boîte
   'v1457-retours-marche.test.js',               // v1457 · retours de marché rangés en boîtes : rattachement plafonné au réellement sorti, ligne « retour marché » quand la provenance est inconnue, DLC d'origine conservée
   'v1458-etiquette-retour-marche.test.js',      // v1458 · mention RETOUR MARCHÉ sur les 2 moteurs d'étiquette + la quantité qui n'était pas imprimée du tout par le rendu HTML
-  'v1461-macarons-source-unique.test.js'        // v1461 · macarons comptés DANS caDuMois (source unique, avec le CA) : marchés inclus, marché sans comptage signalé au lieu d'un 0 muet, macarons affichés par ligne dans le détail
+  'v1461-macarons-source-unique.test.js',       // v1461 · macarons comptés DANS caDuMois (source unique, avec le CA) : marchés inclus, marché sans comptage signalé au lieu d'un 0 muet, macarons affichés par ligne dans le détail
+  'v1462-macarons-arrondi-coherent.test.js'     // v1462 · macarons vendus : chaque ligne arrondie à la source, le total est la somme des entiers déjà arrondis (élimine l'écart entre la carte et le détail), réconciliation vérifiée sur 30 tirages aléatoires
 ];
 
 let allOk = true;

@@ -151,7 +151,7 @@ async function run(){
   // ---- E. La carte lit la source unique, elle ne recalcule plus ----
   {
     const i = APP.indexOf('// [v1461] LE COMPTE VIENT DÉSORMAIS DE caDuMois');
-    const src = APP.slice(i, i+900);
+    const src = APP.slice(i, APP.indexOf('// [A11-display]', i));
     check('E. la carte lit _caMoisObj.totalMac', /_caMoisObj\.totalMac/.test(src));
     check('E. elle ne refait plus sa propre boucle sur orders', !/orders\.forEach/.test(src));
     check('E. la part marché vient des lignes de caDuMois', /lignesMk\|\|\[\]\)\.reduce/.test(src));

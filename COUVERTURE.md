@@ -4612,3 +4612,50 @@ condition était redondante, son retrait ne change rien.
 `marketMoves`, `marketLineSummary`…) → complété, en neutralisant explicitement le comptage de
 macarons puisque cette suite vérifie le CA. `v1459` extrayait une boucle supprimée → retirée comme
 ci-dessus. Diagnostiqués avant conclusion : aucun des deux ne signalait un défaut applicatif.
+
+---
+
+## 2026-08-05 — MACARONS : LA CARTE ET LE DÉTAIL ARRONDISSAIENT SÉPARÉMENT  (v1461 → **v1462**)
+
+**Signalé par Ben**, en réponse directe à la livraison précédente : « Mais non. Si tu additionnes
+l'ensemble ça ne fait pas 318.. »
+
+### Un vrai bug d'arrondi, pas une erreur de lecture
+Un paiement partiel proratise les macarons d'une commande — le résultat est une **fraction**
+(69,006 macarons, pas 69 pile). Avant ce correctif :
+- la **carte** additionnait ces fractions BRUTES sur tout le mois, puis arrondissait le **total** ;
+- le **détail** arrondissait **chaque ligne séparément**, à l'affichage.
+
+Arrondir un total et additionner des arrondis individuels ne donnent **pas toujours** le même
+résultat — c'est le paradoxe de répartition classique (le même que celui des sièges d'une élection
+à la proportionnelle). Rien ne garantissait que les deux tombent sur le même chiffre. Sur la capture
+précise que Ben a envoyée, une reconstitution à la main donnait 318 des deux côtés par coïncidence —
+le bug reste réel, il se manifeste dès que les fractions tombent autrement, ce qui est le cas
+courant.
+
+### Le fix
+Un macaron n'existe pas en fraction de toute façon. Chaque **ligne** est désormais arrondie **à la
+source**, dans `caDuMois`, et le **total** est la somme de ces entiers déjà arrondis — jamais un
+second arrondi indépendant. Carte et détail lisent alors littéralement la même addition : ils ne
+peuvent plus diverger, par construction.
+
+### Suite v1462 : 34 assertions (`tests/v1462-macarons-arrondi-coherent.test.js`)
+**Reconstitution exacte du cas de Ben** — 5 paiements + 1 marché, fractions construites pour
+reproduire précisément « 69, 6, 4, 4, 16 » — total et détail reconciliés à l'unité près (A) ;
+**réconciliation systématique sur 30 tirages aléatoires**, pas un seul cas construit à la main :
+c'est la garantie que la propriété tient en général, pas seulement sur l'exemple choisi (B) ; câblage
+— plus aucun second arrondi côté affichage (C).
+
+**Sensibilité vérifiée par mutation réelle de `app.js`** : revenir à l'arrondi séparé fait échouer 32
+des 34 assertions, dont le cas exact de Ben et 30 des 30 tirages aléatoires.
+
+### Deux incidents en cours de route, corrigés avant de conclure
+Ma première vérification par mutation semblait presque vide (2 échecs sur un fichier de bac à
+sable) : l'extraction n'avait pas repris ma toute dernière modification. Refaite avec le fichier
+correctement reconstruit → 32 échecs, cohérents avec l'ampleur réelle du bug.
+
+La régression complète a ensuite fait échouer `v1461` : une assertion statique de cette suite
+lisait une tranche de caractères à taille FIXE (`APP.slice(i, i+900)`), et l'ajout d'un commentaire
+en v1462 avait poussé le texte recherché hors de cette fenêtre. Remplacé par une découpe ancrée sur
+le bloc de code suivant plutôt que sur un compte de caractères arbitraire — plus robuste aux futurs
+ajouts de commentaires.
