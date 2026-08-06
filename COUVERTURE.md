@@ -4659,3 +4659,117 @@ lisait une tranche de caractères à taille FIXE (`APP.slice(i, i+900)`), et l'a
 en v1462 avait poussé le texte recherché hors de cette fenêtre. Remplacé par une découpe ancrée sur
 le bloc de code suivant plutôt que sur un compte de caractères arbitraire — plus robuste aux futurs
 ajouts de commentaires.
+
+---
+
+## 2026-08-05 — GRILLE TARIFAIRE DATÉE AU 01/09/2026 + VERROU ANTI-DATATION  (v1462 → **v1463**)
+
+**Demandé par Ben** : « Nouveaux tarifs macarons à partir de toute commande passée à compter du
+1er septembre 2026. Les commandes passées avant cette date ne sont pas impactées. » Puis, en
+précision décisive : « si une commande est anti datée, c'est à dire par exemple entrée le
+2 septembre mais livrée en janvier 2026, elle doit nécessairement garder l'ancien tarif ! Je veux
+que tu verrouilles ça proprement pour que je puisse facilement rajouter des commandes au fil de
+l'eau dans le passé. »
+
+### 🚨 Le risque écarté
+Seuls les **coffrets** scellaient leur prix sur la ligne (`prixUnitaireApplique`). Événement, vrac
+pro, sachet, pyramide et personnalisation **recalculaient leur prix à chaque affichage** depuis des
+constantes. Changer simplement les valeurs aurait **retarifé rétroactivement** toutes les commandes
+déjà passées de ces types : factures émises, CA encaissé, marges, déclarations URSSAF.
+
+### La grille datée
+`TARIF_GRILLES` : la nouvelle grille au 01/09/2026, l'ancienne avant. Chaque ligne enregistrée porte
+`tarifRef` = **la date de sa commande**, posée **une seule fois** et jamais rafraîchie — rouvrir une
+vieille commande ne la retarife pas. Une ligne **sans** `tarifRef` est forcément antérieure à cette
+version : elle retombe sur l'ancienne grille, donc **aucune migration des données existantes n'est
+nécessaire**.
+
+### Les trois verrous (issus directement de la précision de Ben)
+1. **Aucun repli sur la date du jour.** Mon premier jet retombait sur `today()` quand la date était
+   absente — une commande antidatée mal remplie serait passée au nouveau tarif. Le repli est
+   désormais vide, et une date inconnue applique l'**ancienne** grille : dans le doute, on ne
+   surfacture jamais.
+2. **La grille datée prime sur le catalogue produits.** Les coffrets lisent leur prix dans un
+   catalogue éditable qui reflète le tarif *courant* : une commande de janvier saisie en septembre
+   aurait pris les prix de septembre. Le prix scellé reste prioritaire, puis la grille de la ligne,
+   puis seulement le catalogue.
+3. **Un bandeau visible** annonce la grille appliquée (« commande antidatée, les tarifs de sa date
+   sont conservés ») et les prix affichés se recalculent quand la date change. Un verrou invisible
+   ne se vérifie pas.
+
+### ⚠️ Limite signalée à Ben
+Une commande ne stocke **qu'une seule date**, celle de livraison — il n'existe pas de date de prise
+de commande distincte. Le verrou s'appuie donc dessus. Cela couvre parfaitement le cas de Ben
+(livrée en janvier → tarifs de janvier), mais **pas** celui d'une commande prise le 25 août et
+livrée le 10 septembre, qui basculerait au nouveau tarif. Signalé, en attente de son retour.
+
+### Nouveaux tarifs et nouvelles options
+Coffrets 14/18/22/34/50 € · sachet 1/2/3 pièces à 2,50/5/6,50 € (**non linéaire** : le 3 pièces est
+à 6,50 € et non 7,50 €) · événement 1,90 € · pyramide 22 € · **pro occasionnel 1,75 €** et **pro
+récurrent 1,60 €** (nouveau mode, 3 boutons affichant chacun son prix réel à la date de la
+commande) · personnalisation couleurs 0,30 € (11 sites de calcul convertis).
+
+**Logo dégressif** : 1 € sous 100, 0,80 € de 100 à 300 (**bornes incluses**), 0,70 € au-delà — le
+palier s'applique à **tout le volume** (150 pièces = 150 × 0,80 €, pas 99 × 1 € puis 51 × 0,80 €).
+**Forfait création 40 € PAR MODÈLE** (précision de Ben : « si il y a 2 modèles alors 2 × le prix »),
+donc un nombre, pas une case à cocher. Les deux apparaissent sur les **devis et factures** : un
+montant facturé doit figurer sur le document, et ils entrent dans le brut du calcul de remise.
+
+### Suite v1463 : 52 assertions (`tests/v1463-grille-tarifaire-datee.test.js`)
+La grille au centime (A) ; **le verrou anti-datation** — scénario exact de Ben, plus les bornes de
+bascule au 31/08 et 01/09 (B) ; sans date → ancien tarif (C) ; paliers logo avec bornes incluses
+(D) ; forfait par modèle (E) ; câblage et ordre de priorité des sources de prix (F) ; options
+visibles sur les documents (G).
+
+**Sensibilité vérifiée par mutation réelle de `app.js`** : retirer la priorité de la grille sur le
+catalogue et remettre le repli `today()` fait rougir 3 assertions.
+
+⚠️ **Une assertion était faussement verte** et a été durcie : elle comparait deux `indexOf` sans
+vérifier la présence, or `indexOf` renvoie −1 quand le texte disparaît — et −1 est inférieur à tout.
+Elle passait donc précisément quand la protection était retirée. Constaté par mutation, corrigé,
+re-vérifié (2 échecs → 3).
+
+### Un harnais cassé par ce chantier
+`v1452` construisait `lineTotalBase` sans les dépendances devenues nécessaires (`TARIF_GRILLES`,
+`sachetPrixPour`…) → complété. Ses lignes de test n'ont pas de `tarifRef` et retombent donc sur la
+grille historique : c'est exactement le comportement attendu pour des commandes antérieures.
+
+---
+
+## 2026-08-06 — CASE « ANCIENS TARIFS » ET GROS MACARONS  (v1463 → **v1464**)
+
+**Demandé par Ben**, en réponse à la limite que je lui avais signalée : « Non au pire tu ajoutes une
+case à cocher ancien tarifs. Si c'est coché alors tous les sélecteurs affichent l'ancien tarif. Si
+rien de coché on reste sur le prix en vigueur. Comme ça c'est plus simple. Tu rajouteras également
+les gros macarons à 7€ tarifs grand public et 3,80 en tarif pro. »
+
+### Ce que la case résout
+La v1463 déduisait la grille de la **date** de la commande. Mais l'app ne stocke qu'**une** date,
+celle de livraison : une commande **prise avant le 01/09/2026 et livrée après** basculait donc au
+nouveau tarif, contre la règle de Ben. Plutôt qu'un second champ de date, il a choisi une case —
+plus simple, et surtout **explicite**.
+
+Conséquence de conception : un choix explicite doit **primer** sur une déduction automatique, qui
+n'est qu'un défaut commode. `tarifsDeLigne` teste donc le drapeau **avant** la date, et
+`tarifsSaisie` consulte la case **avant** de lire le champ Date — l'inverse aurait rendu la case
+inopérante dès qu'une date récente était saisie.
+
+Le drapeau est copié sur **chaque ligne** enregistrée : une ligne doit pouvoir se tarifer seule,
+sans dépendre d'un champ de la commande que les calculs en aval ne reçoivent pas. Il est conservé à
+la réouverture, et le bandeau de tarif annonce « case anciens tarifs cochée » pour que le choix
+reste visible.
+
+### Gros macarons
+7 € grand public, 3,80 € pro, intégrés à la grille datée comme le reste — avant le 01/09/2026 les
+anciens prix restent en vigueur (réglage `prixGrandFormatPro`, sinon 6,00/3,20 €). Le 2ᵉ argument de
+`bigPrice` est **optionnel** : les appels d'affichage existants (tableau des tarifs, aide) restent
+valides sans modification, seuls les trois sites de **calcul** passent la ligne.
+
+### Suite v1463 étendue : 67 assertions
+Sections H et I ajoutées : la case l'emporte sur une date récente (coffret, événement), le
+comportement par défaut reste inchangé sans elle, le drapeau est testé avant la date, copié sur les
+5 types de ligne et conservé à la réouverture (H) ; prix des gros macarons, absence d'imposition
+avant le 01/09, signature rétrocompatible de `bigPrice` (I).
+
+**Sensibilité vérifiée par mutation réelle de `app.js`** : retirer la priorité de la case sur la
+date fait rougir 4 assertions.

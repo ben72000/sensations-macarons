@@ -17,6 +17,21 @@ let pass = 0, fail = 0;
 const failures = [];
 function check(label, cond){ if(cond){ pass++; } else { fail++; failures.push(label); } }
 
+function extractArrayConstMulti(name){
+  const idx = APP.indexOf('const ' + name + ' = [');
+  if(idx===-1) throw new Error('Introuvable: '+name);
+  const clean = stripComments(APP.slice(idx));
+  const i = clean.indexOf('[');
+  let depth=0, inStr=null, esc=false;
+  for(let j=i;j<clean.length;j++){
+    const c=clean[j];
+    if(inStr){ if(esc){esc=false;} else if(c==='\\'){esc=true;} else if(c===inStr){inStr=null;} continue; }
+    if(c==='"'||c==="'"||c==='`'){ inStr=c; continue; }
+    if(c==='[') depth++;
+    else if(c===']'){ depth--; if(depth===0) return clean.slice(0,j+1)+';'; }
+  }
+  throw new Error('Crochets non équilibrés: '+name);
+}
 function extractObjectConst(name){
   const idx = APP.indexOf('const ' + name + ' = {');
   if(idx===-1) throw new Error('Introuvable (object): '+name);
@@ -67,6 +82,14 @@ function extractObjectConst(name){
     extractConstLine('FLAVOR_SURCHARGE'),
     extractConstLine('money2'),
     extractConstLine('round3'),
+    // [v1463] La tarification est devenue DATÉE : ces fonctions sont désormais nécessaires
+    // pour construire lineTotalBase/lineTotalStored. Les lignes de ce test n'ont pas de
+    // tarifRef → elles retombent sur la grille historique, ce qui est exactement le
+    // comportement attendu pour des commandes antérieures au 01/09/2026.
+    extractArrayConstMulti('TARIF_GRILLES'),
+    extractFunction('tarifsPour'),
+    extractFunction('tarifsDeLigne'),
+    extractFunction('sachetPrixPour'),
     extractConstLine('mulMoney'),
     extractConstLine('addMoney'),
     extractConstLine('subMoney'),
