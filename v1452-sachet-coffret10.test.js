@@ -88,6 +88,8 @@ function extractObjectConst(name){
     // comportement attendu pour des commandes antérieures au 01/09/2026.
     extractArrayConstMulti('TARIF_GRILLES'),
     extractFunction('tarifsPour'),
+    extractFunction('grilleCourante'),
+    extractFunction('grilleHistorique'),
     extractFunction('tarifsDeLigne'),
     extractFunction('sachetPrixPour'),
     extractConstLine('mulMoney'),

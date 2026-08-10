@@ -4811,3 +4811,45 @@ ligne « ancien tarif » garde 12 € malgré la date de saisie.
 
 **Sensibilité vérifiée par réintroduction du défaut exact** : remettre le catalogue prioritaire fait
 rougir 3 assertions, avec les chiffres qui parlent (14 € attendu, 12 € obtenu).
+
+---
+
+## 2026-08-10 — LA CASE DÉCIDE, PLUS LA DATE  (v1465 → **v1466**)
+
+**Ben, après avoir essayé** : « une commande, peu importe sa date de saisie, doit pouvoir afficher
+les nouveaux prix, c'est-à-dire ceux après août 2026 si la case "appliquer les anciens tarifs" est
+décochée. »
+
+### Ce qui change, et pourquoi
+La v1463 déduisait la grille de la **date de la commande**. Cette règle empêchait ce dont Ben a
+réellement besoin : saisir **dès aujourd'hui**, en août, une commande aux nouveaux tarifs. La
+déduction par la date est donc **abandonnée comme règle de tarification** — `tarifsPour` subsiste
+pour *lire* une grille par date (consultation), mais ne décide plus d'un prix.
+
+Règle désormais : **case décochée → tarifs en vigueur**, quelle que soit la date ; **case cochée →
+anciens tarifs**. Un seul interrupteur, visible et explicite.
+
+### Ce qui protège encore l'historique
+Une ligne enregistrée **avant la v1463** n'a ni drapeau ni marque de tarif (`tarifRef`). Cette
+**absence** sert de marqueur d'ancienneté et lui applique la grille historique : aucune facture déjà
+émise ne bouge. Les coffrets restent **doublement** protégés, leur prix étant scellé sur la ligne.
+`tarifRef` continue d'être enregistré — il ne pilote plus le prix, mais il date la saisie et
+distingue une ligne récente d'une ligne héritée. C'est lui, le marqueur.
+
+### Le bandeau réécrit
+Il annonçait « commande antidatée, les tarifs de sa date sont conservés » — une phrase qui décrirait
+désormais un comportement **inexistant**. Un repère qui ment est pire qu'un repère absent, puisque
+Ben s'y fierait. Le libellé de la case a suivi.
+
+### Suite v1463 mise à jour : 77 assertions
+Assertions de la règle par date **réécrites** plutôt que supprimées : ligne héritée → ancien tarif
+(protection de l'historique), ligne récente décochée → nouveaux tarifs même datée d'août **ou de
+janvier**, case cochée → anciens tarifs quelle que soit la date (C) ; le drapeau est le **premier**
+test de `tarifsDeLigne` et celle-ci ne consulte plus `tarifsPour` (H) ; `tarifsSaisie` ne lit plus
+`f_date` (F).
+
+**Sensibilité vérifiée par mutation réelle** : remettre la règle par date fait rougir 3 assertions.
+
+### Un harnais complété
+`v1452` construisait `tarifsDeLigne` sans les deux helpers introduits ici (`grilleCourante`,
+`grilleHistorique`) → complété. Diagnostiqué avant conclusion : aucun défaut applicatif.

@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1465'; // suite : voir tests/v1463-grille-tarifaire-datee.test.js (section J)
-const APP_MAJ = 'CORRECTIF : LES NOUVEAUX TARIFS COFFRETS NE S\u2019APPLIQUAIENT PAS EN SAISIE. Trouve en preparant la reponse a Ben, qui demandait comment tester les nouveaux tarifs des le mois d\u2019aout. Une ligne EN COURS DE SAISIE n\u2019a pas encore sa marque de tarif (posee seulement a l\u2019enregistrement) : l\u2019ordre de priorite la faisait donc retomber sur le CATALOGUE PRODUITS, qui contient les prix d\u2019installation (12/16/22/28/42 \u20ac). Une commande datee de septembre affichait 12 \u20ac pour un coffret de 6 au lieu de 14 \u20ac \u2014 et ce prix faux etait SCELLE sur la commande a l\u2019enregistrement. L\u2019ordre pose en v1463 protegeait bien le passe, mais je n\u2019avais pas verifie le chemin d\u2019une saisie neuve. FIX : la grille datee prime desormais sur le catalogue meme sans marque de tarif ; le catalogue ne sert plus que de repli pour les tailles absentes de la grille. Les autres types (sachets, evenements, vrac pro, gros macarons) n\u2019etaient pas touches : ils n\u2019ont pas de catalogue et consultaient deja la grille. Suite v1463 etendue : 75 assertions, dont le scenario chiffre exact (14 \u20ac et non 12 \u20ac) ; sensibilite verifiee par reintroduction du defaut (3 rouges).';
+const APP_VERSION = 'v1466'; // suite : voir tests/v1463-grille-tarifaire-datee.test.js
+const APP_MAJ = 'LA CASE DECIDE, PLUS LA DATE. Ben : « une commande, peu importe sa date de saisie, doit pouvoir afficher les nouveaux prix, c est a dire ceux apres aout 2026 si la case « appliquer les anciens tarifs » est decochee ». La deduction par la DATE est donc ABANDONNEE comme regle de tarification : elle empechait de saisir des aujourd hui (aout) une commande aux nouveaux tarifs, qui est le besoin reel. Desormais : case DECOCHEE = tarifs en vigueur, quelle que soit la date de la commande ; case COCHEE = anciens tarifs. Un seul interrupteur, visible et explicite. CE QUI PROTEGE ENCORE L HISTORIQUE : une ligne enregistree AVANT la v1463 n a ni drapeau ni marque de tarif — cette absence sert de marqueur d anciennete et lui applique la grille historique, donc aucune facture deja emise ne bouge. Les coffrets restent doublement proteges (prix scelle sur la ligne). Le bandeau et le libelle de la case ont ete reecrits : ils parlaient encore d antidatation et auraient decrit un comportement qui n existe plus. Suite v1463 mise a jour : 77 assertions ; sensibilite verifiee par mutation reelle (remettre la regle par date fait rougir 3 assertions).';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
 const _APP_MAJ_v1448_ARCHIVE_INUTILISEE = 'LE CHAMP « N° LOT DE PRODUCTION » MENTAIT EN MODE DUO. Ben, capture à l\u2019appui : lançant Chocolat passion + Pistache en meringue commune, le champ affichait « 030826RAF » — ni CHP ni PIS, mais RAF (Coco Rafaello, une tout autre recette). CAUSE : la branche duo de saveProd() ne lit JAMAIS ce champ — chaque parfum reçoit son propre lot, calculé indépendamment. Sa valeur affichée venait de prodRefreshLot(), qui lit TOUJOURS la recette unique (f_rec) — or f_rec reste dans la page (juste masquée) en duo, avec la valeur de la DERNIÈRE recette affichée avant le passage en duo. Un champ qui ment ET n\u2019a aucun effet réel est pire qu\u2019un champ absent. Même défaut, plus discret, sur la case « diviser en 2 lots » (v1445/v1446) : cochée, ce champ n\u2019est pas plus lu par le lancement réel. FIX : le champ est désormais masqué dans ces deux cas ; à la place, les VRAIS numéros de lot qui seront utilisés sont prévisualisés — en mode duo dans le récapitulatif de répartition, et pour la division bicolore dans son propre encart — calculés avec EXACTEMENT la même formule que la sauvegarde réelle, jamais un second calcul qui pourrait diverger. Suite v1448 : 12 assertions (tests/v1448-lot-duo-preview.test.js), dont une réconciliation qui rejoue la vraie formule de sauvegarde et vérifie que l\u2019aperçu affiche bien 030826CHP-CO et 030826PIS-CO — jamais RAF.';
@@ -4311,15 +4311,24 @@ function tarifsPour(dateStr){
   if(!d) return TARIF_GRILLES[TARIF_GRILLES.length-1];
   return TARIF_GRILLES.find(g => d >= g.debut) || TARIF_GRILLES[TARIF_GRILLES.length-1];
 }
-// Grille d'une LIGNE enregistrée. Absence de tarifRef = ligne antérieure à la v1463.
-// [v1464] `ancienTarif` PRIME SUR LA DATE — Ben : « au pire tu ajoutes une case à cocher ancien
-// tarifs. Si c'est coché alors tous les sélecteurs affichent l'ancien tarif. » C'est un choix
-// EXPLICITE de sa part : il doit donc l'emporter sur la déduction automatique par la date, qui
-// n'est qu'un défaut commode. Résout le cas qu'une date seule ne pouvait pas couvrir (commande
-// prise avant le 01/09 mais livrée après).
+// [v1466] LA CASE DÉCIDE, PLUS LA DATE — Ben : « une commande, peu importe sa date de saisie, doit
+// pouvoir afficher les nouveaux prix […] si la case "appliquer les anciens tarifs" est décochée ».
+// La déduction par la date est donc ABANDONNÉE comme règle de tarification : elle empêchait de
+// saisir dès aujourd'hui (août) une commande aux nouveaux tarifs, ce qui est le besoin réel.
+//
+// CE QUI PROTÈGE ENCORE L'HISTORIQUE — et c'est essentiel : une ligne enregistrée AVANT la
+// v1463 n'a ni drapeau ni `tarifRef`. Cette absence sert de marqueur d'ancienneté et lui applique
+// la grille historique. Aucune facture déjà émise ne bouge. Les coffrets sont doublement protégés
+// (leur prix reste scellé dans `prixUnitaireApplique`).
+//
+// `tarifRef` continue d'être enregistré : il ne pilote plus le prix, mais il date la saisie et
+// distingue une ligne récente d'une ligne héritée — c'est lui, le marqueur.
+function grilleCourante(){ return TARIF_GRILLES[0]; }
+function grilleHistorique(){ return TARIF_GRILLES[TARIF_GRILLES.length-1]; }
 function tarifsDeLigne(ln){
-  if(ln && ln.ancienTarif) return TARIF_GRILLES[TARIF_GRILLES.length-1];
-  return tarifsPour(ln && ln.tarifRef);
+  if(ln && ln.ancienTarif) return grilleHistorique();   // choix explicite de Ben
+  if(ln && ln.tarifRef)    return grilleCourante();     // ligne saisie depuis la v1463
+  return grilleHistorique();                            // ligne héritée : historique préservé
 }
 // [v1463] VERROU ANTI-DATATION — Ben : « si une commande est anti datée, c'est à dire par exemple
 // entrée le 2 septembre mais livrée en janvier 2026, elle doit nécessairement garder l'ancien
@@ -4329,13 +4338,11 @@ function tarifsDeLigne(ln){
 // la date du jour. Saisir aujourd'hui une commande de janvier applique la grille de janvier, et
 // les prix affichés changent en direct si la date est modifiée.
 // SANS DATE → grille HISTORIQUE, jamais la nouvelle : si on ignore la date, on ne surfacture pas.
+// [v1466] Grille de SAISIE : la case seule décide. Décochée → tarifs en vigueur (les nouveaux),
+// quelle que soit la date de la commande ou celle du jour. Cochée → anciens tarifs.
 function tarifsSaisie(){
-  // [v1464] La case « ancien tarif » du formulaire l'emporte sur la date : cochée, TOUS les
-  // sélecteurs affichent les anciens prix, quelle que soit la date de la commande.
   const cb = (typeof document!=='undefined') ? document.getElementById('f_ancienTarif') : null;
-  if(cb && cb.checked) return TARIF_GRILLES[TARIF_GRILLES.length-1];
-  const d = (typeof val==='function') ? (val('f_date')||'') : '';
-  return d ? tarifsPour(d) : TARIF_GRILLES[TARIF_GRILLES.length-1];
+  return (cb && cb.checked) ? grilleHistorique() : grilleCourante();
 }
 // Conservé pour les écrans hors commande (catalogue, aide) : grille applicable aujourd'hui.
 function tarifsCourants(){ return tarifsPour(typeof today==='function' ? today() : ''); }
@@ -4343,18 +4350,17 @@ function tarifsCourants(){ return tarifsPour(typeof today==='function' ? today()
 // pas est un verrou qu'on ne peut pas vérifier : en antidatant, Ben doit LIRE « tarifs
 // historiques » à l'écran, pas le supposer. Redessine aussi les lignes, dont les prix affichés
 // dépendent de la date saisie.
+// [v1466] Le bandeau ne parle plus de date : la case seule décide, il doit dire exactement ça.
+// Mentionner l'antidatation ici décrirait un comportement qui n'existe plus — pire qu'un bandeau
+// absent, car Ben s'y fierait.
 function cmdTarifBandeau(){
   const z = document.getElementById('f_tarifBandeau'); if(!z) return;
-  const d = (typeof val==='function') ? (val('f_date')||'') : '';
   const g = tarifsSaisie();
-  const estHistorique = (g !== TARIF_GRILLES[0]);
-  const _coche = !!(document.getElementById('f_ancienTarif')||{}).checked;
-  const auj = (typeof today==='function') ? today() : '';
-  const antidatee = d && auj && d < auj;
-  z.innerHTML = estHistorique
+  const coche = !!(document.getElementById('f_ancienTarif')||{}).checked;
+  z.innerHTML = coche
     ? `<p class="note" style="margin:-4px 0 8px;color:#8a6d3b;background:#fdf8ef;border:1px solid #e5d8c8;border-radius:8px;padding:6px 8px">
-         🗓️ <b>${esc(g.libelle)}</b> appliqués${_coche?' — case « anciens tarifs » cochée.':(antidatee?' — commande antidatée, les tarifs de sa date sont conservés.':'.')}</p>`
-    : `<p class="note" style="margin:-4px 0 8px;color:#2e6b3f">🗓️ ${esc(g.libelle)}.</p>`;
+         🗓️ <b>${esc(g.libelle)}</b> — case « anciens tarifs » cochée. Décoche-la pour revenir aux tarifs en vigueur.</p>`
+    : `<p class="note" style="margin:-4px 0 8px;color:#2e6b3f">🗓️ <b>${esc(g.libelle)}</b> — tarifs en vigueur.</p>`;
   if(typeof drawLines==='function') drawLines();
 }
 // Prix d'un sachet de n macarons selon sa grille (table non linéaire depuis le 01/09/2026).
@@ -21692,7 +21698,7 @@ async function cmdForm(id, opts){
         pouvait pas le distinguer (l'app ne stocke que la date de livraison). -->
    <label style="display:flex;align-items:center;gap:8px;margin:-4px 0 10px;cursor:pointer;font-size:.86rem">
      <input type="checkbox" id="f_ancienTarif" ${o.ancienTarif?'checked':''} onchange="cmdTarifBandeau()">
-     <span>Appliquer les <b>anciens tarifs</b> <span style="color:#9a8a82">— commande prise avant le changement de grille</span></span>
+     <span>Appliquer les <b>anciens tarifs</b> <span style="color:#9a8a82">— pour une commande convenue avant le changement de grille</span></span>
    </label>
    <div class="field"><label>Heure de livraison <span style="color:#9a8a82;font-weight:400">— pour vérifier les délais (repos ganache, maturation)</span></label><input type="time" id="f_heure" value="${esc(o.heureLivraison||'')}" oninput="cmdSyncHeure(this.value);cmdFeasibilityRecalc()"></div>
    <div id="feasibility" class="feasibility" style="display:none"></div>

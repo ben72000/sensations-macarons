@@ -36,7 +36,9 @@ const M = new Function(`
   ${extractConstLine('money2')}
   ${extractArrayConstMulti('TARIF_GRILLES')}
   ${extractFunction('tarifsPour')}
-  ${extractFunction('tarifsDeLigne')}
+  ${extractFunction('grilleCourante')}
+    ${extractFunction('grilleHistorique')}
+    ${extractFunction('tarifsDeLigne')}
   ${extractConstLine('SACHET_PRIX_MACARON')}
   ${extractFunction('sachetPrixPour')}
   ${extractConstLine('PERSO_PRIX_UNIT')}
@@ -44,7 +46,7 @@ const M = new Function(`
   ${extractFunction('logoPrixUnitPour')}
   ${extractFunction('logoMontantPour')}
   ${extractFunction('forfaitCreationPour')}
-  return { TARIF_GRILLES, tarifsPour, tarifsDeLigne, sachetPrixPour, persoPrixUnitPour,
+  return { TARIF_GRILLES, tarifsPour, tarifsDeLigne, grilleCourante, grilleHistorique, sachetPrixPour, persoPrixUnitPour,
            logoPrixUnitPour, logoMontantPour, forfaitCreationPour };
 `)();
 
@@ -81,19 +83,26 @@ const NEUF = '2026-09-15', VIEUX = '2026-01-20', VEILLE = '2026-08-31', JOUR_J =
   check('B. …le logo n\'existait pas : 0 €', M.logoMontantPour(150, VIEUX) === 0);
   check('B. …le forfait création n\'existait pas : 0 €', M.forfaitCreationPour(2, VIEUX) === 0);
 
-  // Bornes exactes du basculement.
-  check('B. le 31 août est encore à l\'ancien tarif', M.tarifsPour(VEILLE).box[6] === 12);
-  check('B. le 1er septembre bascule au nouveau', M.tarifsPour(JOUR_J).box[6] === 14);
+  // `tarifsPour` reste la lecture d'une grille PAR DATE (consultation de l'historique des
+  // tarifs), mais depuis la v1466 elle ne décide plus du prix d'une commande — c'est la case.
+  check('B. tarifsPour lit toujours la grille du 31 août', M.tarifsPour(VEILLE).box[6] === 12);
+  check('B. …et celle du 1er septembre', M.tarifsPour(JOUR_J).box[6] === 14);
 }
 
 // ---- C. SANS DATE → ancien tarif. On ne surfacture jamais dans le doute ----
 {
   check('C. date absente → grille historique, jamais la nouvelle', M.tarifsPour('').box[6] === 12);
   check('C. date nulle → idem', M.tarifsPour(null).box[6] === 12);
-  check('C. une LIGNE sans tarifRef (antérieure à cette version) → ancien tarif',
+  // [v1466] LA CASE DÉCIDE, PLUS LA DATE. Ce qui protège encore l'historique : une ligne HÉRITÉE
+  // (ni drapeau ni tarifRef) reste sur l'ancienne grille — aucune facture émise ne bouge.
+  check('C. ligne HÉRITÉE (ni drapeau ni tarifRef) → ancien tarif',
     M.tarifsDeLigne({type:'coffret', taille:6}).box[6] === 12);
-  check('C. une ligne AVEC tarifRef ancien → ancien tarif', M.tarifsDeLigne({tarifRef:VIEUX}).box[6] === 12);
-  check('C. une ligne AVEC tarifRef récent → nouveau tarif', M.tarifsDeLigne({tarifRef:NEUF}).box[6] === 14);
+  check('C. ligne récente, case décochée → NOUVEAUX tarifs même datée d\'août',
+    M.tarifsDeLigne({tarifRef:'2026-08-20'}).box[6] === 14);
+  check('C. …et même datée de janvier : la date ne décide plus',
+    M.tarifsDeLigne({tarifRef:VIEUX}).box[6] === 14);
+  check('C. case cochée → anciens tarifs quelle que soit la date',
+    M.tarifsDeLigne({tarifRef:NEUF, ancienTarif:true}).box[6] === 12);
 }
 
 // ---- D. Personnalisation logo : paliers, bornes incluses ----
@@ -136,9 +145,10 @@ const NEUF = '2026-09-15', VIEUX = '2026-01-20', VEILLE = '2026-08-31', JOUR_J =
   check('F. l\'événement lit la grille de sa ligne', /tarifsDeLigne\(ln\)/.test(srcEvt));
 
   const srcSaisie = extractFunction('tarifsSaisie');
-  check('F. la saisie suit la DATE DE LA COMMANDE, pas le jour', /val\('f_date'\)/.test(srcSaisie));
-  check('F. sans date, la saisie retombe sur la grille historique',
-    /TARIF_GRILLES\[TARIF_GRILLES\.length-1\]/.test(srcSaisie));
+  check('F. [v1466] la saisie ne consulte PLUS la date — la case seule décide',
+    !/val\('f_date'\)/.test(srcSaisie));
+  check('F. décochée → grille courante ; cochée → grille historique',
+    /grilleCourante\(\)/.test(srcSaisie) && /grilleHistorique\(\)/.test(srcSaisie));
 
   const srcStored = extractFunction('cmdLinesToStored');
   check('F. tarifRef est posé à l\'enregistrement', /tarifRef,/.test(srcStored));
@@ -179,11 +189,16 @@ const NEUF = '2026-09-15', VIEUX = '2026-01-20', VEILLE = '2026-08-31', JOUR_J =
     M.tarifsDeLigne({tarifRef:VIEUX, ancienTarif:true}).box[6] === 12);
 
   const src = extractFunction('tarifsDeLigne');
-  check('H. le drapeau est testé AVANT la date (il doit primer, pas se faire écraser)',
-    src.indexOf('ancienTarif') >= 0 && src.indexOf('ancienTarif') < src.indexOf('tarifsPour'));
+  // [v1466] Le drapeau est le PREMIER test de la fonction : c'est lui qui décide, et rien ne doit
+  // pouvoir le contourner ensuite. La date n'y intervient plus du tout.
+  const iFlag = src.indexOf('ancienTarif');
+  const iRef  = src.indexOf('tarifRef');
+  check('H. le drapeau est testé EN PREMIER, avant tout autre critère',
+    iFlag >= 0 && iRef >= 0 && iFlag < iRef);
+  check('H. la tarification d\'une ligne ne consulte plus tarifsPour (la date ne décide plus)',
+    !/tarifsPour/.test(src));
   const srcSaisie = extractFunction('tarifsSaisie');
-  check('H. le formulaire consulte la case et la fait primer sur la date',
-    /f_ancienTarif/.test(srcSaisie) && srcSaisie.indexOf('f_ancienTarif') < srcSaisie.indexOf("val('f_date')"));
+  check('H. le formulaire consulte la case', /f_ancienTarif/.test(srcSaisie));
   const srcStored = extractFunction('cmdLinesToStored');
   check('H. le drapeau est copié sur CHAQUE ligne enregistrée (une ligne se tarife seule)',
     /ancienTarif:ancienTarif\|\|undefined/.test(srcStored));
@@ -227,6 +242,8 @@ const NEUF = '2026-09-15', VIEUX = '2026-01-20', VEILLE = '2026-08-31', JOUR_J =
     ${extractConstLine('money2')}
     ${extractArrayConstMulti('TARIF_GRILLES')}
     ${extractFunction('tarifsPour')}
+    ${extractFunction('grilleCourante')}
+    ${extractFunction('grilleHistorique')}
     ${extractFunction('tarifsDeLigne')}
     ${extractConstLine('BOX_PRICES')}
     const cmdProductsCache = [{taille:6, prix:12},{taille:25, prix:42}];   // catalogue d'origine
