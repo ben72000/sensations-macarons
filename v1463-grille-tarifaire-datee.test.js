@@ -259,5 +259,27 @@ const NEUF = '2026-09-15', VIEUX = '2026-01-20', VEILLE = '2026-08-31', JOUR_J =
     M2({type:'coffret', taille:6, ancienTarif:true}) === 12);
 }
 
+// ---- K. [v1467] LE SÉLECTEUR AFFICHAIT LE PRIX DU CATALOGUE, PAS CELUI APPLIQUÉ. Capture de Ben :
+// bandeau « Tarifs au 1er septembre 2026 — tarifs en vigueur », case décochée, et la liste
+// proposait « Coffret 6 macarons — 12,00 € ». Le prix FACTURÉ était pourtant correct : c'est
+// l'affichage qui mentait — pire, car Ben choisit sur ce qu'il lit. ----
+{
+  const i = APP.indexOf('const boxOpts = cmdProductsCache.map');
+  const src = APP.slice(i, APP.indexOf('.join(\'\');', i));
+  check('K. le libellé du sélecteur passe par coffretUnitPrice', /coffretUnitPrice\(/.test(src));
+  check('K. il n\'affiche plus le prix brut du catalogue', !/euro\(p\.prix\)/.test(src));
+  check('K. le prix affiché tient compte de la case « anciens tarifs »', /ancienTarif:ln\.ancienTarif/.test(src));
+  check('K. data-prix porte aussi le prix appliqué (cohérence affichage/valeur)', /data-prix="\$\{pu\}"/.test(src));
+}
+
+// ---- L. [v1467] Alignement prudent du catalogue produits ----
+{
+  const src = extractFunction('alignerCatalogueSurGrille');
+  check('L. un prix personnalisé n\'est JAMAIS écrasé', /\+p\.prix !== \+vieux/.test(src) && /continue/.test(src));
+  check('L. les tailles hors grille (sur mesure) sont laissées intactes', /neuf==null \|\| vieux==null/.test(src));
+  check('L. idempotente : rien à faire si déjà aligné', /\+p\.prix === \+neuf/.test(src));
+  check('L. n\'écrit que le prix, rien d\'autre', /update\(p\.id, \{ prix:/.test(src));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if(fail){ failures.forEach(f => console.log('  ✗ ' + f)); process.exitCode = 1; }

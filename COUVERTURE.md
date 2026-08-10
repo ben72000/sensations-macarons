@@ -4853,3 +4853,45 @@ test de `tarifsDeLigne` et celle-ci ne consulte plus `tarifsPour` (H) ; `tarifsS
 ### Un harnais complété
 `v1452` construisait `tarifsDeLigne` sans les deux helpers introduits ici (`grilleCourante`,
 `grilleHistorique`) → complété. Diagnostiqué avant conclusion : aucun défaut applicatif.
+
+---
+
+## 2026-08-10 — LE SÉLECTEUR AFFICHAIT LE PRIX DU CATALOGUE, PAS CELUI APPLIQUÉ  (v1466 → **v1467**)
+
+**Capture de Ben** : bandeau « Tarifs au 1er septembre 2026 — tarifs en vigueur », case décochée,
+date au 10 septembre — et la liste proposait pourtant « **Coffret 6 macarons — 12,00 €** ». Son
+message : « Rien n'a changé ».
+
+### La cause
+La liste déroulante des tailles construisait ses libellés avec la valeur **brute** du catalogue
+produits (`euro(p.prix)`), sans jamais passer par `coffretUnitPrice` — seule fonction qui connaît la
+grille tarifaire et la case « anciens tarifs ».
+
+Le prix **facturé** était pourtant correct depuis la v1465 : c'est l'**affichage** qui mentait. Et
+c'est pire qu'un prix faux, parce que Ben choisit sur ce qu'il lit — il aurait renoncé à une
+fonctionnalité qui marchait, ou pire, douté du montant réellement facturé.
+
+**Ce que ça révèle sur mes deux correctifs précédents** : j'ai corrigé deux fois la *fonction de
+calcul* (v1463 puis v1465) sans jamais vérifier ce que l'écran **affiche**. La leçon est la même
+qu'en v1458 (la quantité calculée mais jamais imprimée) et qu'en v1428 (fonction juste, câblage
+absent) : une valeur correcte qui n'atteint pas l'écran n'est pas une fonctionnalité.
+
+### Le fix
+Chaque option de la liste affiche désormais le prix **réellement appliqué**, en passant par
+`coffretUnitPrice` avec le contexte de la ligne (case comprise). `data-prix` porte la même valeur,
+pour que l'attribut et le libellé ne puissent pas diverger.
+
+### Le catalogue produits aligné, prudemment
+Le catalogue conservait les prix d'installation : Ben y aurait lu 12 € pour un coffret facturé 14 €.
+`alignerCatalogueSurGrille()` le met à jour au démarrage — mais **uniquement** les entrées encore au
+prix historique **exact**. Un prix que Ben aurait personnalisé n'est jamais écrasé (l'app n'a pas à
+défaire une décision qu'elle ne comprend pas), et les tailles sur mesure absentes de la grille sont
+laissées intactes. Idempotente.
+
+### Suite v1463 : 85 assertions (sections K et L)
+Le libellé du sélecteur passe par `coffretUnitPrice`, n'affiche plus le prix brut, tient compte de
+la case, et `data-prix` reste cohérent avec le libellé (K) ; alignement du catalogue — prix
+personnalisé jamais écrasé, tailles hors grille intactes, idempotence, n'écrit que le prix (L).
+
+**Sensibilité vérifiée par réintroduction du défaut exact de la capture** : remettre `euro(p.prix)`
+dans le sélecteur fait rougir les 4 assertions de la section K.

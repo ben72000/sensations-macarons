@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1466'; // suite : voir tests/v1463-grille-tarifaire-datee.test.js
-const APP_MAJ = 'LA CASE DECIDE, PLUS LA DATE. Ben : « une commande, peu importe sa date de saisie, doit pouvoir afficher les nouveaux prix, c est a dire ceux apres aout 2026 si la case « appliquer les anciens tarifs » est decochee ». La deduction par la DATE est donc ABANDONNEE comme regle de tarification : elle empechait de saisir des aujourd hui (aout) une commande aux nouveaux tarifs, qui est le besoin reel. Desormais : case DECOCHEE = tarifs en vigueur, quelle que soit la date de la commande ; case COCHEE = anciens tarifs. Un seul interrupteur, visible et explicite. CE QUI PROTEGE ENCORE L HISTORIQUE : une ligne enregistree AVANT la v1463 n a ni drapeau ni marque de tarif — cette absence sert de marqueur d anciennete et lui applique la grille historique, donc aucune facture deja emise ne bouge. Les coffrets restent doublement proteges (prix scelle sur la ligne). Le bandeau et le libelle de la case ont ete reecrits : ils parlaient encore d antidatation et auraient decrit un comportement qui n existe plus. Suite v1463 mise a jour : 77 assertions ; sensibilite verifiee par mutation reelle (remettre la regle par date fait rougir 3 assertions).';
+const APP_VERSION = 'v1467'; // suite : voir tests/v1463-grille-tarifaire-datee.test.js
+const APP_MAJ = 'LE SELECTEUR AFFICHAIT LE PRIX DU CATALOGUE, PAS CELUI APPLIQUE. Capture de Ben : le bandeau annoncait « Tarifs au 1er septembre 2026 — tarifs en vigueur », la case etait decochee, et la liste proposait pourtant « Coffret 6 macarons — 12,00 € ». CAUSE : la liste deroulante des tailles construisait ses libelles avec la valeur BRUTE du catalogue produits, sans jamais passer par coffretUnitPrice — seule fonction qui connait la grille et la case « anciens tarifs ». Le prix FACTURE etait pourtant correct depuis la v1465 : c est l affichage qui mentait, ce qui est pire, puisque Ben choisit sur ce qu il lit. FIX : chaque option de la liste affiche desormais le prix reellement applique, case comprise. AJOUT : le catalogue produits lui-meme est aligne sur la grille en vigueur au demarrage — il conservait les prix d installation, donc Ben y aurait lu 12 € pour un coffret facture 14 €. Alignement PRUDENT : seules les entrees encore au prix historique exact sont mises a jour ; un prix personnalise n est jamais ecrase, et les tailles sur mesure sont laissees intactes. Suite v1463 : 85 assertions ; sensibilite verifiee par reintroduction du defaut exact de la capture (4 rouges).';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
 const _APP_MAJ_v1448_ARCHIVE_INUTILISEE = 'LE CHAMP « N° LOT DE PRODUCTION » MENTAIT EN MODE DUO. Ben, capture à l\u2019appui : lançant Chocolat passion + Pistache en meringue commune, le champ affichait « 030826RAF » — ni CHP ni PIS, mais RAF (Coco Rafaello, une tout autre recette). CAUSE : la branche duo de saveProd() ne lit JAMAIS ce champ — chaque parfum reçoit son propre lot, calculé indépendamment. Sa valeur affichée venait de prodRefreshLot(), qui lit TOUJOURS la recette unique (f_rec) — or f_rec reste dans la page (juste masquée) en duo, avec la valeur de la DERNIÈRE recette affichée avant le passage en duo. Un champ qui ment ET n\u2019a aucun effet réel est pire qu\u2019un champ absent. Même défaut, plus discret, sur la case « diviser en 2 lots » (v1445/v1446) : cochée, ce champ n\u2019est pas plus lu par le lancement réel. FIX : le champ est désormais masqué dans ces deux cas ; à la place, les VRAIS numéros de lot qui seront utilisés sont prévisualisés — en mode duo dans le récapitulatif de répartition, et pour la division bicolore dans son propre encart — calculés avec EXACTEMENT la même formule que la sauvegarde réelle, jamais un second calcul qui pourrait diverger. Suite v1448 : 12 assertions (tests/v1448-lot-duo-preview.test.js), dont une réconciliation qui rejoue la vraie formule de sauvegarde et vérifie que l\u2019aperçu affiche bien 030826CHP-CO et 030826PIS-CO — jamais RAF.';
@@ -22280,7 +22280,16 @@ function drawLines(){
 }
 
 function drawCoffretLine(ln,i){
-  const boxOpts = cmdProductsCache.map(p=>`<option value="${p.taille}" data-prix="${p.prix}" ${(+ln.taille===+p.taille)?'selected':''}>${esc(p.nom)} — ${euro(p.prix)}</option>`).join('');
+  // [v1467] LE SÉLECTEUR AFFICHE LE PRIX RÉELLEMENT APPLIQUÉ. Il montrait `p.prix`, c'est-à-dire
+  // la valeur brute du CATALOGUE produits — sans jamais passer par `coffretUnitPrice`, seule
+  // fonction qui connaît la grille tarifaire et la case « anciens tarifs ». Résultat : le bandeau
+  // annonçait « tarifs en vigueur » pendant que la liste proposait « Coffret 6 macarons — 12,00 € ».
+  // Le prix FACTURÉ était pourtant correct : c'est l'affichage qui mentait, ce qui est pire —
+  // Ben choisit sur ce qu'il lit.
+  const boxOpts = cmdProductsCache.map(p=>{
+    const pu = coffretUnitPrice({ taille:+p.taille, tarifRef:ln.tarifRef, ancienTarif:ln.ancienTarif });
+    return `<option value="${p.taille}" data-prix="${pu}" ${(+ln.taille===+p.taille)?'selected':''}>${esc(p.nom)} — ${euro(pu)}</option>`;
+  }).join('');
   const limit = BOX_FLAVOR_LIMIT[ln.taille]||0;
   // sélecteur de quantité 0..taille pour chaque parfum
   const flavRows = FLAVORS.map((f,fi)=>{
@@ -59192,6 +59201,29 @@ async function seedProducts(){
 const COFFRET10_TAILLE = 10;
 const COFFRET10_PRIX = 22;
 const COFFRET10_EMB_NOM = 'Boîte blch 8/10pcs';
+// [v1467] ALIGNE LE CATALOGUE PRODUITS SUR LA GRILLE EN VIGUEUR. Le catalogue conservait les prix
+// d'installation (12/16/22/28/42 €) : Ben y aurait lu 12 € pour un coffret facturé 14 €. Ce n'est
+// que de l'affichage — `coffretUnitPrice` consulte la grille en priorité — mais deux chiffres
+// différents pour la même chose finissent toujours par tromper quelqu'un.
+//
+// PRUDENCE : on ne met à jour QUE les entrées encore au prix historique exact. Un prix que Ben
+// aurait personnalisé lui-même n'est jamais écrasé — l'app n'a pas à défaire une décision qu'elle
+// ne comprend pas. Idempotente : relancée, elle ne trouve plus rien à changer.
+async function alignerCatalogueSurGrille(){
+  try{
+    const neuve = TARIF_GRILLES[0], ancienne = TARIF_GRILLES[TARIF_GRILLES.length-1];
+    if(!neuve || !neuve.box || !ancienne || !ancienne.box) return;
+    const prods = await db.products.toArray().catch(()=>[]);
+    for(const p of prods){
+      const t = +p.taille;
+      const neuf = neuve.box[t], vieux = ancienne.box[t];
+      if(neuf==null || vieux==null) continue;              // taille sur mesure : on n'y touche pas
+      if(+p.prix !== +vieux) continue;                     // prix personnalisé : respecté
+      if(+p.prix === +neuf) continue;                      // déjà aligné
+      await db.products.update(p.id, { prix: money2(neuf) });
+    }
+  }catch(e){ swallow(e,'alignerCatalogueSurGrille'); }
+}
 async function seedCoffret10(){
   try{
     // 1) La boîte blanche 8/10 (capacité 10) — même définition que createBoitesBlanches().
@@ -73618,6 +73650,7 @@ function startClock(){
     try{ await seedIfEmpty(); }catch(e){ console.error('seed',e); }
     try{ await seedProducts(); }catch(e){ console.error('seedProducts',e); }
     try{ await seedCoffret10(); }catch(e){ console.error('seedCoffret10',e); }
+    try{ await alignerCatalogueSurGrille(); }catch(e){ console.error('alignerCatalogueSurGrille',e); }
     try{ await seedPMS(); }catch(e){ console.error('seedPMS',e); }
     try{ await seedAllergenes(); }catch(e){ console.error('seedAllergenes',e); }
     try{ await seedEmballages(); }catch(e){ console.error('seedEmballages',e); }
