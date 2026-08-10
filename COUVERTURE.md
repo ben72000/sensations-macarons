@@ -4773,3 +4773,41 @@ avant le 01/09, signature rétrocompatible de `bigPrice` (I).
 
 **Sensibilité vérifiée par mutation réelle de `app.js`** : retirer la priorité de la case sur la
 date fait rougir 4 assertions.
+
+---
+
+## 2026-08-06 — CORRECTIF : LES NOUVEAUX TARIFS COFFRETS NE S'APPLIQUAIENT PAS EN SAISIE  (v1464 → **v1465**)
+
+**Trouvé en préparant la réponse à Ben**, qui demandait comment tester les nouveaux tarifs dès le
+mois d'août. En vérifiant le chemin qu'il allait emprunter, le défaut est apparu.
+
+### Le défaut
+Une ligne **en cours de saisie** n'a pas encore sa marque de tarif (`tarifRef`, posée seulement à
+l'enregistrement). L'ordre de priorité de la v1463 la faisait donc retomber sur le **catalogue
+produits**, qui contient les prix d'installation (12/16/22/28/42 €). Une commande datée de
+septembre affichait donc **12 € pour un coffret de 6 au lieu de 14 €** — et ce prix faux était
+**scellé** sur la commande à l'enregistrement, donc définitif.
+
+L'ordre posé en v1463 protégeait correctement le passé (grille avant catalogue pour une ligne
+*déjà enregistrée*), mais je n'avais pas vérifié le chemin d'une **saisie neuve**. La protection
+regardait dans une seule direction.
+
+Les autres types n'étaient pas touchés : sachets, événements, vrac pro et gros macarons n'ont pas de
+catalogue et consultaient déjà la grille directement.
+
+### Le fix
+La grille datée prime désormais sur le catalogue **même sans marque de tarif** : une ligne en saisie
+utilise la grille de la date affichée. Le catalogue ne sert plus que de **repli** pour les tailles
+absentes de la grille (formats sur mesure).
+
+⚠️ **Conséquence à connaître** : un prix que Ben aurait personnalisé dans le catalogue pour une
+taille standard n'est plus prioritaire. Signalé — à ajuster s'il préfère l'inverse.
+
+### Suite v1463 étendue : 75 assertions (section J)
+Ordre de priorité vérifié avec exigence de **présence** avant comparaison (la leçon du `indexOf`
+à −1) ; **scénario chiffré exact** — saisie datée de septembre, ligne sans marque de tarif → 14 € et
+non les 12 € du catalogue, 50 € et non 42 € pour le 25 ; un prix déjà scellé reste intouché ; une
+ligne « ancien tarif » garde 12 € malgré la date de saisie.
+
+**Sensibilité vérifiée par réintroduction du défaut exact** : remettre le catalogue prioritaire fait
+rougir 3 assertions, avec les chiffres qui parlent (14 € attendu, 12 € obtenu).

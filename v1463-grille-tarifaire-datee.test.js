@@ -205,5 +205,42 @@ const NEUF = '2026-09-15', VIEUX = '2026-01-20', VEILLE = '2026-08-31', JOUR_J =
   check('I. repli sur l\'ancien réglage quand la grille ne dit rien', /prixGrandFormatPro/.test(src));
 }
 
+// ---- J. [v1465] LE DÉFAUT QUE LE TEST DE BEN AURAIT RÉVÉLÉ : une ligne EN COURS DE SAISIE n'a
+// pas encore de tarifRef. L'ancien ordre de priorité la faisait retomber sur le CATALOGUE
+// produits, qui contient les prix d'installation (12/16/22/28/42 €) — une commande datée de
+// septembre affichait donc 12 € pour un coffret de 6 au lieu de 14 €, et ce prix faux était
+// SCELLÉ à l'enregistrement. La grille prime désormais, même sans tarifRef. ----
+{
+  const src = extractFunction('coffretUnitPrice');
+  const iScelle = src.indexOf('prixUnitaireApplique');
+  const iGrille = src.indexOf('g.box[taille]');
+  const iCatal  = src.indexOf('cmdProductsCache');
+  check('J. le prix scellé reste prioritaire (commandes déjà enregistrées intactes)',
+    iScelle >= 0 && iGrille >= 0 && iScelle < iGrille);
+  check('J. la grille prime sur le catalogue', iGrille >= 0 && iCatal >= 0 && iGrille < iCatal);
+  check('J. une ligne SANS tarifRef consulte quand même la grille (cas de la saisie en cours)',
+    /tarifsSaisie\(\)/.test(src));
+  check('J. le catalogue ne sert plus que de repli', iCatal > iGrille);
+
+  // Comportement : la grille de septembre donne bien 14 € pour un 6, pas le 12 € du catalogue.
+  const M2 = new Function(`
+    ${extractConstLine('money2')}
+    ${extractArrayConstMulti('TARIF_GRILLES')}
+    ${extractFunction('tarifsPour')}
+    ${extractFunction('tarifsDeLigne')}
+    ${extractConstLine('BOX_PRICES')}
+    const cmdProductsCache = [{taille:6, prix:12},{taille:25, prix:42}];   // catalogue d'origine
+    function tarifsSaisie(){ return tarifsPour('2026-09-15'); }            // commande de septembre
+    ${extractFunction('coffretUnitPrice')}
+    return coffretUnitPrice;
+  `)();
+  check('J. saisie datée de septembre, ligne sans tarifRef → 14 € (et non les 12 € du catalogue)',
+    M2({type:'coffret', taille:6}) === 14);
+  check('J. …idem pour le 25 : 50 € et non 42 €', M2({type:'coffret', taille:25}) === 50);
+  check('J. un prix déjà scellé reste intouché', M2({type:'coffret', taille:6, prixUnitaireApplique:12}) === 12);
+  check('J. une ligne marquée « ancien tarif » garde 12 € malgré la date de saisie',
+    M2({type:'coffret', taille:6, ancienTarif:true}) === 12);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if(fail){ failures.forEach(f => console.log('  ✗ ' + f)); process.exitCode = 1; }
