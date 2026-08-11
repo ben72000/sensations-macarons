@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1468'; // suite : voir tests/v1463-grille-tarifaire-datee.test.js
-const APP_MAJ = 'LES OPTIONS SUIVAIENT ENCORE LA DATE, PAS LA CASE. Ben : « la mise a jour de +0,30cts pour la personnalisation des couleurs n est pas passe. Quoi que je coche ca reste a 25cts ». CAUSE : en v1466 la tarification des LIGNES est passee sur la case, mais les options de niveau COMMANDE — personnalisation couleurs, logo, forfait creation — sont restees sur l ancienne regle par DATE. Comme on est en aout, elles retombaient sur la grille historique, et la case n avait aucune prise sur elles. FIX : meme regle partout. Ces trois options prennent desormais un CONTEXTE (la commande, ou le formulaire en cours) au lieu d une date : commande cochee → anciens tarifs ; commande recente non cochee → tarifs en vigueur ; commande HERITEE, sans marqueur → grille historique, donc aucune facture deja emise ne bouge. Un marqueur de tarif est desormais pose au niveau COMMANDE aussi (pendant de celui des lignes), pour distinguer une commande saisie depuis la v1463 d une commande heritee. Suite v1463 : 98 assertions ; sensibilite verifiee par reintroduction du defaut exact (0,30 € attendu, 0,25 € obtenu).';
+const APP_VERSION = 'v1469'; // suite : voir tests/v1463-grille-tarifaire-datee.test.js
+const APP_MAJ = 'AFFICHE DIFFERENT DE FACTURE, ET SACHET REMIS AU LINEAIRE. Deux corrections signalees par Ben sur captures. 1) UNE LIGNE EN COURS DE SAISIE ETAIT TARIFEE COMME UNE LIGNE HERITEE : le sachet annoncait 6,50 € et « Montant ligne » facturait 7,50 €. Cause : l absence de marqueur de tarif signifie « ligne heritee → grille historique », ce qui est juste pour une ligne ENREGISTREE mais faux pour une ligne qu on est en train de saisir, qui n a simplement pas encore recu son marqueur. Un resolveur distinct (tarifsLigneSaisie) sert desormais le modele d edition ; les lignes enregistrees gardent l autre, ce qui continue de proteger l historique. Corrige aussi pour le vrac et le grand format, qui avaient la meme faille. 2) LES PRIX AFFICHES DE LA PERSONNALISATION ETAIENT FIGES a 0,25 € en trois endroits (libelle de la case, ligne du recapitulatif, fiche d aide) alors que le calcul appliquait bien 0,30 € : le total etait juste mais l ecran mentait. Ils affichent desormais le tarif applique. 3) SACHET : Ben a tranche — « peu importe la date le montant du macaron a l unite est de 2,50€ », et un sachet de 3 fait « 7,50 € dans tous les cas ». Le sachet n est donc PAS degressif et ne change pas avec la grille : la case est volontairement sans effet sur lui. Suite v1463 : 111 assertions ; sensibilite verifiee par reintroduction des deux defauts exacts des captures.';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
 const _APP_MAJ_v1448_ARCHIVE_INUTILISEE = 'LE CHAMP « N° LOT DE PRODUCTION » MENTAIT EN MODE DUO. Ben, capture à l\u2019appui : lançant Chocolat passion + Pistache en meringue commune, le champ affichait « 030826RAF » — ni CHP ni PIS, mais RAF (Coco Rafaello, une tout autre recette). CAUSE : la branche duo de saveProd() ne lit JAMAIS ce champ — chaque parfum reçoit son propre lot, calculé indépendamment. Sa valeur affichée venait de prodRefreshLot(), qui lit TOUJOURS la recette unique (f_rec) — or f_rec reste dans la page (juste masquée) en duo, avec la valeur de la DERNIÈRE recette affichée avant le passage en duo. Un champ qui ment ET n\u2019a aucun effet réel est pire qu\u2019un champ absent. Même défaut, plus discret, sur la case « diviser en 2 lots » (v1445/v1446) : cochée, ce champ n\u2019est pas plus lu par le lancement réel. FIX : le champ est désormais masqué dans ces deux cas ; à la place, les VRAIS numéros de lot qui seront utilisés sont prévisualisés — en mode duo dans le récapitulatif de répartition, et pour la division bicolore dans son propre encart — calculés avec EXACTEMENT la même formule que la sauvegarde réelle, jamais un second calcul qui pourrait diverger. Suite v1448 : 12 assertions (tests/v1448-lot-duo-preview.test.js), dont une réconciliation qui rejoue la vraie formule de sauvegarde et vérifie que l\u2019aperçu affiche bien 030826CHP-CO et 030826PIS-CO — jamais RAF.';
@@ -4285,7 +4285,11 @@ async function seedAllergenes(){
 const TARIF_GRILLES = [
   { debut:'2026-09-01', libelle:'Tarifs au 1er septembre 2026',
     box:{ 6:14, 8:18, 10:22, 16:34, 25:50 },
-    sachet:{ 1:2.5, 2:5, 3:6.5 },        // NON linéaire : 3 pièces à 6,50 € et non 7,50 €
+    // [v1469] Ben a tranché : « peu importe la date le montant du macaron à l'unité est de
+    // 2,50€ », et un sachet de 3 fait « 7,50 € dans tous les cas — toujours 3 × 2,50 € ».
+    // Le sachet n'est donc PAS dégressif et ne change pas avec la grille : même règle des
+    // deux côtés, ce qui rend la case sans effet sur lui — c'est voulu.
+    sachet:null, sachetUnitaire:2.5,
     event:1.90, eventMin:35, pyramide:22,
     proOccasionnel:1.75, proRecurrent:1.60,
     grandFormat:{ particulier:7.00, pro:3.80 },
@@ -4325,6 +4329,17 @@ function tarifsPour(dateStr){
 // distingue une ligne récente d'une ligne héritée — c'est lui, le marqueur.
 function grilleCourante(){ return TARIF_GRILLES[0]; }
 function grilleHistorique(){ return TARIF_GRILLES[TARIF_GRILLES.length-1]; }
+// [v1469] Grille d'une ligne EN COURS DE SAISIE (modèle d'édition), à ne pas confondre avec
+// `tarifsDeLigne` qui sert aux lignes ENREGISTRÉES. La distinction est indispensable : une ligne
+// enregistrée sans marqueur est HÉRITÉE (→ grille historique, protection de l'historique), tandis
+// qu'une ligne qu'on est en train de saisir n'a simplement pas encore reçu son marqueur (→ la case
+// du formulaire décide). Les confondre facturait un sachet 7,50 € pendant que l'écran annonçait
+// 6,50 € — divergence constatée par Ben sur capture.
+function tarifsLigneSaisie(ln){
+  if(ln && ln.ancienTarif) return grilleHistorique();
+  if(ln && ln.tarifRef)    return grilleCourante();
+  return (typeof tarifsSaisie==='function') ? tarifsSaisie() : grilleHistorique();
+}
 function tarifsDeLigne(ln){
   if(ln && ln.ancienTarif) return grilleHistorique();   // choix explicite de Ben
   if(ln && ln.tarifRef)    return grilleCourante();     // ligne saisie depuis la v1463
@@ -4381,8 +4396,8 @@ const BOX_PRICES = { 6: 12, 8: 16, 10: 22, 16: 28, 25: 42 }; // repli historique
 // Avant le 01/09/2026, il n'existait qu'UN tarif pro, réglable dans Paramètres : les lignes de
 // cette époque continuent donc de le lire là — c'est ce qui garantit qu'une commande pro déjà
 // passée garde exactement son prix, même si Ben modifie ses réglages ensuite.
-function vracPrixMacaron(ln){
-  const g = tarifsDeLigne(ln);
+function vracPrixMacaron(ln, grille){
+  const g = grille || tarifsDeLigne(ln);
   if(ln && ln.proMode==='nonpro'){
     const box6 = (g && g.box && g.box[6]!=null) ? +g.box[6] : (BOX_PRICES[6]||12);
     return money2(box6/6);
@@ -5524,7 +5539,8 @@ function coquesMutualisables(profilCible, profilSource, couleurVoulue){
 // d'affichage sans ligne (tableau des tarifs, aide) restent valides et prennent la grille de
 // saisie. Avant le 01/09/2026 : anciens prix (réglage prixGrandFormatPro, sinon BIG_PRICE).
 function bigPrice(tarif, ref){
-  const g = (ref && typeof ref==='object') ? tarifsDeLigne(ref)
+  const g = (ref && ref.__grille) ? ref.__grille
+          : (ref && typeof ref==='object') ? tarifsDeLigne(ref)
           : (ref ? tarifsPour(ref)
           : (typeof tarifsSaisie==='function' ? tarifsSaisie() : null));
   if(g && g.grandFormat){
@@ -21762,7 +21778,7 @@ async function cmdForm(id, opts){
        <div class="sum-box" id="deliveryImpact" style="display:none;flex-direction:column;align-items:stretch;gap:4px"></div>
      </div>
    </div>
-   <label class="switch-row"><input type="checkbox" id="f_perso" ${o.perso||+o.persoMacarons>0?'checked':''} onchange="cmdPersoToggle()"> Personnalisation des couleurs (+0,25 €/macaron)</label>
+   <label class="switch-row"><input type="checkbox" id="f_perso" ${o.perso||+o.persoMacarons>0?'checked':''} onchange="cmdPersoToggle()"> Personnalisation des couleurs (+${euro(persoPrixUnitPour())}/macaron)</label>
    <div class="field" id="f_persoWrap" style="${(o.perso||+o.persoMacarons>0)?'':'display:none'}"><label>Nombre de macarons personnalisés <span style="color:#9a8a82;font-weight:400">— pas forcément le total de la commande</span></label>
      <input type="number" min="0" step="1" id="f_persoNb" value="${o.persoMacarons||''}" placeholder="ex : 24" oninput="cmdRecalc()">
      <div class="row2" style="margin-top:8px">
@@ -23277,7 +23293,7 @@ function drawSachetLine(ln,i){
   </div>`;
   return `<div class="cmd-line">
     <div class="line-head"><span class="line-type">Sachet <span class="line-sub">1 à ${SACHET_MAX} macarons</span></span><span class="line-del" onclick="removeLine(${i})">✕ retirer</span></div>
-    <p class="note" style="margin:-2px 0 4px">${_sTarif.sachet ? `1 / 2 / 3 pièces : ${euro(_sTarif.sachet[1])} · ${euro(_sTarif.sachet[2])} · ${euro(_sTarif.sachet[3])}` : `${euro(_sTarif.sachetUnitaire||SACHET_PRIX_MACARON)} par macaron`}</p>
+    <p class="note" style="margin:-2px 0 4px">${euro(sachetPrixPour(1,_sTarif))} par macaron</p>
     <label style="font-size:.78rem;color:#7a6a62">Parfums (quantité)</label>
     <div class="flav-grid">${rows}${extraRows}${sansParfumRow}</div>
     ${sansParfum>0 ? `<p class="note" style="margin:6px 0 2px;color:#9a7d3a">🎯 Les ${sansParfum} macaron${sansParfum>1?'s':''} sans parfum seront à déterminer au démarrage de la production — l'app te le proposera au bon moment, avec le stock réel de ce jour-là.</p>
@@ -23408,9 +23424,9 @@ function lineTotalBase(ln){
     return money2(base + over*FLAVOR_SURCHARGE);
   }
   if(ln.type==='evenement') return addMoney(addMoney(mulMoney(ln.evQte||0,eventUnitPrice(ln)), pyraTotalLigne(ln)), accessoireDecoTotal(ln));
-  if(ln.type==='grand'){ const pu=bigPrice(ln.tarif, ln); const tot=Object.values(ln.items||{}).reduce((s,q)=>s+(+q||0),0); return mulMoney(tot,pu); }
-  if(ln.type==='vrac'){ const pu=vracPrixMacaron(ln); const tot=Object.values(ln.parfums||{}).reduce((s,q)=>s+(+q||0),0) + (+ln.sansParfum||0); return mulMoney(tot,pu); }
-  if(ln.type==='sachet'){ const tot=Object.values(ln.parfums||{}).reduce((s,q)=>s+(+q||0),0) + (+ln.sansParfum||0); return sachetPrixPour(tot, tarifsDeLigne(ln)); }
+  if(ln.type==='grand'){ const pu=bigPrice(ln.tarif, {__grille:tarifsLigneSaisie(ln)}); const tot=Object.values(ln.items||{}).reduce((s,q)=>s+(+q||0),0); return mulMoney(tot,pu); }
+  if(ln.type==='vrac'){ const pu=vracPrixMacaron(ln, tarifsLigneSaisie(ln)); const tot=Object.values(ln.parfums||{}).reduce((s,q)=>s+(+q||0),0) + (+ln.sansParfum||0); return mulMoney(tot,pu); }
+  if(ln.type==='sachet'){ const tot=Object.values(ln.parfums||{}).reduce((s,q)=>s+(+q||0),0) + (+ln.sansParfum||0); return sachetPrixPour(tot, tarifsLigneSaisie(ln)); }
   if(ln.type==='don') return 0;
   if(ln.type==='prestation') return money2(+ln.montantHT||0);
   return 0;
@@ -23800,7 +23816,7 @@ function _cmdSousTotalAvantGlobal(){
   return money2(st + persoSup);
 }
 // [REMISE PERSO] Référence canonique en euros fixes (comme la remise globale), plafonnée au
-// supplément perso brut (nb macarons × 0,25 €). Le % n'est qu'une saisie alternative synchronisée.
+// supplément perso brut (nb macarons × le tarif de la grille). Le % n'est qu'une saisie alternative synchronisée.
 let _cmdPersoRemiseEur = 0;
 function _cmdPersoSupBrut(){
   return money2((typeof cmdPersoCount==='function'?cmdPersoCount():0)*persoPrixUnitPour());
@@ -23908,7 +23924,7 @@ function cmdRecalc(){
       brk.innerHTML =
         `<div style="display:flex;justify-content:space-between"><span>Sous-total (${cmdLines.length} produit(s))</span><b>${euro(addMoney(...cmdLines.map(ln=>lineTotalBase(ln))))}</b></div>`+
         (remiseLignes>0?`<div style="display:flex;justify-content:space-between;color:#3f7d52"><span>Remises de ligne</span><b>−${euro(remiseLignes)}</b></div>`:'')+
-        (persoNb>0?`<div style="display:flex;justify-content:space-between;color:var(--caramel)"><span>Personnalisation couleurs (${persoNb}×0,25 €)</span><b>+${euro(persoSup)}</b></div>`:'')+
+        (persoNb>0?`<div style="display:flex;justify-content:space-between;color:var(--caramel)"><span>Personnalisation couleurs (${persoNb}×${euro(persoPrixUnitPour())})</span><b>+${euro(persoSup)}</b></div>`:'')+
         (persoRem>0?`<div style="display:flex;justify-content:space-between;color:#3f7d52"><span>Remise perso couleurs${persoPct>0?` (−${persoPct}%)`:''}</span><b>−${euro(persoRem)}</b></div>`:'')+
         (remiseGTot>0?`<div style="display:flex;justify-content:space-between;color:#3f7d52"><span>Remise globale (−${gpct}%)</span><b>−${euro(remiseGTot)}</b></div>`:'')+
         `<div style="display:flex;justify-content:space-between;border-top:1px solid #e8dccd;margin-top:4px;padding-top:4px"><span><b>Total TTC</b></span><b>${euro(total)}</b></div>`;
@@ -42537,9 +42553,9 @@ const APP_KB = [
   { id:'commandes', titre:'Créer et gérer une commande',
     tags:'commande commandes creer client coffret parfum livraison remise total prix',
     r:`<p>Onglet <b>Commandes → + Nouvelle commande</b>. Choisis le client, la date, ajoute des produits (coffrets, grands formats, événement, don). Le prix se calcule automatiquement mais reste modifiable. Tu peux appliquer une remise par ligne ou une remise globale, indiquer l'heure et le lieu de livraison, et enregistrer les paiements (chaque encaissement exige montant + date + mode).</p>` },
-  { id:'perso', titre:'Personnalisation des couleurs (+0,25 €/macaron)',
+  { id:'perso', titre:'Personnalisation des couleurs (supplément par macaron)',
     tags:'personnalisation couleur couleurs perso facturation supplement 0.25 macaron personnalise',
-    r:`<p>Dans la commande, coche <b>« Personnalisation des couleurs »</b> : un champ apparaît pour saisir le <b>nombre de macarons personnalisés</b> (pas forcément le total). Le surcoût de <b>0,25 €/macaron</b> s'ajoute au total. La personnalisation est spécifique à la commande et lève la règle « 1 couleur = 1 parfum ».</p>` },
+    r:`<p>Dans la commande, coche <b>« Personnalisation des couleurs »</b> : un champ apparaît pour saisir le <b>nombre de macarons personnalisés</b> (pas forcément le total). Le surcoût de <b>le tarif en vigueur/macaron</b> s'ajoute au total. La personnalisation est spécifique à la commande et lève la règle « 1 couleur = 1 parfum ».</p>` },
   { id:'livraison', titre:'Coût de livraison',
     tags:'livraison deplacement distance carburant cout transport km temps aller retour adresse suggestion consommation vehicule litres',
     r:`<p>Dans la commande, renseigne la <b>distance aller</b> et le <b>temps de trajet aller</b> : l'app double automatiquement les deux pour l'aller-retour. Avec le prix du carburant et la consommation du véhicule, elle calcule le coût (carburant A/R + temps A/R valorisé au taux horaire) et propose un prix de livraison qui préserve la marge. Tu peux saisir une <b>consommation réelle (L/100 km) propre à cette livraison</b> (ou ce marché) pour un coût au plus juste ; si tu la laisses vide, c'est la consommation par défaut des réglages qui s'applique. Le champ adresse suggère les adresses de tes clients et tes lieux habituels.</p>` },

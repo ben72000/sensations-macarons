@@ -91,6 +91,11 @@ function extractObjectConst(name){
     extractFunction('grilleCourante'),
     extractFunction('grilleHistorique'),
     extractFunction('tarifsDeLigne'),
+    // [v1469] Résolveur des lignes EN COURS DE SAISIE. Ici les lignes de test n'ont pas de
+    // marqueur et il n'y a pas de formulaire : `tarifsSaisie` est stubbée sur la grille
+    // historique, ce qui correspond au comportement attendu pour ces cas anciens.
+    "function tarifsSaisie(){ return grilleHistorique(); }",
+    extractFunction('tarifsLigneSaisie'),
     extractFunction('sachetPrixPour'),
     extractConstLine('mulMoney'),
     extractConstLine('addMoney'),

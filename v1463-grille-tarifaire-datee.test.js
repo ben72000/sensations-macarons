@@ -64,9 +64,15 @@ const NEUF = '2026-09-15', VIEUX = '2026-01-20', VEILLE = '2026-08-31', JOUR_J =
   check('A. coffret 10 = 22 €', g.box[10] === 22);
   check('A. coffret 16 = 34 €', g.box[16] === 34);
   check('A. coffret 25 = 50 €', g.box[25] === 50);
-  check('A. sachet 1 / 2 / 3 = 2,50 / 5 / 6,50 €',
-    M.sachetPrixPour(1,g)===2.5 && M.sachetPrixPour(2,g)===5 && M.sachetPrixPour(3,g)===6.5);
-  check('A. le sachet de 3 n\'est PAS linéaire (6,50 € et non 7,50 €)', M.sachetPrixPour(3,g) !== 7.5);
+  // [v1469] Ben a tranché : « peu importe la date le montant du macaron à l'unité est de 2,50€ »,
+  // et un sachet de 3 fait « 7,50 € dans tous les cas — toujours 3 × 2,50 € ». Le sachet est donc
+  // LINÉAIRE et identique dans les deux grilles : la case n'a volontairement aucun effet sur lui.
+  check('A. sachet linéaire : 1 / 2 / 3 = 2,50 / 5 / 7,50 €',
+    M.sachetPrixPour(1,g)===2.5 && M.sachetPrixPour(2,g)===5 && M.sachetPrixPour(3,g)===7.5);
+  check('A. le macaron à l\'unité vaut 2,50 € quelle que soit la grille',
+    M.sachetPrixPour(1, M.tarifsPour(NEUF))===2.5 && M.sachetPrixPour(1, M.tarifsPour(VIEUX))===2.5);
+  check('A. …et un sachet de 3 vaut 7,50 € des deux côtés (la case ne le change pas)',
+    M.sachetPrixPour(3, M.tarifsPour(NEUF))===7.5 && M.sachetPrixPour(3, M.tarifsPour(VIEUX))===7.5);
   check('A. événement 1,90 €, minimum 35 pièces', g.event===1.90 && g.eventMin===35);
   check('A. pro occasionnel 1,75 € · pro récurrent 1,60 €', g.proOccasionnel===1.75 && g.proRecurrent===1.60);
   check('A. location pyramide 22 €', g.pyramide===22);
@@ -85,7 +91,7 @@ const NEUF = '2026-09-15', VIEUX = '2026-01-20', VEILLE = '2026-08-31', JOUR_J =
   // [v1468] Ces options prennent désormais un CONTEXTE (commande), plus une date. Une commande
   // héritée — sans marqueur — reste sur l'ancienne grille : c'est ce qui protège l'historique.
   check('B. …personnalisation couleurs reste à 0,25 € sur une commande héritée', M.persoPrixUnitPour({}) === 0.25);
-  check('B. …sachet reste linéaire à 2,50 €/macaron (3 pièces = 7,50 €)', M.sachetPrixPour(3, g) === 7.5);
+  check('B. …sachet toujours linéaire à 2,50 €/macaron (3 pièces = 7,50 €)', M.sachetPrixPour(3, g) === 7.5);
   check('B. …le logo n\'existait pas : 0 € sur une commande héritée', M.logoMontantPour(150, {}) === 0);
   check('B. …le forfait création n\'existait pas : 0 €', M.forfaitCreationPour(2, {}) === 0);
 
@@ -322,6 +328,39 @@ const NEUF = '2026-09-15', VIEUX = '2026-01-20', VEILLE = '2026-08-31', JOUR_J =
     M.logoMontantPour(150, {}) === 0);
   check('M. le forfait création suit aussi (40 € sur une commande récente)',
     M.forfaitCreationPour(1, {tarifRef:'2026-08-10'}) === 40);
+}
+
+// ---- N. [v1469] AFFICHÉ ≠ FACTURÉ : une ligne EN COURS DE SAISIE était tarifée comme une ligne
+// HÉRITÉE. Capture de Ben : le sachet annonçait 6,50 € et « Montant ligne » facturait 7,50 €.
+// CAUSE : `tarifsDeLigne` traite l'absence de marqueur comme « ligne héritée → grille historique »
+// — ce qui est juste pour une ligne ENREGISTRÉE, mais faux pour une ligne qu'on est en train de
+// saisir, qui n'a simplement pas encore reçu son marqueur. D'où un résolveur distinct. ----
+{
+  const src = extractFunction('tarifsLigneSaisie');
+  check('N. un résolveur distinct existe pour les lignes en cours de saisie', src.length > 0);
+  check('N. le drapeau reste prioritaire', /ancienTarif/.test(src));
+  check('N. une ligne neuve (sans marqueur) suit le FORMULAIRE, pas la grille historique',
+    /tarifsSaisie\(\)/.test(src));
+
+  // Le calcul du modèle d'édition doit passer par ce résolveur, pas par celui des lignes stockées.
+  const srcBase = extractFunction('lineTotalBase');
+  check('N. le sachet en saisie utilise le résolveur de saisie', /sachetPrixPour\(tot, tarifsLigneSaisie\(ln\)\)/.test(srcBase));
+  check('N. le vrac aussi', /vracPrixMacaron\(ln, tarifsLigneSaisie\(ln\)\)/.test(srcBase));
+  check('N. le grand format aussi', /tarifsLigneSaisie\(ln\)/.test(srcBase));
+
+  // Les lignes ENREGISTRÉES gardent l'autre résolveur : c'est ce qui protège l'historique.
+  const srcStored = extractFunction('lineTotalStored');
+  check('N. une ligne enregistrée garde tarifsDeLigne (protection de l\'historique)',
+    /tarifsDeLigne\(ln\)/.test(srcStored) && !/tarifsLigneSaisie/.test(srcStored));
+}
+
+// ---- O. [v1469] Les prix AFFICHÉS de la personnalisation ne sont plus figés ----
+{
+  check('O. le libellé de la case ne contient plus de prix en dur', !/Personnalisation des couleurs \(\+0,25/.test(APP));
+  check('O. il affiche le tarif appliqué', /Personnalisation des couleurs \(\+\$\{euro\(persoPrixUnitPour\(\)\)\}/.test(APP));
+  check('O. la ligne du récapitulatif non plus', !/×0,25 €\)<\/span>/.test(APP));
+  check('O. elle affiche le tarif appliqué', /\$\{persoNb\}×\$\{euro\(persoPrixUnitPour\(\)\)\}/.test(APP));
+  check('O. la fiche d\'aide ne cite plus un montant figé', !/Personnalisation des couleurs \(\+0,25 €\/macaron\)/.test(APP));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -4935,3 +4935,48 @@ contexte plutôt que supprimées.
 
 **Sensibilité vérifiée par réintroduction du défaut exact** : remettre la règle par date fait rougir
 3 assertions, dont celle qui compare 0,30 € et 0,25 €.
+
+---
+
+## 2026-08-11 — AFFICHÉ ≠ FACTURÉ, ET SACHET REMIS AU LINÉAIRE  (v1468 → **v1469**)
+
+Deux captures de Ben, sur un sachet de 3 macarons aux couleurs personnalisées.
+
+### 1. Une ligne en cours de saisie était tarifée comme une ligne héritée
+Le sachet annonçait **6,50 €** dans son encadré, et « Montant ligne » facturait **7,50 €**.
+
+**Cause** : l'absence de marqueur de tarif signifie « ligne **héritée** → grille historique ». C'est
+juste pour une ligne **enregistrée** — c'est même ce qui protège l'historique — mais **faux** pour
+une ligne qu'on est en train de saisir, qui n'a simplement pas encore reçu son marqueur. L'affichage
+consultait la case, le calcul non : deux réponses pour la même ligne.
+
+**Fix** : un résolveur distinct, `tarifsLigneSaisie`, sert le **modèle d'édition** ; les lignes
+enregistrées gardent `tarifsDeLigne`. La distinction porte sur le chemin de code (saisie vs
+stocké), seul critère qui sépare vraiment les deux cas. Le **vrac** et le **grand format** avaient
+la même faille — corrigés du même coup, avant qu'ils ne se manifestent.
+
+### 2. Les prix affichés de la personnalisation étaient figés
+« Personnalisation des couleurs (+0,25 €/macaron) » sur la case, « (3×0,25 €) » dans le
+récapitulatif, et la fiche d'aide — alors que le calcul appliquait bien **0,30 €** (le total
+affichait +0,90 €, soit 3 × 0,30). Le total était juste, l'écran mentait. Troisième occurrence de
+cette famille dans le chantier tarifaire.
+
+### 3. Sachet : linéaire, dans tous les cas
+**Tranché par Ben** : « peu importe la date le montant du macaron à l'unité est de 2,50€ », et un
+sachet de 3 fait « **7,50 € dans tous les cas — toujours 3 × 2,50 €** ». La grille de septembre
+annonçait « 1/2/3 = 2,5/5/6,5 € » ; la question a été posée plutôt que tranchée seul, parce qu'il
+s'agit d'argent. Le sachet n'est donc **pas dégressif** et **ne change pas** avec la grille — la
+case est volontairement sans effet sur lui.
+
+### Suite v1463 : 111 assertions (sections N et O)
+Résolveur de saisie distinct, drapeau toujours prioritaire, ligne neuve suivant le formulaire ; les
+trois types du modèle d'édition l'utilisent ; **les lignes enregistrées gardent l'autre résolveur**
+— garde explicite de la protection de l'historique (N). Les trois affichages de la personnalisation
+ne contiennent plus de prix en dur (O). Assertions du sachet réécrites selon la décision de Ben.
+
+**Sensibilité vérifiée par réintroduction des deux défauts exacts des captures** : 3 assertions
+rougissent.
+
+### Un harnais complété
+`v1452` ne connaissait pas le nouveau résolveur → `tarifsSaisie` y est stubbée sur la grille
+historique, ce qui correspond au comportement attendu pour ses cas anciens.
