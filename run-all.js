@@ -170,7 +170,8 @@ const SUITES = [
   'v1458-etiquette-retour-marche.test.js',      // v1458 · mention RETOUR MARCHÉ sur les 2 moteurs d'étiquette + la quantité qui n'était pas imprimée du tout par le rendu HTML
   'v1461-macarons-source-unique.test.js',       // v1461 · macarons comptés DANS caDuMois (source unique, avec le CA) : marchés inclus, marché sans comptage signalé au lieu d'un 0 muet, macarons affichés par ligne dans le détail
   'v1462-macarons-arrondi-coherent.test.js',    // v1462 · macarons vendus : chaque ligne arrondie à la source, le total est la somme des entiers déjà arrondis (élimine l'écart entre la carte et le détail), réconciliation vérifiée sur 30 tirages aléatoires
-  'v1463-grille-tarifaire-datee.test.js'        // v1463/v1464 · grille tarifaire datée au 01/09/2026 + verrou anti-datation + case « anciens tarifs » prioritaire sur la date, logo dégressif, forfait par modèle, gros macarons 7 €/3,80 €
+  'v1463-grille-tarifaire-datee.test.js',       // v1463/v1464 · grille tarifaire datée au 01/09/2026 + verrou anti-datation + case « anciens tarifs » prioritaire sur la date, logo dégressif, forfait par modèle, gros macarons 7 €/3,80 €
+  'v1470-nouveau-client.test.js'                // v1470 · régression « impossible d'ajouter un client » : le bouton pointait vers la fiche intelligente sans identifiant + garde-fou de redirection
 ];
 
 let allOk = true;

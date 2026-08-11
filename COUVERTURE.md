@@ -4980,3 +4980,43 @@ rougissent.
 ### Un harnais complété
 `v1452` ne connaissait pas le nouveau résolveur → `tarifsSaisie` y est stubbée sur la grille
 historique, ce qui correspond au comportement attendu pour ses cas anciens.
+
+---
+
+## 2026-08-11 — IMPOSSIBLE D'AJOUTER UN NOUVEAU CLIENT  (v1469 → **v1470**)
+
+**Signalé par Ben** : « Impossible de rajouter un nouveau client via la fiche client. C'est un bug
+que je n'avais pas avant. »
+
+### La régression
+Le bouton « + Nouveau client » de l'écran Clients appelait **`clientFiche()`** — la vue « fiche
+client intelligente » — **sans identifiant**. Or celle-ci convertit son argument en nombre :
+`+undefined` donne `NaN`, aucun client n'est trouvé, elle affiche « Client introuvable » et
+s'arrête. Le bouton ne pouvait donc **rien** ouvrir.
+
+Introduite quand la fiche intelligente a remplacé l'ancien écran client : le bouton d'**ajout** a
+suivi la nouvelle fonction, alors qu'il devait continuer de pointer vers le **formulaire de
+création** (`clientForm`) — seule fonction conçue pour fonctionner sans client existant (elle part
+d'un objet vide, adapte son titre « Nouveau » / « Fiche », et masque le bouton Supprimer).
+
+Le tour de main qui a permis de trouver vite : `saveClient` n'appelle `withSync` que dans la branche
+**création**. C'était le premier suspect — mais la vérification l'a innocenté, et remonter les
+points d'entrée a mené au vrai coupable. Vérifier une hypothèse plutôt que la suivre a évité de
+« corriger » du code sain.
+
+### Le fix, et le garde-fou
+Le bouton repointe vers le formulaire de création. Et `clientFiche` appelée **sans identifiant
+valide** (vide, nul, zéro, négatif, non numérique) **redirige** désormais vers la création plutôt
+que de laisser l'utilisateur sur un cul-de-sac — sans même interroger la base. Un seul point
+d'entrée fautif suffisait à casser la fonction ; le garde-fou empêche qu'un autre reproduise le
+même symptôme.
+
+### Suite v1470 : 29 assertions (`tests/v1470-nouveau-client.test.js`)
+Le bouton appelle bien la création, et **aucun appel `clientFiche()` sans argument ne subsiste dans
+toute l'app** (A) ; `clientForm` sait fonctionner sans client, `saveClient` distingue création et
+mise à jour, le nom reste obligatoire (B) ; le garde-fou est testé sur **six** valeurs invalides —
+chacune ouvre la création, n'affiche pas « Client introuvable » et n'interroge pas la base — plus la
+non-régression : avec un identifiant valide, la consultation fonctionne toujours (C).
+
+**Sensibilité vérifiée par réintroduction du bug exact** : remettre le bouton sur `clientFiche()` et
+retirer le garde-fou fait rougir 19 assertions.
