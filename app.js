@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1470'; // suite : voir tests/v1470-nouveau-client.test.js
-const APP_MAJ = 'IMPOSSIBLE D AJOUTER UN NOUVEAU CLIENT. Ben : « Impossible de rajouter un nouveau client via la fiche client. C est un bug que je n avais pas avant. » REGRESSION CONFIRMEE : le bouton « + Nouveau client » de l ecran Clients appelait clientFiche() — la vue « fiche client intelligente » — SANS identifiant. Or celle-ci convertit son argument en nombre : sans argument, elle obtient NaN, ne trouve aucun client, affiche « Client introuvable » et s arrete. Le bouton ne pouvait donc RIEN ouvrir. Introduite quand la fiche intelligente a remplace l ancien ecran : le bouton d AJOUT a suivi la nouvelle fonction, alors qu il devait continuer de pointer vers le FORMULAIRE DE CREATION — seule fonction capable de fonctionner sans client existant (elle part d un objet vide, adapte son titre et masque le bouton Supprimer). FIX : le bouton pointe de nouveau vers le formulaire de creation. GARDE-FOU AJOUTE : appelee sans identifiant valide (vide, nul, zero, negatif, non numerique), la fiche intelligente redirige desormais vers la creation au lieu de laisser l utilisateur sur un cul-de-sac — et elle n interroge meme pas la base. Suite v1470 : 29 assertions ; sensibilite verifiee par reintroduction du bug exact.';
+const APP_VERSION = 'v1471'; // suite : voir tests/v1471-picking-scan.test.js
+const APP_MAJ = 'PICKING GROUPE PAR DATE, ET LE SCAN PERMET ENFIN D AGIR. Ben : « Le picking groupe n est pas optimise. Cette fonction doit permettre d agreger les commandes par dates exactes notamment. Ainsi je ne me retrouve pas avec l ensemble des commandes a venir precoche car actuellement c est ce qui se passe ! » PICKING GROUPE : les commandes sont desormais regroupees par DATE DE LIVRAISON EXACTE, une section par date, et SEULE LA DATE LA PLUS PROCHE est pre-cochee (avant, chaque case portait « checked » en dur, sans aucun regroupement). Un bouton par section coche ou decoche toute une vague. Une commande SANS macaron (prestation ou livraison seule) est grisee et signalee au lieu de disparaitre silencieusement a l etape suivante. SCAN : Ben signalait « le qr code est bien lu et j ai bien un ecran qui s affiche mais a aucun endroit il est possible de selectionner la boite ». CAUSE : le scan aboutissait sur la fiche de TRACABILITE, un ecran de CONSULTATION. La fonction qui propose d affecter le lot a une commande existait, complete, mais n etait atteignable que depuis un bouton interne d une fiche production — JAMAIS depuis un scan. Le scan ouvre maintenant un ECRAN D ACTIONS : servir une commande, emporter en marche, retirer une quantite (casse / don / degustation), ou consulter la tracabilite. Une boite vide ou un composant non vendable le DIT, au lieu d afficher des boutons qui echoueraient. AJOUT NECESSAIRE : une sortie marche DU LOT SCANNE. Le moteur existant puise en FIFO sur tous les lots du parfum — juste quand on part d une quantite, mais l inverse du geste de Ben, qui a designe une boite. Memes ecritures que le moteur FIFO (decrement, mouvement de marche avec stockAvant/stockApres, journal de stock), sans le choix du lot deja fait. Suite v1471 : 38 assertions, dont la reconciliation « ce qui sort du stock est exactement ce qui part au marche » ; sensibilite verifiee par reintroduction des trois defauts (7 rouges).';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
 const _APP_MAJ_v1448_ARCHIVE_INUTILISEE = 'LE CHAMP « N° LOT DE PRODUCTION » MENTAIT EN MODE DUO. Ben, capture à l\u2019appui : lançant Chocolat passion + Pistache en meringue commune, le champ affichait « 030826RAF » — ni CHP ni PIS, mais RAF (Coco Rafaello, une tout autre recette). CAUSE : la branche duo de saveProd() ne lit JAMAIS ce champ — chaque parfum reçoit son propre lot, calculé indépendamment. Sa valeur affichée venait de prodRefreshLot(), qui lit TOUJOURS la recette unique (f_rec) — or f_rec reste dans la page (juste masquée) en duo, avec la valeur de la DERNIÈRE recette affichée avant le passage en duo. Un champ qui ment ET n\u2019a aucun effet réel est pire qu\u2019un champ absent. Même défaut, plus discret, sur la case « diviser en 2 lots » (v1445/v1446) : cochée, ce champ n\u2019est pas plus lu par le lancement réel. FIX : le champ est désormais masqué dans ces deux cas ; à la place, les VRAIS numéros de lot qui seront utilisés sont prévisualisés — en mode duo dans le récapitulatif de répartition, et pour la division bicolore dans son propre encart — calculés avec EXACTEMENT la même formule que la sauvegarde réelle, jamais un second calcul qui pourrait diverger. Suite v1448 : 12 assertions (tests/v1448-lot-duo-preview.test.js), dont une réconciliation qui rejoue la vraie formule de sauvegarde et vérifie que l\u2019aperçu affiche bien 030826CHP-CO et 030826PIS-CO — jamais RAF.';
@@ -18150,8 +18150,15 @@ async function scanAffectResolve(code){
     // Pas une production → tenter la résolution générale (lot matière, etc.).
     return traceLotByNumber(code);
   }
-  // Un seul lot → ouvre directement sa fiche de traçabilité complète.
-  if(matches.length===1){ closeScanner&&closeScanner(); return traceProd(matches[0].id); }
+  // [v1471] Un seul lot → ÉCRAN D'ACTIONS, pas la fiche de traçabilité. Ben : « le qr code est
+  // bien lu et j'ai bien un écran qui s'affiche mais à aucun endroit il est possible de
+  // sélectionner la boîte pour consommer une partie de son contenu ou pour l'emporter
+  // intégralement dans le cadre d'un marché ».
+  // CAUSE : ce chemin ouvrait `traceProd`, un écran de CONSULTATION. `scanAffectChooseOrder`
+  // (juste plus bas) fait exactement ce qu'il faut mais n'était atteignable que depuis un bouton
+  // interne d'une fiche production — jamais depuis un scan. On scanne pour AGIR sur la boîte ;
+  // la traçabilité reste accessible d'un bouton, elle n'est plus le point d'arrivée.
+  if(matches.length===1){ closeScanner&&closeScanner(); return scanBoiteActions(matches[0].id); }
   // Plusieurs lots → choisir lequel voir.
   const rows=matches.map(p=>{
     const nom = p.libre?(p.produitLibre||'(sans nom)'):recName2(p.recipeId);
@@ -18163,6 +18170,99 @@ async function scanAffectResolve(code){
   }).join('');
   openModal(`<h3>Quel lot ?</h3><p class="note">Plusieurs lots correspondent à « ${esc(code)} ».</p>${rows}
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button></div>`);
+}
+// [v1471] ÉCRAN D'ACTIONS APRÈS SCAN D'UNE BOÎTE. Point d'arrivée de tout scan de lot : il
+// présente la boîte puis propose ce qu'on peut en FAIRE. Les quatre gestes que Ben décrit sont
+// là — servir une commande (partiellement ou en totalité), l'emporter en marché, en retirer une
+// quantité (casse, don, dégustation), et consulter la traçabilité.
+// Aucun moteur nouveau : chaque bouton appelle une fonction qui existait déjà et fonctionnait.
+async function scanBoiteActions(prodId){
+  const p = await db.productions.get(prodId).catch(()=>null);
+  if(!p){ toast('Lot introuvable'); return; }
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  const nom = (typeof pickBatchProdFlavor==='function') ? (pickBatchProdFlavor(p, recipes)||'(sans nom)') : '(sans nom)';
+  const reste = round3(+p.qteRestante||0);
+  const comp = (typeof prodComposant==='function')?prodComposant(p):'complet';
+  const vendable = (typeof prodVendable==='function') ? prodVendable(p) : true;
+  const u = comp==='coques' ? 'coques' : 'macarons';
+  const info = `<div class="sum-box" style="border:2px solid #aa7c39;background:#fbf5ea">
+    <span>📦 <b>${esc(nom)}</b><br><span style="font-size:.82rem;color:#7a6a60">lot ${esc(p.lotProduction||'—')}${p.dlcProduit?' · DLC '+fmtDate(p.dlcProduit):''}${p.emplacement?' · '+esc(empNom(p.emplacement)):''}</span></span>
+    <b>reste ${qty(reste)} ${u}</b></div>`;
+  // Une boîte vide ou non vendable ne peut ni servir une commande ni partir en marché : on le dit
+  // au lieu d'afficher des boutons qui échoueraient ensuite.
+  const bloque = (reste<=0) ? 'Cette boîte est vide.' : (!vendable ? 'Ce lot n\'est pas un produit fini vendable (composant en attente d\'assemblage).' : '');
+  openModal(`<h3>📦 Boîte scannée</h3>${info}
+    ${bloque?`<p class="note" style="color:#8a6d3b">${esc(bloque)}</p>`:''}
+    ${!bloque?`<button class="btn gold" style="width:100%;margin-bottom:6px" onclick="closeModal();scanAffectChooseOrder(${p.id})">🎯 Servir une commande</button>
+    <button class="btn gold" style="width:100%;margin-bottom:6px" onclick="closeModal();scanBoiteVersMarche(${p.id})">⛺ Emporter en marché</button>`:''}
+    <button class="btn ghost" style="width:100%;margin-bottom:6px" onclick="closeModal();stockAdjChoose(${p.id})">➖ Retirer une quantité (casse, don, dégustation)</button>
+    <button class="btn ghost" style="width:100%;margin-bottom:6px" onclick="closeModal();traceProd(${p.id})">🕘 Traçabilité</button>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+}
+// [v1471] Emporter une boîte en marché : choix du marché à venir, puis quantité (tout ou partie).
+// Réutilise `marketAddSortie`, le moteur existant du départ marché — aucun second chemin.
+async function scanBoiteVersMarche(prodId){
+  const p = await db.productions.get(prodId).catch(()=>null);
+  if(!p){ toast('Lot introuvable'); return; }
+  const markets = (await db.markets.toArray().catch(()=>[])).filter(k=>k && k.statut!=='clos')
+    .sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+  if(!markets.length){
+    openModal(`<h3>⛺ Emporter en marché</h3>
+      <p class="note">Aucun marché ouvert. Crée d'abord le marché dans l'onglet Marchés, puis rescanne la boîte.</p>
+      <div class="modal-actions"><button class="btn gold" onclick="closeModal()">Fermer</button></div>`);
+    return;
+  }
+  const reste = round3(+p.qteRestante||0);
+  const opts = markets.map(k=>`<option value="${k.id}">${esc(k.nom||'Marché')}${k.date?' — '+fmtDate(k.date):''}</option>`).join('');
+  openModal(`<h3>⛺ Emporter en marché</h3>
+    <p class="note">Lot <b>${esc(p.lotProduction||'—')}</b> — ${qty(reste)} pièce(s) disponibles.</p>
+    <div class="field"><label>Marché</label><select id="sbm_mk">${opts}</select></div>
+    <div class="field"><label>Quantité à emporter</label>
+      <input type="number" id="sbm_qte" min="1" max="${reste}" step="1" value="${reste}"></div>
+    <p class="note">Par défaut la boîte entière. Réduis la quantité pour n'en emporter qu'une partie.</p>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="scanBoiteVersMarcheGo(${p.id})">Emporter</button></div>`);
+}
+async function scanBoiteVersMarcheGo(prodId){
+  const mk = +val('sbm_mk');
+  const q = round3(+val('sbm_qte')||0);
+  if(!mk){ toast('Choisis un marché'); return; }
+  if(q<=0){ toast('Quantité invalide'); return; }
+  try{
+    await marketAddSortieDuLot(mk, prodId, q);
+    closeModal();
+    toast(`⛺ ${qty(q)} pièce(s) emportée(s) ✓`);
+  }catch(e){ toast(e.message||'Erreur lors de la sortie'); }
+}
+// [v1471] Sortie marché D'UN LOT PRÉCIS. `marketAddSortieParfum` puise en FIFO sur tous les lots
+// du parfum : c'est le bon comportement quand on part d'une quantité, mais l'inverse de ce que
+// Ben fait ici — il a SCANNÉ une boîte, c'est celle-là qu'il emporte. Mêmes écritures que le
+// moteur FIFO (décrément, marketMoves avec stockAvant/stockApres, journal de stock), sans le
+// choix du lot, qui est déjà fait. Un marché « historique » n'impacte pas le stock, comme ailleurs.
+async function marketAddSortieDuLot(marketId, productionId, qte){
+  const q = round3(+qte||0);
+  if(q<=0) throw new Error('Quantité invalide');
+  const p0 = await db.productions.get(+productionId);
+  if(!p0) throw new Error('Lot introuvable');
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  const parfum = p0.libre ? (p0.produitLibre||'') : ((recipes.find(r=>r.id===p0.recipeId)||{}).produitNom||'');
+  if(await marketIsHisto(marketId)){
+    await db.marketMoves.add({marketId, productionId:null, type:'sortie', qte:q, parfum, motif:'', date:today(), histo:true});
+    return;
+  }
+  let mv = null;
+  await db.transaction('rw', db.productions, db.marketMoves, async()=>{
+    const p = await db.productions.get(+productionId);
+    if(!p) throw new Error('Lot introuvable');
+    const stockAvant = round3(+p.qteRestante||0);
+    if(q > stockAvant) throw new Error(`Cette boîte ne contient que ${qty(stockAvant)} pièce(s)`);
+    await db.productions.update(p.id, {qteRestante: subQty(stockAvant, q)});
+    await db.marketMoves.add({marketId, productionId:p.id, type:'sortie', qte:q, parfum, motif:'',
+      date:today(), stockAvant, stockApres:subQty(stockAvant,q)});
+    mv = { parfumNom: parfum, composant:'macaron', sens:-1, qte:q,
+           type:'marche', productionId:p.id, marketId, note:'sortie marché (boîte scannée)' };
+  });
+  if(mv) await logStockMove(mv);
 }
 // Étape 2 : montre le lot et propose les commandes « à préparer » contenant ce parfum.
 async function scanAffectChooseOrder(prodId){
@@ -51758,20 +51858,54 @@ async function pickGroupOpen(){
     .sort((a,b)=>(a.dateEvenement||a.date||'').localeCompare(b.dateEvenement||b.date||''));
   if(!aPrep.length){ openModal(`<h3>📦 Picking groupé</h3><p class="note">Aucune commande « à préparer ».</p><div class="modal-actions"><button class="btn gold" onclick="closeModal()">Fermer</button></div>`); return; }
   window._pickGroupAll = aPrep.map(o=>o.id);
-  const rows = aPrep.map(o=>{
-    const nbMac = Object.values(orderFlavorNeeds(o)).reduce((s,q)=>s+q,0);
-    const liv = o.dateEvenement?fmtDate(o.dateEvenement):(o.date?fmtDate(o.date):'—');
-    return `<label class="sum-box" style="align-items:center;cursor:pointer">
-      <span style="flex:1"><b>${esc(clientNom(o.clientId))}</b><br><span style="font-size:.78rem;color:#7a6a60">livraison ${liv} · ${qty(nbMac)} macaron(s)</span></span>
-      <input type="checkbox" id="pg_${o.id}" checked style="width:22px;height:22px"></label>`;
+  // [v1471] REGROUPEMENT PAR DATE DE LIVRAISON EXACTE. Ben : « Cette fonction doit permettre
+  // d'agréger les commandes par dates exactes notamment. Ainsi je ne me retrouve pas avec
+  // l'ensemble des commandes à venir précoché car actuellement c'est ce qui se passe ! »
+  // Avant : toutes les cases portaient `checked` en dur, sans aucun regroupement — préparer la
+  // vague du jour obligeait à décocher une à une toutes les livraisons lointaines.
+  // Désormais : une section par date, et SEULE LA DATE LA PLUS PROCHE est pré-cochée. Préparer
+  // la vague suivante devient un geste (bouton par section) au lieu d'un nettoyage.
+  const parDate = {};
+  aPrep.forEach(o=>{ const d = o.dateEvenement || o.date || ''; (parDate[d] ||= []).push(o); });
+  const dates = Object.keys(parDate).sort((a,b)=>(a||'zzz').localeCompare(b||'zzz'));
+  const datePremiere = dates[0];
+  window._pickGroupDates = dates;
+  const rows = dates.map(d=>{
+    const lot = parDate[d];
+    const cochee = (d === datePremiere);
+    const totalDate = lot.reduce((s,o)=>s+Object.values(orderFlavorNeeds(o)).reduce((a,q)=>a+q,0), 0);
+    const cles = lot.map(o=>o.id).join(',');
+    const lignes = lot.map(o=>{
+      const nbMac = Object.values(orderFlavorNeeds(o)).reduce((s,q)=>s+q,0);
+      // [v1471] Une commande SANS macaron (prestation seule, livraison seule) est signalée plutôt
+      // que présentée comme les autres : sans ça, Ben la cocherait puis ne la verrait jamais à
+      // l'étape « à sortir », et pourrait croire qu'elle a été oubliée.
+      const vide = nbMac<=0;
+      return `<label class="sum-box" style="align-items:center;cursor:pointer;${vide?'opacity:.65':''}">
+        <span style="flex:1"><b>${esc(clientNom(o.clientId))}</b><br><span style="font-size:.78rem;color:#7a6a60">${vide?'aucun macaron à sortir (prestation / livraison seule)':qty(nbMac)+' macaron(s)'}</span></span>
+        <input type="checkbox" id="pg_${o.id}" ${cochee&&!vide?'checked':''} style="width:22px;height:22px"></label>`;
+    }).join('');
+    return `<div style="margin:12px 0 4px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <b style="color:#490F25">📅 ${d?fmtDate(d):'Sans date de livraison'}</b>
+        <span style="font-size:.78rem;color:#7a6a60">${lot.length} commande(s) · ${qty(totalDate)} macaron(s)</span>
+        <button class="btn ghost sm" onclick="pickGroupToggleDate('${esc(cles)}')">tout cocher / décocher</button>
+      </div>${lignes}`;
   }).join('');
   openModal(`<h3>📦 Picking groupé</h3>
-    <p class="note">Coche les commandes à sortir dans cette vague (décoche les livraisons lointaines que tu ne veux pas préparer maintenant).</p>
+    <p class="note">Commandes regroupées par <b>date de livraison</b>. Seule la date la plus proche est pré-cochée — coche une autre section pour préparer plusieurs vagues d'un coup.</p>
     ${rows}
     <div class="modal-actions" style="flex-wrap:wrap;gap:6px">
       <button class="btn ghost" onclick="closeModal()">Annuler</button>
       <button class="btn gold" onclick="pickGroupValiderSelection()">Voir ce qu'il faut sortir →</button>
     </div>`);
+}
+// [v1471] Coche/décoche toutes les commandes d'une même date de livraison.
+function pickGroupToggleDate(cles){
+  const ids = String(cles||'').split(',').filter(Boolean);
+  const boites = ids.map(id=>document.getElementById('pg_'+id)).filter(Boolean);
+  if(!boites.length) return;
+  const toutCoche = boites.every(b=>b.checked);
+  boites.forEach(b=>{ b.checked = !toutCoche; });
 }
 function pickGroupValiderSelection(){
   const all = window._pickGroupAll||[];

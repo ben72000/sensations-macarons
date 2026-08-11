@@ -5020,3 +5020,58 @@ non-régression : avec un identifiant valide, la consultation fonctionne toujour
 
 **Sensibilité vérifiée par réintroduction du bug exact** : remettre le bouton sur `clientFiche()` et
 retirer le garde-fou fait rougir 19 assertions.
+
+---
+
+## 2026-08-11 — PICKING GROUPÉ PAR DATE, ET LE SCAN PERMET ENFIN D'AGIR  (v1470 → **v1471**)
+
+**Signalé par Ben** : « Le picking groupé n'est pas optimisé. Cette fonction doit permettre
+d'agréger les commandes par dates exactes notamment. Ainsi je ne me retrouve pas avec l'ensemble
+des commandes à venir précoché » et « le picking par scan ne fonctionne pas […] le qr code est bien
+lu et j'ai bien un écran qui s'affiche mais à aucun endroit il est possible de sélectionner la
+boîte pour consommer une partie de son contenu ou pour l'emporter intégralement ».
+
+### Picking groupé
+Chaque case portait `checked` **en dur**, sans aucun regroupement : préparer la vague du jour
+obligeait à décocher une à une toutes les livraisons lointaines. Désormais une **section par date de
+livraison exacte**, et **seule la date la plus proche est pré-cochée**. Un bouton par section coche
+ou décoche toute une vague — ajouter la vague suivante devient un geste au lieu d'un nettoyage.
+
+Traité au passage, lié à l'inquiétude de Ben sur les commandes « sous les radars » : une commande
+**sans macaron** (prestation ou livraison seule) est grisée et signalée, au lieu d'être cochable
+puis absente de l'étape « à sortir » — de quoi croire qu'elle a disparu.
+
+### Le scan : la fonction existait, elle n'était pas branchée
+`scanAffectResolve` ouvrait `traceProd` — la fiche de **traçabilité**, un écran de **consultation**.
+`scanAffectChooseOrder`, juste en dessous, faisait exactement ce qu'il fallait, complète et
+fonctionnelle… mais n'était atteignable que depuis un bouton interne d'une fiche production,
+**jamais depuis un scan**. Encore une fonction juste sans câblage — même famille que v1428 et v1439.
+
+Le scan aboutit maintenant sur un **écran d'actions** : servir une commande, emporter en marché,
+retirer une quantité (casse / don / dégustation), consulter la traçabilité. Une boîte **vide** ou un
+**composant non vendable** le dit explicitement, plutôt que d'afficher des boutons qui échoueraient
+à l'étape suivante.
+
+### Une sortie marché du lot scanné
+`marketAddSortieParfum` puise en **FIFO sur tous les lots** du parfum : c'est juste quand on part
+d'une quantité, mais l'**inverse** du geste de Ben, qui a désigné une boîte précise. D'où
+`marketAddSortieDuLot`, calquée sur ses écritures (décrément, `marketMoves` avec
+`stockAvant`/`stockApres`, journal de stock) sans le choix du lot, déjà fait par le scan. Le cas
+« marché historique » reste traité comme ailleurs : donnée enregistrée, stock intact.
+
+### Suite v1471 : 38 assertions (`tests/v1471-picking-scan.test.js`)
+Regroupement par date, une seule date pré-cochée, plus aucune case en dur, bascule par section,
+commande sans macaron signalée (A) ; le scan ouvre les actions et non la traçabilité, les quatre
+gestes présents, boîte vide et composant non vendable refusés (B) ; **réconciliation** — ce qui sort
+du stock est exactement ce qui part au marché, sortie partielle, boîte entière, refus au-delà du
+contenu **sans écrire ni bouger le stock**, marché historique sans impact stock (C) ; écran marché —
+marchés clos exclus, message utile si aucun, quantité bornée au contenu (D).
+
+**Sensibilité vérifiée par réintroduction des trois défauts** : 7 assertions rougissent, chacune sur
+son défaut.
+
+### ⚠️ Point resté ouvert
+Ben signale « une commande qui n'apparaît nulle part » dans le picking groupé. La piste du statut a
+été **vérifiée et innocentée** (`normStatus` mappe « En cours » vers « À préparer », ces commandes
+sont donc bien incluses). Restent deux causes possibles — commande déjà entièrement liée à des lots,
+ou statut « Livrée ». En attente de l'identification de la commande pour ne pas corriger à l'aveugle.
