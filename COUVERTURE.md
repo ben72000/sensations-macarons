@@ -4895,3 +4895,43 @@ personnalisé jamais écrasé, tailles hors grille intactes, idempotence, n'écr
 
 **Sensibilité vérifiée par réintroduction du défaut exact de la capture** : remettre `euro(p.prix)`
 dans le sélecteur fait rougir les 4 assertions de la section K.
+
+---
+
+## 2026-08-10 — LES OPTIONS SUIVAIENT ENCORE LA DATE, PAS LA CASE  (v1467 → **v1468**)
+
+**Signalé par Ben** : « la mise à jour de +0,30cts pour la personnalisation des couleurs n'est pas
+passé. Quoi que je coche ça reste à 25cts. »
+
+### La cause
+En **v1466**, la tarification des **lignes** est passée de la date à la case. Mais les options de
+niveau **commande** — personnalisation couleurs, logo, forfait création — sont restées sur
+l'ancienne règle, par date. Comme on est en août, elles retombaient sur la grille historique, et la
+case n'avait **aucune prise** sur elles.
+
+C'est un changement de règle appliqué **à moitié** : j'ai converti ce que je regardais (les lignes)
+sans chercher tout ce qui dépendait de l'ancienne règle. Le troisième défaut de la même famille dans
+ce chantier — après le prix calculé mais mal affiché (v1467) et le prix affiché depuis le mauvais
+endroit (v1465).
+
+### Le fix
+Les trois options prennent désormais un **contexte** (l'objet commande, ou le formulaire en cours)
+au lieu d'une date, et passent par le même résolveur que les lignes :
+- commande **cochée** → anciens tarifs ;
+- commande **récente non cochée** → tarifs en vigueur ;
+- commande **héritée**, sans marqueur → grille historique, donc aucune facture émise ne bouge.
+
+Un marqueur de tarif est désormais posé au **niveau commande** aussi (pendant de celui des lignes),
+pour distinguer une commande saisie depuis la v1463 d'une commande héritée.
+
+### Suite v1463 : 98 assertions (section M)
+Les trois moteurs ne consultent plus `tarifsPour` et passent par le contexte commun ; résolution du
+contexte (objet → sa grille, rien → le formulaire donc la case) ; **chiffres exacts de Ben** —
+commande récente non cochée → 0,30 €, cochée → 0,25 €, héritée → 0,25 € ; le logo et le forfait
+suivent la même règle et restent à 0 sur une commande héritée.
+
+Trois assertions de la section B, qui passaient encore une **date**, ont été réécrites avec le
+contexte plutôt que supprimées.
+
+**Sensibilité vérifiée par réintroduction du défaut exact** : remettre la règle par date fait rougir
+3 assertions, dont celle qui compare 0,30 € et 0,25 €.

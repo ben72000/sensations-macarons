@@ -32,7 +32,8 @@ function extractArrayConstMulti(name){
   throw new Error('Crochets non équilibrés: '+name);
 }
 
-const M = new Function(`
+let _CASE_COCHEE = false;
+const M = new Function('_CASE_COCHEE', `
   ${extractConstLine('money2')}
   ${extractArrayConstMulti('TARIF_GRILLES')}
   ${extractFunction('tarifsPour')}
@@ -42,13 +43,16 @@ const M = new Function(`
   ${extractConstLine('SACHET_PRIX_MACARON')}
   ${extractFunction('sachetPrixPour')}
   ${extractConstLine('PERSO_PRIX_UNIT')}
+  ${extractFunction('grillePourCommande')}
+  function tarifsSaisie(){ return _CASE_COCHEE ? grilleHistorique() : grilleCourante(); }
+  ${extractFunction('_grilleOption')}
   ${extractFunction('persoPrixUnitPour')}
   ${extractFunction('logoPrixUnitPour')}
   ${extractFunction('logoMontantPour')}
   ${extractFunction('forfaitCreationPour')}
   return { TARIF_GRILLES, tarifsPour, tarifsDeLigne, grilleCourante, grilleHistorique, sachetPrixPour, persoPrixUnitPour,
            logoPrixUnitPour, logoMontantPour, forfaitCreationPour };
-`)();
+`)(false);
 
 const NEUF = '2026-09-15', VIEUX = '2026-01-20', VEILLE = '2026-08-31', JOUR_J = '2026-09-01';
 
@@ -78,10 +82,12 @@ const NEUF = '2026-09-15', VIEUX = '2026-01-20', VEILLE = '2026-08-31', JOUR_J =
   check('B. …coffret 25 reste à 42 €', g.box[25] === 42);
   check('B. …événement reste à 1,60 €', g.event === 1.60);
   check('B. …pyramide reste à 20 €', g.pyramide === 20);
-  check('B. …personnalisation couleurs reste à 0,25 €', M.persoPrixUnitPour(VIEUX) === 0.25);
+  // [v1468] Ces options prennent désormais un CONTEXTE (commande), plus une date. Une commande
+  // héritée — sans marqueur — reste sur l'ancienne grille : c'est ce qui protège l'historique.
+  check('B. …personnalisation couleurs reste à 0,25 € sur une commande héritée', M.persoPrixUnitPour({}) === 0.25);
   check('B. …sachet reste linéaire à 2,50 €/macaron (3 pièces = 7,50 €)', M.sachetPrixPour(3, g) === 7.5);
-  check('B. …le logo n\'existait pas : 0 €', M.logoMontantPour(150, VIEUX) === 0);
-  check('B. …le forfait création n\'existait pas : 0 €', M.forfaitCreationPour(2, VIEUX) === 0);
+  check('B. …le logo n\'existait pas : 0 € sur une commande héritée', M.logoMontantPour(150, {}) === 0);
+  check('B. …le forfait création n\'existait pas : 0 €', M.forfaitCreationPour(2, {}) === 0);
 
   // `tarifsPour` reste la lecture d'une grille PAR DATE (consultation de l'historique des
   // tarifs), mais depuis la v1466 elle ne décide plus du prix d'une commande — c'est la case.
@@ -279,6 +285,43 @@ const NEUF = '2026-09-15', VIEUX = '2026-01-20', VEILLE = '2026-08-31', JOUR_J =
   check('L. les tailles hors grille (sur mesure) sont laissées intactes', /neuf==null \|\| vieux==null/.test(src));
   check('L. idempotente : rien à faire si déjà aligné', /\+p\.prix === \+neuf/.test(src));
   check('L. n\'écrit que le prix, rien d\'autre', /update\(p\.id, \{ prix:/.test(src));
+}
+
+// ---- M. [v1468] LES OPTIONS SUIVAIENT ENCORE LA DATE. Ben : « la mise à jour de +0,30cts pour la
+// personnalisation des couleurs n'est pas passé. Quoi que je coche ça reste à 25cts ». En v1466 la
+// tarification des LIGNES est passée sur la case, mais les options de niveau COMMANDE (perso
+// couleurs, logo, forfait) sont restées sur l'ancienne règle par date — et comme on est en août,
+// elles retombaient sur la grille historique, insensibles à la case. ----
+{
+  const srcPerso = extractFunction('persoPrixUnitPour');
+  check('M. la perso ne consulte plus tarifsPour (la date ne décide plus)', !/tarifsPour/.test(srcPerso));
+  check('M. elle passe par le contexte commun', /_grilleOption\(ctx\)/.test(srcPerso));
+  const srcLogo = extractFunction('logoPrixUnitPour');
+  check('M. le logo non plus', !/tarifsPour/.test(srcLogo) && /_grilleOption\(ctx\)/.test(srcLogo));
+  const srcForf = extractFunction('forfaitCreationPour');
+  check('M. le forfait création non plus', !/tarifsPour/.test(srcForf) && /_grilleOption\(ctx\)/.test(srcForf));
+
+  const srcCtx = extractFunction('_grilleOption');
+  check('M. un objet commande → sa grille ; rien → le formulaire (donc la case)',
+    /grillePourCommande\(ctx\)/.test(srcCtx) && /tarifsSaisie\(\)/.test(srcCtx));
+  const srcCmd = extractFunction('grillePourCommande');
+  check('M. une commande cochée → ancienne grille', /o\.ancienTarif/.test(srcCmd));
+  check('M. une commande HÉRITÉE (sans marqueur) → ancienne grille : historique préservé',
+    /return grilleHistorique\(\);/.test(srcCmd));
+
+  // Comportement, sur les chiffres exacts de Ben.
+  check('M. commande récente NON cochée → 0,30 € (et non 0,25 €)',
+    M.persoPrixUnitPour({tarifRef:'2026-08-10'}) === 0.30);
+  check('M. commande cochée « anciens tarifs » → 0,25 €',
+    M.persoPrixUnitPour({tarifRef:'2026-08-10', ancienTarif:true}) === 0.25);
+  check('M. commande héritée (aucun marqueur) → 0,25 € : aucune facture émise ne bouge',
+    M.persoPrixUnitPour({}) === 0.25);
+  check('M. le logo suit la même règle (0,80 € à 150 pièces sur une commande récente)',
+    M.logoPrixUnitPour(150, {tarifRef:'2026-08-10'}) === 0.80);
+  check('M. …et reste à 0 sur une commande héritée (l\'option n\'existait pas)',
+    M.logoMontantPour(150, {}) === 0);
+  check('M. le forfait création suit aussi (40 € sur une commande récente)',
+    M.forfaitCreationPour(1, {tarifRef:'2026-08-10'}) === 40);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1467'; // suite : voir tests/v1463-grille-tarifaire-datee.test.js
-const APP_MAJ = 'LE SELECTEUR AFFICHAIT LE PRIX DU CATALOGUE, PAS CELUI APPLIQUE. Capture de Ben : le bandeau annoncait « Tarifs au 1er septembre 2026 — tarifs en vigueur », la case etait decochee, et la liste proposait pourtant « Coffret 6 macarons — 12,00 € ». CAUSE : la liste deroulante des tailles construisait ses libelles avec la valeur BRUTE du catalogue produits, sans jamais passer par coffretUnitPrice — seule fonction qui connait la grille et la case « anciens tarifs ». Le prix FACTURE etait pourtant correct depuis la v1465 : c est l affichage qui mentait, ce qui est pire, puisque Ben choisit sur ce qu il lit. FIX : chaque option de la liste affiche desormais le prix reellement applique, case comprise. AJOUT : le catalogue produits lui-meme est aligne sur la grille en vigueur au demarrage — il conservait les prix d installation, donc Ben y aurait lu 12 € pour un coffret facture 14 €. Alignement PRUDENT : seules les entrees encore au prix historique exact sont mises a jour ; un prix personnalise n est jamais ecrase, et les tailles sur mesure sont laissees intactes. Suite v1463 : 85 assertions ; sensibilite verifiee par reintroduction du defaut exact de la capture (4 rouges).';
+const APP_VERSION = 'v1468'; // suite : voir tests/v1463-grille-tarifaire-datee.test.js
+const APP_MAJ = 'LES OPTIONS SUIVAIENT ENCORE LA DATE, PAS LA CASE. Ben : « la mise a jour de +0,30cts pour la personnalisation des couleurs n est pas passe. Quoi que je coche ca reste a 25cts ». CAUSE : en v1466 la tarification des LIGNES est passee sur la case, mais les options de niveau COMMANDE — personnalisation couleurs, logo, forfait creation — sont restees sur l ancienne regle par DATE. Comme on est en aout, elles retombaient sur la grille historique, et la case n avait aucune prise sur elles. FIX : meme regle partout. Ces trois options prennent desormais un CONTEXTE (la commande, ou le formulaire en cours) au lieu d une date : commande cochee → anciens tarifs ; commande recente non cochee → tarifs en vigueur ; commande HERITEE, sans marqueur → grille historique, donc aucune facture deja emise ne bouge. Un marqueur de tarif est desormais pose au niveau COMMANDE aussi (pendant de celui des lignes), pour distinguer une commande saisie depuis la v1463 d une commande heritee. Suite v1463 : 98 assertions ; sensibilite verifiee par reintroduction du defaut exact (0,30 € attendu, 0,25 € obtenu).';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
 const _APP_MAJ_v1448_ARCHIVE_INUTILISEE = 'LE CHAMP « N° LOT DE PRODUCTION » MENTAIT EN MODE DUO. Ben, capture à l\u2019appui : lançant Chocolat passion + Pistache en meringue commune, le champ affichait « 030826RAF » — ni CHP ni PIS, mais RAF (Coco Rafaello, une tout autre recette). CAUSE : la branche duo de saveProd() ne lit JAMAIS ce champ — chaque parfum reçoit son propre lot, calculé indépendamment. Sa valeur affichée venait de prodRefreshLot(), qui lit TOUJOURS la recette unique (f_rec) — or f_rec reste dans la page (juste masquée) en duo, avec la valeur de la DERNIÈRE recette affichée avant le passage en duo. Un champ qui ment ET n\u2019a aucun effet réel est pire qu\u2019un champ absent. Même défaut, plus discret, sur la case « diviser en 2 lots » (v1445/v1446) : cochée, ce champ n\u2019est pas plus lu par le lancement réel. FIX : le champ est désormais masqué dans ces deux cas ; à la place, les VRAIS numéros de lot qui seront utilisés sont prévisualisés — en mode duo dans le récapitulatif de répartition, et pour la division bicolore dans son propre encart — calculés avec EXACTEMENT la même formule que la sauvegarde réelle, jamais un second calcul qui pourrait diverger. Suite v1448 : 12 assertions (tests/v1448-lot-duo-preview.test.js), dont une réconciliation qui rejoue la vraie formule de sauvegarde et vérifie que l\u2019aperçu affiche bien 030826CHP-CO et 030826PIS-CO — jamais RAF.';
@@ -21657,7 +21657,7 @@ async function cmdForm(id, opts){
       _cmdRemiseGlobaleEur = money2(+o.remiseGlobaleEur);
     } else {
       const _st = addMoney(...cmdLines.map(ln=>lineTotal(ln)));
-      const _perso = money2(((o&&o.persoMacarons)||0)*persoPrixUnitPour(o&&o.date));
+      const _perso = money2(((o&&o.persoMacarons)||0)*persoPrixUnitPour(o));
       const _base = money2(_st + _perso);
       const _pct = Math.max(0, Math.min(100, +(o&&o.remiseGlobale)||0));
       // [RÉTROCOMPAT REMISE €] Ancienne commande/devis sans remiseGlobaleEur : on privilégie
@@ -21671,7 +21671,7 @@ async function cmdForm(id, opts){
       }
     }
     // [REMISE PERSO] Reprise de la remise perso stockée (euros fixes), plafonnée au supplément perso.
-    const _persoSupOpen = money2(((o&&o.persoMacarons)||0)*persoPrixUnitPour(o&&o.date));
+    const _persoSupOpen = money2(((o&&o.persoMacarons)||0)*persoPrixUnitPour(o));
     _cmdPersoRemiseEur = money2(Math.max(0, Math.min(_persoSupOpen, +(o&&o.persoRemiseEur)||0)));
   }
   const preselect = opts.clientId || o.clientId || 0;
@@ -21851,7 +21851,7 @@ async function cmdForm(id, opts){
       const _st = (cmdLines||[]).reduce((a,ln)=>a+(typeof lineTotalStored==='function'?lineTotalStored(ln):(typeof lineTotal==='function'?lineTotal(ln):0)),0);
       const _gpct = Math.max(0, Math.min(100, +o.remiseGlobale||0));
       const _rg = money2(_st*_gpct/100);
-      const _perso = money2(((o.persoMacarons||0))*persoPrixUnitPour(o.date));
+      const _perso = money2(((o.persoMacarons||0))*persoPrixUnitPour(o));
       const _autoTotal = Math.max(0, money2(_st - _rg + _perso));
       if(Math.abs(_autoTotal - money2(+o.montant)) > 0.01){ _cmdPriceManual = true; }
     }catch(e){ /* en cas de doute, on ne force rien */ }
@@ -23547,29 +23547,46 @@ const PERSO_PRIX_UNIT = 0.25;   // repli historique — voir TARIF_GRILLES.perso
 // TOTAL de macarons logotés de la commande (une remise de volume se juge sur le volume commandé,
 // pas morceau par morceau) : 150 pièces sont toutes à 0,80 €, pas 99 à 1 € puis 51 à 0,80 €.
 // « de 100 à 300 » inclut les deux bornes → 100 et 300 sont au palier du milieu.
-function logoPrixUnitPour(nb, dateRef){
-  const g = tarifsPour(dateRef||'');
+function logoPrixUnitPour(nb, ctx){
+  const g = _grilleOption(ctx);
   const n = Math.max(0, Math.round(+nb||0));
   if(!g || !g.logoPaliers || n<=0) return 0;   // avant le 01/09/2026, cette option n'existait pas
   const p = g.logoPaliers.find(x => n <= x.jusqua);
   return p ? money2(p.prix) : money2(g.logoPaliers[g.logoPaliers.length-1].prix);
 }
 // Supplément logo TOTAL d'une commande : nb de macarons logotés × prix du palier correspondant.
-function logoMontantPour(nb, dateRef){
+function logoMontantPour(nb, ctx){
   const n = Math.max(0, Math.round(+nb||0));
-  return money2(n * logoPrixUnitPour(n, dateRef));
+  return money2(n * logoPrixUnitPour(n, ctx));
 }
 // [v1463] FORFAIT CRÉATION GRAPHIQUE — Ben : « forfait création de 40€ en plus, à rajouter comme
 // une option car pas toujours pertinent », et « une fois par logo/modèle. Donc si il y a 2 modèles
 // alors 2 x le prix ». C'est donc un NOMBRE de modèles, pas une case à cocher.
-function forfaitCreationPour(nbModeles, dateRef){
-  const g = tarifsPour(dateRef||'');
+function forfaitCreationPour(nbModeles, ctx){
+  const g = _grilleOption(ctx);
   const n = Math.max(0, Math.round(+nbModeles||0));
   if(!g || !g.forfaitCreation) return 0;       // inexistant avant le 01/09/2026
   return money2(n * +g.forfaitCreation);
 }
-function persoPrixUnitPour(dateRef){
-  const g = tarifsPour(dateRef||'');
+// [v1468] LES OPTIONS SUIVENT LA CASE, PLUS LA DATE. Défaut signalé par Ben : « la mise à jour de
+// +0,30cts pour la personnalisation des couleurs n'est pas passé. Quoi que je coche ça reste à
+// 25cts ». En v1466 j'ai fait basculer la tarification des LIGNES sur la case, mais les options de
+// niveau COMMANDE (personnalisation couleurs, logo, forfait création) sont restées sur l'ancienne
+// règle par date — et comme on est en août, elles retombaient sur la grille historique et la case
+// n'avait aucune prise sur elles. Même règle partout, désormais.
+function grillePourCommande(o){
+  if(o && o.ancienTarif) return grilleHistorique();   // choix explicite de Ben
+  if(o && o.tarifRef)    return grilleCourante();     // commande saisie depuis la v1463
+  return grilleHistorique();                          // commande héritée : historique préservé
+}
+// Contexte de tarification d'une option : un objet commande/document → sa grille ; rien → le
+// formulaire en cours, donc la case. On ne prend JAMAIS la date comme critère ici.
+function _grilleOption(ctx){
+  if(ctx && typeof ctx==='object') return grillePourCommande(ctx);
+  return (typeof tarifsSaisie==='function') ? tarifsSaisie() : grilleHistorique();
+}
+function persoPrixUnitPour(ctx){
+  const g = _grilleOption(ctx);
   return (g && g.persoCouleur!=null) ? +g.persoCouleur : PERSO_PRIX_UNIT;
 }
 function cmdPersoCount(){
@@ -23692,12 +23709,12 @@ function factPersoBox(nbPerso, coul){
 // entreraient dans le total sans figurer sur le devis/la facture — un client ne peut pas payer
 // une somme qui n'apparaît nulle part, et Ben ne pourrait pas la justifier. Le palier appliqué
 // est écrit en clair (« 150 \u00d7 0,80 \u20ac ») pour que la dégressivité se lise sur le document.
-function factLogoLignes(nbLogo, nbForfait, dateRef){
+function factLogoLignes(nbLogo, nbForfait, ctx){
   let out = '';
   const n = Math.max(0, Math.round(+nbLogo||0));
   if(n>0){
-    const pu = logoPrixUnitPour(n, dateRef);
-    const mt = logoMontantPour(n, dateRef);
+    const pu = logoPrixUnitPour(n, ctx);
+    const mt = logoMontantPour(n, ctx);
     if(mt>0){
       out += `<tr><td class="desc"><span class="ln-main">Personnalisation logo</span>`
            + `<span class="ln-sub">${n} macaron${n>1?'s':''} \u00d7 ${euro(pu)}</span></td>`
@@ -23706,8 +23723,8 @@ function factLogoLignes(nbLogo, nbForfait, dateRef){
   }
   const f = Math.max(0, Math.round(+nbForfait||0));
   if(f>0){
-    const u = forfaitCreationPour(1, dateRef);
-    const mt = forfaitCreationPour(f, dateRef);
+    const u = forfaitCreationPour(1, ctx);
+    const mt = forfaitCreationPour(f, ctx);
     if(mt>0){
       out += `<tr><td class="desc"><span class="ln-main">Création graphique sur mesure</span>`
            + `<span class="ln-sub">${f} mod\u00e8le${f>1?'s':''} \u00d7 ${euro(u)}</span></td>`
@@ -23716,10 +23733,10 @@ function factLogoLignes(nbLogo, nbForfait, dateRef){
   }
   return out;
 }
-function factPersoLigne(nbPerso, remiseEur, hideRemise, dateRef){
+function factPersoLigne(nbPerso, remiseEur, hideRemise, ctx){
   const n = Math.max(0, +nbPerso||0);
   if(n<=0) return '';
-  const PU = persoPrixUnitPour(dateRef);
+  const PU = persoPrixUnitPour(ctx);
   const brut = money2(n*PU);
   const rem = money2(Math.max(0, Math.min(brut, +remiseEur||0)));
   const desc = `<span class="ln-main">Personnalisation des couleurs</span>`
@@ -23733,9 +23750,9 @@ function factPersoLigne(nbPerso, remiseEur, hideRemise, dateRef){
   return out;
 }
 // Montant NET de la personnalisation (brut − remise perso). Entre dans le total imposable à la remise globale.
-function persoMontant(nbPerso, remiseEur, dateRef){
+function persoMontant(nbPerso, remiseEur, ctx){
   const n = Math.max(0, +nbPerso||0);
-  const PU = persoPrixUnitPour(dateRef);
+  const PU = persoPrixUnitPour(ctx);
   const brut = money2(n*PU);
   const rem = money2(Math.max(0, Math.min(brut, +remiseEur||0)));
   return money2(brut - rem);
@@ -23766,7 +23783,7 @@ function orderMontantRecalcule(o){
   if(!o) return 0;
   const lignes = Array.isArray(o.lignes) ? o.lignes : [];
   const sousTotal  = money2(lignes.reduce((a,ln)=>a+lineTotalStored(ln),0));
-  const persoSup   = money2((+o.persoMacarons||0)*persoPrixUnitPour(o.date));
+  const persoSup   = money2((+o.persoMacarons||0)*persoPrixUnitPour(o));
   const persoRem   = money2(Math.max(0, Math.min(persoSup, +o.persoRemiseEur||0)));
   const persoNette = money2(Math.max(0, persoSup - persoRem));
   const base       = money2(sousTotal + persoNette);
@@ -23779,14 +23796,14 @@ function _cmdSousTotalAvantGlobal(){
   // base imposable à la remise globale = lignes (après remises de ligne) + personnalisation,
   // cohérente avec cmdRecalc/saveCmd.
   const st = addMoney(...cmdLines.map(ln=>lineTotal(ln)));
-  const persoSup = money2((typeof cmdPersoCount==='function'?cmdPersoCount():0)*persoPrixUnitPour(typeof val==='function'?val('f_date'):''));
+  const persoSup = money2((typeof cmdPersoCount==='function'?cmdPersoCount():0)*persoPrixUnitPour());
   return money2(st + persoSup);
 }
 // [REMISE PERSO] Référence canonique en euros fixes (comme la remise globale), plafonnée au
 // supplément perso brut (nb macarons × 0,25 €). Le % n'est qu'une saisie alternative synchronisée.
 let _cmdPersoRemiseEur = 0;
 function _cmdPersoSupBrut(){
-  return money2((typeof cmdPersoCount==='function'?cmdPersoCount():0)*persoPrixUnitPour(typeof val==='function'?val('f_date'):''));
+  return money2((typeof cmdPersoCount==='function'?cmdPersoCount():0)*persoPrixUnitPour());
 }
 function cmdPersoRemiseFromEuro(){
   const el=document.getElementById('f_persoRemEur');
@@ -23843,7 +23860,7 @@ function cmdRecalc(){
   }
   const sousTotal = addMoney(...cmdLines.map(ln=>lineTotal(ln))); // après remises de ligne
   const persoNb = cmdPersoCount();
-  const persoSup = money2(persoNb*persoPrixUnitPour(typeof val==='function'?val('f_date'):''));
+  const persoSup = money2(persoNb*persoPrixUnitPour());
   // [REMISE PERSO] remise en euros fixes plafonnée au supplément perso ; perso nette = sup − remise.
   const persoRem = money2(Math.max(0, Math.min(persoSup, +_cmdPersoRemiseEur||0)));
   const persoNet = money2(Math.max(0, persoSup - persoRem));
@@ -23856,17 +23873,16 @@ function cmdRecalc(){
   // [v1463] Supplément LOGO (paliers dégressifs) et FORFAIT CRÉATION (par modèle), datés comme
   // le reste. Le hint sous le champ annonce le palier retenu — sans lui, Ben ne saurait pas
   // pourquoi 150 pièces coûtent 0,80 € l'unité et 99 en coûtent 1,00 €.
-  const _dTarif = (typeof val==='function') ? (val('f_date')||'') : '';
   const logoNb = Math.max(0, Math.round(+((document.getElementById('f_logoNb')||{}).value)||0));
-  const logoSup = logoMontantPour(logoNb, _dTarif);
+  const logoSup = logoMontantPour(logoNb);
   const forfaitNb = Math.max(0, Math.round(+((document.getElementById('f_forfaitNb')||{}).value)||0));
-  const forfaitSup = forfaitCreationPour(forfaitNb, _dTarif);
+  const forfaitSup = forfaitCreationPour(forfaitNb);
   const _lh = document.getElementById('f_logoHint');
   if(_lh){
-    const pu = logoPrixUnitPour(logoNb, _dTarif);
+    const pu = logoPrixUnitPour(logoNb);
     _lh.innerHTML = logoNb>0
-      ? `${qty(logoNb)} × ${euro(pu)} = <b>${euro(logoSup)}</b>${forfaitNb>0?` · forfait création ${forfaitNb} × ${euro(forfaitCreationPour(1,_dTarif))} = <b>${euro(forfaitSup)}</b>`:''}`
-      : (forfaitNb>0 ? `Forfait création ${forfaitNb} × ${euro(forfaitCreationPour(1,_dTarif))} = <b>${euro(forfaitSup)}</b>` : '');
+      ? `${qty(logoNb)} × ${euro(pu)} = <b>${euro(logoSup)}</b>${forfaitNb>0?` · forfait création ${forfaitNb} × ${euro(forfaitCreationPour(1))} = <b>${euro(forfaitSup)}</b>`:''}`
+      : (forfaitNb>0 ? `Forfait création ${forfaitNb} × ${euro(forfaitCreationPour(1))} = <b>${euro(forfaitSup)}</b>` : '');
   }
   // La personnalisation (NETTE de sa remise) entre dans la base imposable à la remise globale.
   // Logo et forfait création y entrent aussi : ce sont des prestations facturées de la commande.
@@ -24211,7 +24227,7 @@ async function saveCmd(id){
   // [REMISE GLOBALE EN EUROS FIXES] La référence est le montant €, plafonné à la base imposable
   // (lignes après remises de ligne + personnalisation). Le % est DÉRIVÉ et stocké pour compat aval.
   const _sousTotalRG = lignes.reduce((a,ln)=>a+lineTotalStored(ln),0);
-  const _persoSupRG = money2((typeof cmdPersoCount==='function'?cmdPersoCount():0)*persoPrixUnitPour(typeof val==='function'?val('f_date'):''));
+  const _persoSupRG = money2((typeof cmdPersoCount==='function'?cmdPersoCount():0)*persoPrixUnitPour());
   const _persoRemRG = money2(Math.max(0, Math.min(_persoSupRG, +_cmdPersoRemiseEur||0)));
   const _persoRG = money2(Math.max(0, _persoSupRG - _persoRemRG));   // perso NETTE de sa remise
   const _baseRG = money2(_sousTotalRG + _persoRG);
@@ -24249,6 +24265,9 @@ async function saveCmd(id){
     // [v1463] Options logo & création graphique. Enregistrées même à 0 pour rester lisibles à la
     // réouverture (le formulaire les masque tant qu'elles valent 0).
     ancienTarif: !!(document.getElementById('f_ancienTarif')||{}).checked,
+    // Marqueur d'ancienneté au niveau commande (pendant de celui des lignes) : distingue une
+    // commande saisie depuis la v1463 d'une commande héritée, qui reste sur l'ancienne grille.
+    tarifRef: (val('f_date')||today()),
     persoLogoNb: Math.max(0, Math.round(+val('f_logoNb')||0)),
     forfaitCreationNb: Math.max(0, Math.round(+val('f_forfaitNb')||0)),
     persoCouleurs: cmdPersoCoulCollect(),
@@ -58042,13 +58061,13 @@ function factLineDescHtml(ln){
 // + remise globale) et l'exprime en euros et en % du total BRUT (avant toute remise).
 // brutAbsolu = Σ bruts de ligne (avant remise de ligne) + supplément perso BRUT (avant remise perso).
 // rabais = brutAbsolu − totalNet (le montant réellement facturé, hors frais de livraison).
-function docRabaisTotal(lignes, persoNb, totalNetHorsLivraison, dateRef, logoNb, forfaitNb){
-  const PU = persoPrixUnitPour(dateRef);
+function docRabaisTotal(lignes, persoNb, totalNetHorsLivraison, ctx, logoNb, forfaitNb){
+  const PU = persoPrixUnitPour(ctx);
   const brutLignes = (lignes||[]).reduce((s,ln)=>s+lineTotalBrut(ln),0);
   const persoBrut = money2(Math.max(0,+persoNb||0)*PU);
   // [v1463] Logo et forfait création font partie du BRUT : les omettre sous-estimerait le brut et
   // donc la remise annoncée au client (« total sans réduction » plus bas que la réalité).
-  const optBrut = money2(logoMontantPour(logoNb, dateRef) + forfaitCreationPour(forfaitNb, dateRef));
+  const optBrut = money2(logoMontantPour(logoNb, ctx) + forfaitCreationPour(forfaitNb, ctx));
   const brutAbsolu = money2(brutLignes + persoBrut + optBrut);
   const rabais = money2(Math.max(0, brutAbsolu - money2(+totalNetHorsLivraison||0)));
   const pct = brutAbsolu>0 ? Math.round(rabais/brutAbsolu*1000)/10 : 0;
@@ -58197,7 +58216,7 @@ async function genererDevisDoc(docId){
   }
   const client = d.clientId ? await db.clients.get(d.clientId).catch(()=>null) : null;
   const lignes = d.lignes || [];
-  const persoMt = persoMontant(d.persoMacarons, d.persoRemiseEur, d.date);   // montant NET de la personnalisation
+  const persoMt = persoMontant(d.persoMacarons, d.persoRemiseEur, d);   // montant NET de la personnalisation
   const gpct = Math.max(0, Math.min(100, +d.remiseGlobale||0));
   // Total = montant stocké du devis si dispo (déjà net, perso incluse, remise appliquée).
   // Sous-total = lignes NETTES (remises de ligne déjà déduites, affichées par ligne) + perso.
@@ -58219,8 +58238,8 @@ async function genererDevisDoc(docId){
         <table class="cmd-table">
           <tbody>
             ${rows||'<tr><td>—</td><td class="mt"></td></tr>'}
-            ${factPersoLigne(d.persoMacarons, d.persoRemiseEur, false, d.date)}
-        ${factLogoLignes(d.persoLogoNb, d.forfaitCreationNb, d.date)}
+            ${factPersoLigne(d.persoMacarons, d.persoRemiseEur, false, d)}
+        ${factLogoLignes(d.persoLogoNb, d.forfaitCreationNb, d)}
           </tbody>
         </table>
         ${factPersoBox(d.persoMacarons, d.persoCouleurs)}
@@ -58271,7 +58290,7 @@ async function genererDevisDoc(docId){
        <div class="grand">
          ${reductions>0?`<div class="lg brut"><span>Total avant réductions</span><span>${euro(totalBrut)}</span></div><div class="lg reduc"><span>Réductions accordées${reducPct>0?` (−${reducPct}%)`:''}</span><span>\u2212${euro(reductions)}</span></div>`:''}
          <div class="lg total"><span>Total du devis</span><span>${euro(total)}</span></div>
-         ${(()=>{ const R=docRabaisTotal(lignes, d.persoMacarons, total, d.date, d.persoLogoNb, d.forfaitCreationNb); return R.rabais>0?`<div class="lg reduc" style="color:#3f7d52;font-size:.9rem"><span>Rabais total consenti${R.pct>0?` (−${R.pct}%)`:''}</span><span>\u2212${euro(R.rabais)}</span></div>`:''; })()}
+         ${(()=>{ const R=docRabaisTotal(lignes, d.persoMacarons, total, d, d.persoLogoNb, d.forfaitCreationNb); return R.rabais>0?`<div class="lg reduc" style="color:#3f7d52;font-size:.9rem"><span>Rabais total consenti${R.pct>0?` (−${R.pct}%)`:''}</span><span>\u2212${euro(R.rabais)}</span></div>`:''; })()}
        </div>
        ${d.acompteMention!==false?`<div class="acompte-mention">⚠ Le versement d'un acompte de 75% (soit ${euro(money2(total*0.75))}) est requis pour valider votre devis.</div>`:''}
        <div class="bas-final">
@@ -58546,31 +58565,31 @@ async function devisGroupeGenerate(){
       <div class="cmd-head"><span class="cmd-ref">Devis ${esc(d.numero||'brouillon')}${cmdEventBadge(d)}</span><span class="cmd-date">${fmtDate(d.date)||''}</span></div>
       <div class="cmd-body"><table class="cmd-table"><tbody>
         ${rows||'<tr><td>—</td><td class="mt"></td></tr>'}
-        ${factPersoLigne(d.persoMacarons, d.persoRemiseEur, false, d.date)}
-        ${factLogoLignes(d.persoLogoNb, d.forfaitCreationNb, d.date)}
+        ${factPersoLigne(d.persoMacarons, d.persoRemiseEur, false, d)}
+        ${factLogoLignes(d.persoLogoNb, d.forfaitCreationNb, d)}
         <tr class="cmd-total"><td>Total devis ${esc(d.numero||'')}</td><td class="mt">${euro(total)}</td></tr>
       </tbody></table>${factPersoBox(d.persoMacarons, d.persoCouleurs)}</div></div>`;
   }).join('');
   // Sections COMMANDES (même présentation que la facture groupée, prix BRUT + réductions récapitulées)
   const sectionsOrders = ordersSel.map(o=>{
     const lignes = orderToLines(o);
-    const persoMt = persoMontant(o.persoMacarons, o.persoRemiseEur, o.date);
+    const persoMt = persoMontant(o.persoMacarons, o.persoRemiseEur, o);
     const gpct = Math.max(0, Math.min(100, +o.remiseGlobale||0));
     const frais = +o.fraisLivraison||0;
     // [v1463] Le repli (commande sans montant enregistré) doit inclure logo et forfait, sinon
     // le total afficherait moins que la somme des lignes juste au-dessus.
-    const _logoMt = logoMontantPour(o.persoLogoNb, o.date) + forfaitCreationPour(o.forfaitCreationNb, o.date);
+    const _logoMt = logoMontantPour(o.persoLogoNb, o) + forfaitCreationPour(o.forfaitCreationNb, o);
     const brutCmd = money2(lignes.reduce((s,ln)=>s+lineTotalStored(ln),0) + persoMt + _logoMt);
     const totalCmd = (o.montant!=null) ? +o.montant : money2(brutCmd - money2(brutCmd*gpct/100) + frais);
     grandTotal += totalCmd;
-    const R = docRabaisTotal(lignes, o.persoMacarons, money2(totalCmd - frais), o.date, o.persoLogoNb, o.forfaitCreationNb);
+    const R = docRabaisTotal(lignes, o.persoMacarons, money2(totalCmd - frais), o, o.persoLogoNb, o.forfaitCreationNb);
     const rows = lignes.map(ln=>factLineRows(ln, true)).join('') + cautionRowHtml(lignes);
     return `<div class="cmd-section">
       <div class="cmd-head"><span class="cmd-ref">Commande ${esc(orderNumber(o))}${cmdEventBadge(o)}</span><span class="cmd-date">${fmtDate(o.date)||''}</span></div>
       <div class="cmd-body"><table class="cmd-table"><tbody>
         ${rows||'<tr><td>—</td><td class="mt"></td></tr>'}
-        ${factPersoLigne(o.persoMacarons, o.persoRemiseEur, true, o.date)}
-        ${factLogoLignes(o.persoLogoNb, o.forfaitCreationNb, o.date)}
+        ${factPersoLigne(o.persoMacarons, o.persoRemiseEur, true, o)}
+        ${factLogoLignes(o.persoLogoNb, o.forfaitCreationNb, o)}
         ${R.rabais>0?`<tr class="tc-brut"><td>Total commande sans réduction</td><td class="mt">${euro(R.brutAbsolu)}</td></tr><tr class="tc-remise"><td>Total des remises${R.pct>0?` (−${R.pct}%)`:''}</td><td class="mt">−${euro(R.rabais)}</td></tr>`:''}
         ${frais>0?`<tr class="liv"><td>Frais de livraison</td><td class="mt">${euro(frais)}</td></tr>`:''}
         <tr class="cmd-total"><td>Total commande ${esc(orderNumber(o))}</td><td class="mt">${euro(totalCmd)}</td></tr>
@@ -58659,14 +58678,14 @@ async function genererFactureMultiple(ids){
   // Construit une section par commande
   const sections = orders.map(o=>{
     const lignes = orderToLines(o);
-    const persoMt = persoMontant(o.persoMacarons, o.persoRemiseEur, o.date);            // montant NET personnalisation
+    const persoMt = persoMontant(o.persoMacarons, o.persoRemiseEur, o);            // montant NET personnalisation
     const gpct = Math.max(0, Math.min(100, +o.remiseGlobale||0));
     const frais = +o.fraisLivraison||0;
     // Sous-total = lignes NETTES (remises de ligne déjà déduites et affichées par ligne) + perso.
     // La remise GLOBALE s'applique une fois sur ce sous-total.
     // [v1463] Le repli (commande sans montant enregistré) doit inclure logo et forfait, sinon
     // le total afficherait moins que la somme des lignes juste au-dessus.
-    const _logoMt = logoMontantPour(o.persoLogoNb, o.date) + forfaitCreationPour(o.forfaitCreationNb, o.date);
+    const _logoMt = logoMontantPour(o.persoLogoNb, o) + forfaitCreationPour(o.forfaitCreationNb, o);
     const brutCmd = money2(lignes.reduce((s,ln)=>s+lineTotalStored(ln),0) + persoMt + _logoMt);
     // total commande = montant stocké (déjà net, perso + remise incluses, livraison en sus) si dispo.
     const totalCmd = (o.montant!=null) ? +o.montant : money2(brutCmd - money2(brutCmd*gpct/100) + frais);
@@ -58676,7 +58695,7 @@ async function genererFactureMultiple(ids){
     grandTotal += totalCmd;
     grandBrut += brutCmd;
     grandNetHorsLiv += money2(totalCmd - frais);
-    const R = docRabaisTotal(lignes, o.persoMacarons, money2(totalCmd - frais), o.date, o.persoLogoNb, o.forfaitCreationNb);   // rabais TOTAL (ligne+perso+global)
+    const R = docRabaisTotal(lignes, o.persoMacarons, money2(totalCmd - frais), o, o.persoLogoNb, o.forfaitCreationNb);   // rabais TOTAL (ligne+perso+global)
     grandBrutAbsolu += R.brutAbsolu; grandRabais += R.rabais; grandFrais += frais;
     const rows = lignes.map(ln=>factLineRows(ln, true)).join('') + cautionRowHtml(lignes);   // true = prix BRUT par ligne ; les réductions sont récapitulées sous le total (plus clair)
     return `
@@ -58689,8 +58708,8 @@ async function genererFactureMultiple(ids){
         <table class="cmd-table">
           <tbody>
             ${rows||'<tr><td>—</td><td class="mt"></td></tr>'}
-            ${factPersoLigne(o.persoMacarons, o.persoRemiseEur, true, o.date)}
-        ${factLogoLignes(o.persoLogoNb, o.forfaitCreationNb, o.date)}
+            ${factPersoLigne(o.persoMacarons, o.persoRemiseEur, true, o)}
+        ${factLogoLignes(o.persoLogoNb, o.forfaitCreationNb, o)}
             ${R.rabais>0?`<tr class="tc-brut"><td>Total commande sans réduction</td><td class="mt">${euro(R.brutAbsolu)}</td></tr><tr class="tc-remise"><td>Total des remises${R.pct>0?` (−${R.pct}%)`:''}</td><td class="mt">−${euro(R.rabais)}</td></tr>`:''}
             ${frais>0?`<tr class="liv"><td>Frais de livraison</td><td class="mt">${euro(frais)}</td></tr>`:''}
             <tr class="cmd-total"><td>Total commande ${esc(orderNumber(o))}</td><td class="mt">${euro(totalCmd)}</td></tr>
