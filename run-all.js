@@ -172,7 +172,11 @@ const SUITES = [
   'v1462-macarons-arrondi-coherent.test.js',    // v1462 · macarons vendus : chaque ligne arrondie à la source, le total est la somme des entiers déjà arrondis (élimine l'écart entre la carte et le détail), réconciliation vérifiée sur 30 tirages aléatoires
   'v1463-grille-tarifaire-datee.test.js',       // v1463/v1464 · grille tarifaire datée au 01/09/2026 + verrou anti-datation + case « anciens tarifs » prioritaire sur la date, logo dégressif, forfait par modèle, gros macarons 7 €/3,80 €
   'v1470-nouveau-client.test.js',               // v1470 · régression « impossible d'ajouter un client » : le bouton pointait vers la fiche intelligente sans identifiant + garde-fou de redirection
-  'v1471-picking-scan.test.js'                  // v1471 · picking groupé regroupé par date de livraison (une seule date pré-cochée) + le scan d'une boîte ouvre un écran d'actions au lieu de la fiche de traçabilité, avec sortie marché du lot scanné
+  'v1471-picking-scan.test.js',                 // v1471 · picking groupé regroupé par date de livraison (une seule date pré-cochée) + le scan d'une boîte ouvre un écran d'actions au lieu de la fiche de traçabilité, avec sortie marché du lot scanné
+  'v1472-session-horaires.test.js',             // v1472 · corriger début/fin d'une session d'atelier (clôturer une session oubliée) avec bornage des tâches dans les nouvelles bornes
+  'v1473-sauvegarde-completude.test.js',        // v1473 · 15 tables absentes des sauvegardes (dont stockMoves, journalCompta) + garde empêchant une ancienne sauvegarde d'effacer ce qu'elle ignore
+  'v1474-pertes-echec-visible.test.js',         // v1474 · 4 écritures de perte dont l'échec était avalé alors que le stock avait déjà bougé + garde de motif sur les tables critiques
+  'v1475-ca-graphique-fige.test.js'             // v1475 · CA du tableau de bord figé : le cache du graphique n'était vidé qu'au rendu de l'accueil (changement d'onglet + écritures d'argent)
 ];
 
 let allOk = true;

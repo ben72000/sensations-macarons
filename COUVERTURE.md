@@ -5075,3 +5075,213 @@ Ben signale « une commande qui n'apparaît nulle part » dans le picking group�
 été **vérifiée et innocentée** (`normStatus` mappe « En cours » vers « À préparer », ces commandes
 sont donc bien incluses). Restent deux causes possibles — commande déjà entièrement liée à des lots,
 ou statut « Livrée ». En attente de l'identification de la commande pour ne pas corriger à l'aveugle.
+
+---
+
+## 2026-08-11 — CORRIGER LES HORAIRES D'UNE SESSION D'ATELIER  (v1471 → **v1472**)
+
+**Demandé par Ben** : « Je veux pouvoir modifier heure de début et de fin de session d'atelier
+(fermer une session laissée ouverte pendant un temps démesurément grand). »
+
+### Pourquoi c'est plus qu'un confort
+`prodSessionEnd` fixe **toujours** la fin à `Date.now()`. Une session oubliée toute la nuit
+enregistre donc 14 h d'atelier — et ce temps alimente `prodTempsParParfum`, donc le **temps par
+recette**, la **rentabilité par parfum** et le **coût de revient**. Une session fausse empoisonne
+silencieusement des chiffres dont Ben se sert pour fixer ses prix.
+
+### Le fix
+Bouton « 🕐 Horaires » sur chaque session du journal, **ouverte ou déjà clôturée**. Début et fin
+saisissables ; laisser la fin **vide** garde (ou rend) la session ouverte. Les heures sont
+présentées en heure **locale** et non UTC — sinon Ben lirait une heure différente de celle qu'il a
+réellement travaillée.
+
+### La garde qui compte : les tâches suivent les bornes
+Corriger les bornes sans toucher aux tâches produirait un temps par recette **supérieur à la
+session qui le contient** — exactement l'anomalie que l'audit interne surveille déjà (INVARIANT T1).
+Les tâches sont donc **ramenées** à l'intérieur : une tâche jamais arrêtée est clôturée avec la
+session, une tâche qui déborde est rognée, une tâche en pause voit sa pause **soldée** à la fin
+retenue. Choix assumé de ramener plutôt que refuser : la correction d'une session oubliée porte
+justement sur des tâches restées en cours. Une fin antérieure au début est refusée.
+
+### Suite v1472 : 26 assertions (`tests/v1472-session-horaires.test.js`)
+**Le cas de Ben** — session ouverte à 9 h avec une tâche jamais arrêtée, clôturée à 11 h 30 : la
+tâche suit, et **réconciliation** que sa durée ne dépasse pas celle de la session (A) ; tâches
+débordant avant/après ramenées, tâche déjà conforme intacte, **toutes** les tâches dans les bornes,
+aucune durée négative (B) ; pause soldée à la fin retenue (C) ; refus — fin avant début, début vide,
+**sans rien enregistrer** (D) ; fin vide → session rouverte sans rouvrir les tâches terminées (E) ;
+câblage, heure locale, `prodSessUpsert`, alerte de sauvegarde, arrêt du tic-tac (F).
+
+**Sensibilité vérifiée par mutation réelle** : retirer le bornage des tâches et la garde
+chronologique fait rougir 5 assertions.
+
+---
+
+## 2026-08-12 — AUDIT COMPLET : 15 TABLES N'ÉTAIENT PAS SAUVEGARDÉES  (v1472 → **v1473**)
+
+**Demandé par Ben** : « repasses en vue l'ensemble de mon code et pars à la recherche de tous les
+bugs possible. Prends ton temps, agis méthodiquement et n'invente rien. »
+
+### Méthode
+`app.js` fait 6,58 Mo — impossible à relire ligne à ligne, et prétendre le contraire serait
+malhonnête. Audit conduit par **détecteurs automatiques** ciblant les familles de bugs qui ont
+réellement mordu sur ce projet, **chaque signalement étant vérifié manuellement** avant d'être
+présenté.
+
+### Ce que l'audit a ÉCARTÉ (vérifié, pas supposé)
+- Aucun appel à une méthode absente de `dexie_min` (`filter`, `sortBy`, `first`…) — classe v1428
+- Aucun gestionnaire de clic pointant vers une fonction inexistante — classe v1439/v1470 (les 27
+  candidats étaient des méthodes natives ou des mots de commentaires)
+- **0 problème de portée transactionnelle sur 59 transactions.** Le premier passage en signalait
+  12 : **tous faux positifs**, par découpage à fenêtre fixe. Refait par équilibrage d'accolades →
+  0 alerte. C'est exactement la leçon déjà apprise sur ce projet (un analyseur avait produit 8 faux
+  positifs sur 8) — d'où la vérification systématique avant annonce
+- Aucun stock ne peut passer sous zéro : 21 décréments ont une garde en amont, les 8 restants sont
+  soit des annulations symétriques (elles restituent ce qu'elles viennent de créditer), soit
+  validés plus haut dans leur flux
+- Helpers argent/quantité : 10/10 sur les pièges du flottant. Pourcentage CA et DLC de fusion :
+  8/8 sur les cas limites
+- Prix écrits en dur : uniquement dans des exemples pédagogiques et un `placeholder`, pas dans des
+  libellés appliqués
+
+### 🚨 Le défaut trouvé
+`buildDump` parcourt exactement `TABLES` (31 entrées) alors que la base compte **46 tables**.
+Quinze tables **utilisées** par l'app n'étaient ni sauvegardées ni restaurées — perdues
+**silencieusement** lors d'une restauration sur appareil vierge ou après une purge iOS :
+- **`stockMoves`** — journal des mouvements de stock, socle du fil de traçabilité d'une boîte
+- **`journalCompta`** — journal comptable
+- **`materialLosses`** — pertes de matières premières
+- l'espace **R&D** (`rdIdees`, `rdTests`, `rdPreps`, `rdRefs`, `rdIngredients`), la communication
+  (`posts`, `blocs`, `prospects`, `personas`) et `planOverrides`
+
+`backups` et `errLog` restent **volontairement** exclus : sauvegarder la liste des sauvegardes n'a
+pas de sens, et le journal d'erreurs est du diagnostic local qui gonflerait le fichier sans rien
+protéger.
+
+### Le piège de la correction, et sa parade
+`applyDump` fait `db.table(t).clear()` **avant** de réinsérer. Ajouter les tables sans précaution
+aurait fait qu'une **ancienne** sauvegarde — qui les ignore — **efface** la traçabilité, la compta
+et la R&D dès la première restauration : l'inverse exact du but recherché.
+
+La règle posée en v1372 pour `kv`/`auditLog` est donc **généralisée** : *une table absente du
+fichier n'est pas une table vide, c'est une table inconnue de ce fichier* — elle est laissée
+intacte. Le cas distinct est préservé : un **tableau vide est une mesure** (« il n'y avait rien »)
+et vide donc bien la table, comme avant.
+
+Les sauvegardes **déjà faites restent valides** : `backupChecksum` calcule sur le périmètre inscrit
+**dans le fichier** (`_checksumTables`), jamais sur `TABLES` courant — la règle v1372, qui prend ici
+tout son sens.
+
+### Suite v1473 : 27 assertions (`tests/v1473-sauvegarde-completude.test.js`)
+Tables critiques et R&D dans le périmètre, exclusions volontaires respectées (A) ; **balayage
+générique** : aucune table utilisée par l'app n'est oubliée (B) ; la garde ignore au lieu de vider,
+et s'applique **avant** le `clear()`, un tableau vide restant une mesure (C) ; **réconciliation** —
+la somme de contrôle d'une ancienne sauvegarde est **inchangée** après élargissement, avec et sans
+périmètre inscrit (D) ; le fichier produit embarque le nouveau périmètre (E).
+
+**Sensibilité vérifiée par réintroduction des deux défauts** : 4 assertions rougissent.
+
+### ⚠️ Deux constats hors code, à connaître
+1. **`run-all.js` déclare 159 suites ; 25 seulement existent sur le disque.** 134 fichiers de test
+   n'ont jamais fait partie des archives fournies. Quand une livraison annonce « toutes les suites
+   vertes », il s'agit donc de 25 suites sur 159 — **84 % de la couverture ne s'exécute pas**. Des
+   pans entiers (comptabilité, FIFO, trésorerie, assemblage, panier moyen, prix) sont censés être
+   protégés et ne le sont pas.
+2. **22 des 27 fichiers déclarés par le service worker ne sont pas dans les zips livrés** (dont
+   `qr.min.js`, les polices, les icônes, le manifeste, les 14 packs de recettes). Ils existent chez
+   Ben ; les zips ne doivent donc jamais être déployés **seuls** — uniquement en remplaçant les
+   fichiers modifiés.
+
+---
+
+## 2026-08-16 — AUDIT, 2ᵉ PASSE : QUATRE ÉCRITURES DE PERTE DONT L'ÉCHEC ÉTAIT INVISIBLE  (v1473 → **v1474**)
+
+Suite de l'audit demandé par Ben, sur des familles de défauts non couvertes au premier passage.
+
+### 🚨 Le défaut
+Quatre écritures de perte se terminaient par `.catch(e => console.error(...))`. En cas d'échec,
+l'erreur partait dans la console — **invisible** pour Ben — et le flux **continuait** : message de
+succès affiché, écran fermé.
+
+Ce qui rend ça grave, c'est l'**ordre des opérations** :
+- **Casse en production** : le stock est **décrémenté juste avant**. Échec → stock diminué, perte
+  absente → coût matières et compta faussés, sans aucun signe.
+- **Perte matière** : le lot est **supprimé juste après**. Échec → lot perdu **et** trace de sa
+  perte perdue, avec un message « perte matière enregistrée ».
+- **Casse au scan** et **écart au picking** : le stock est ajusté et le toast annonce « Stock mis à
+  jour » quoi qu'il arrive.
+
+**Règle posée** : une écriture qui échoue doit se **voir**. Les quatre préviennent désormais et
+interrompent ; le lot matière n'est supprimé **qu'après** une écriture réussie.
+
+### Ce qui garde volontairement son silence
+Les écritures **accessoires** (journal d'audit, événements de calendrier) : leur échec ne fausse ni
+stock ni comptabilité, interrompre l'utilisateur pour elles serait du bruit. Et les écritures déjà
+protégées par une **transaction** — si elles échouent, le décrément qui les accompagne est annulé
+avec elles, donc aucune désynchronisation n'est possible.
+
+### La garde de motif a trouvé ce que l'inspection manuelle avait raté
+L'assertion générique (aucune écriture avalée hors transaction sur `losses`, `materialLosses`,
+`stockMoves`, `marketMoves`) est restée **rouge** après mes deux premières corrections : elle
+pointait la casse au scan et l'écart au picking, que je n'avais pas vus. Elle a aussi d'abord
+signalé une écriture **saine** (protégée par transaction) → le détecteur a été **affiné** plutôt que
+le code « corrigé », conformément à la leçon des faux positifs de portée transactionnelle.
+
+### Autres familles vérifiées ce passage — toutes saines
+- **2 586 fonctions de premier niveau, aucun doublon de définition** (dans un fichier de 6,5 Mo,
+  une redéfinition écraserait silencieusement la première)
+- Aucun `forEach(async …)` contenant un `await` (écritures jamais attendues)
+- Aucun `setTimeout("…")` (eval implicite), 7 `parseInt` sans base mais tous sur des durées ou des
+  pixels — jamais sur une date, où le piège `08`/`09` mordrait
+- **22 divisions sans garde apparente** : sans danger, car tout chiffre passe par `euro()` ou
+  `qty()` avant affichage, et ces deux-là neutralisent NaN, Infinity, null, undefined et texte
+  (16 cas testés dynamiquement)
+
+### Suite v1474 : 16 assertions (`tests/v1474-pertes-echec-visible.test.js`)
+Casse en production — plus de catch silencieux, toast d'alerte, **interruption du flux**, message
+disant quoi faire (A) ; perte matière — le lot n'est supprimé **qu'après** écriture réussie (B) ;
+les écritures accessoires gardent leur silence, c'est voulu (C) ; **garde de motif** sur les quatre
+tables critiques, transactions exclues (D).
+
+**Sensibilité vérifiée par réintroduction** : remettre le catch silencieux fait rougir 6 assertions.
+
+---
+
+## 2026-08-16 — LE CA DU TABLEAU DE BORD RESTAIT FIGÉ  (v1474 → **v1475**)
+
+**Signalé par Ben** : « Pourquoi le chiffre d'affaire n'évolue pas sur le tableau de bord ? Quand je
+vais dans l'onglet année le CA de l'année en cours n'évolue pas malgré les commandes soldées. »
+
+### Le moteur était sain — vérifié avant de chercher ailleurs
+`_caLignesToutes` + `_caAgregeLignes` donnent bien 725 € pour trois paiements et un marché clos sur
+2026, l'année précédente reste séparée, et la somme des mois égale l'année. Inutile de « corriger »
+un calcul juste : le défaut était ailleurs.
+
+### 🚨 La cause : le cache
+`_caLignesCache` n'était vidé **que** par un rendu complet de l'accueil (`renderDash`). Deux
+conséquences :
+1. **Changer d'onglet** (Jour / Semaine / Mois / Année) appelle `caChartRender()`, qui **relisait le
+   cache** au lieu de recharger → chiffres figés **à toutes les granularités**. Or changer d'onglet
+   est précisément le geste de quelqu'un qui veut regarder ses chiffres.
+2. L'accueil **reste monté** pendant qu'on saisit un encaissement ailleurs → au retour, le graphique
+   affichait les chiffres d'**avant** la saisie, alors que la base était à jour.
+
+### Le fix
+Changer d'onglet **recharge**. Et `caInvalideCache()` est appelée par toute écriture d'argent : les
+**quatre** points d'enregistrement de paiement, la sauvegarde d'une commande, la clôture d'un
+marché.
+
+### ⚠️ Le quatrième point a été trouvé par le test, pas par l'inspection
+Mon `grep` manuel n'en voyait que trois ; l'assertion « tous les points d'écriture sont
+instrumentés » en comptait quatre. J'ai d'abord cru mon détecteur imprécis et l'ai « corrigé » deux
+fois — avant de vérifier ligne par ligne et de constater qu'**il avait raison** : un quatrième site
+existait bien (l.24842), non instrumenté, et c'est probablement le plus utilisé puisqu'il enregistre
+un encaissement complet. Leçon : quand un test contredit une inspection manuelle, vérifier le test
+**et** l'inspection avant de trancher en faveur de l'humain.
+
+### Suite v1475 : 18 assertions (`tests/v1475-ca-graphique-fige.test.js`)
+Non-régression du moteur, dont la **réconciliation** somme des mois = année (A) ; le changement de
+granularité vide le cache **avant** de redessiner (B) ; la fonction d'invalidation existe et **tous**
+les points d'écriture l'appellent — compte exact vérifié, c'est lui qui a débusqué l'oubli (C) ; le
+rendu conserve ses garanties d'origine, série jusqu'à aujourd'hui et périodes vides à zéro (D).
+
+**Sensibilité vérifiée par réintroduction** : 2 assertions rougissent, dont le compte « 3/4 ».

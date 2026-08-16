@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1471'; // suite : voir tests/v1471-picking-scan.test.js
-const APP_MAJ = 'PICKING GROUPE PAR DATE, ET LE SCAN PERMET ENFIN D AGIR. Ben : « Le picking groupe n est pas optimise. Cette fonction doit permettre d agreger les commandes par dates exactes notamment. Ainsi je ne me retrouve pas avec l ensemble des commandes a venir precoche car actuellement c est ce qui se passe ! » PICKING GROUPE : les commandes sont desormais regroupees par DATE DE LIVRAISON EXACTE, une section par date, et SEULE LA DATE LA PLUS PROCHE est pre-cochee (avant, chaque case portait « checked » en dur, sans aucun regroupement). Un bouton par section coche ou decoche toute une vague. Une commande SANS macaron (prestation ou livraison seule) est grisee et signalee au lieu de disparaitre silencieusement a l etape suivante. SCAN : Ben signalait « le qr code est bien lu et j ai bien un ecran qui s affiche mais a aucun endroit il est possible de selectionner la boite ». CAUSE : le scan aboutissait sur la fiche de TRACABILITE, un ecran de CONSULTATION. La fonction qui propose d affecter le lot a une commande existait, complete, mais n etait atteignable que depuis un bouton interne d une fiche production — JAMAIS depuis un scan. Le scan ouvre maintenant un ECRAN D ACTIONS : servir une commande, emporter en marche, retirer une quantite (casse / don / degustation), ou consulter la tracabilite. Une boite vide ou un composant non vendable le DIT, au lieu d afficher des boutons qui echoueraient. AJOUT NECESSAIRE : une sortie marche DU LOT SCANNE. Le moteur existant puise en FIFO sur tous les lots du parfum — juste quand on part d une quantite, mais l inverse du geste de Ben, qui a designe une boite. Memes ecritures que le moteur FIFO (decrement, mouvement de marche avec stockAvant/stockApres, journal de stock), sans le choix du lot deja fait. Suite v1471 : 38 assertions, dont la reconciliation « ce qui sort du stock est exactement ce qui part au marche » ; sensibilite verifiee par reintroduction des trois defauts (7 rouges).';
+const APP_VERSION = 'v1475'; // suite : voir tests/v1475-ca-graphique-fige.test.js
+const APP_MAJ = 'LE CA DU TABLEAU DE BORD RESTAIT FIGE. Ben : « Pourquoi le chiffre d affaire n evolue pas sur le tableau de bord ? Quand je vais dans l onglet annee le CA de l annee en cours n evolue pas malgre les commandes soldees ». LE MOTEUR ETAIT SAIN — verifie avant de chercher ailleurs : le calcul donne bien 725 € pour trois paiements et un marche sur 2026, et la somme des mois egale l annee. Le defaut etait dans le CACHE du graphique, vide UNIQUEMENT par un rendu complet de l accueil. Deux consequences : ① changer d onglet (Jour / Semaine / Mois / Annee) relisait le cache au lieu de recharger, donc des chiffres figes a TOUTES les granularites — alors que changer d onglet est justement le geste de quelqu un qui veut regarder ses chiffres ; ② l accueil peut rester monte pendant qu on saisit un encaissement ailleurs, et au retour le graphique montrait les chiffres d AVANT la saisie alors que la base etait a jour. FIX : changer d onglet recharge, et toute ecriture d argent invalide le cache — les quatre points d enregistrement de paiement, la sauvegarde d une commande et la cloture d un marche. ⚠️ LE QUATRIEME POINT a ete trouve PAR LE TEST, pas par mon inspection : mon grep manuel n en voyait que trois. Suite v1475 : 18 assertions, dont la non-regression du moteur et la verification que TOUS les points d ecriture sont couverts ; sensibilite verifiee par reintroduction (2 rouges, dont le compte 3/4).';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
 const _APP_MAJ_v1448_ARCHIVE_INUTILISEE = 'LE CHAMP « N° LOT DE PRODUCTION » MENTAIT EN MODE DUO. Ben, capture à l\u2019appui : lançant Chocolat passion + Pistache en meringue commune, le champ affichait « 030826RAF » — ni CHP ni PIS, mais RAF (Coco Rafaello, une tout autre recette). CAUSE : la branche duo de saveProd() ne lit JAMAIS ce champ — chaque parfum reçoit son propre lot, calculé indépendamment. Sa valeur affichée venait de prodRefreshLot(), qui lit TOUJOURS la recette unique (f_rec) — or f_rec reste dans la page (juste masquée) en duo, avec la valeur de la DERNIÈRE recette affichée avant le passage en duo. Un champ qui ment ET n\u2019a aucun effet réel est pire qu\u2019un champ absent. Même défaut, plus discret, sur la case « diviser en 2 lots » (v1445/v1446) : cochée, ce champ n\u2019est pas plus lu par le lancement réel. FIX : le champ est désormais masqué dans ces deux cas ; à la place, les VRAIS numéros de lot qui seront utilisés sont prévisualisés — en mode duo dans le récapitulatif de répartition, et pour la division bicolore dans son propre encart — calculés avec EXACTEMENT la même formule que la sauvegarde réelle, jamais un second calcul qui pourrait diverger. Suite v1448 : 12 assertions (tests/v1448-lot-duo-preview.test.js), dont une réconciliation qui rejoue la vraie formule de sauvegarde et vérifie que l\u2019aperçu affiche bien 030826CHP-CO et 030826PIS-CO — jamais RAF.';
@@ -8163,10 +8163,20 @@ async function _caLignesToutes(){
 // une donnée métier ; l'accueil rouvre sur « Mois », la vue de référence de Ben).
 let _caGran = 'mois';
 let _caLignesCache = null;   // lignes chargées une seule fois par rendu d'accueil
+// [v1475] À appeler dès qu'un encaissement, une commande ou un marché change. L'accueil peut
+// rester monté pendant qu'on saisit ailleurs : sans cette invalidation, le graphique garde les
+// chiffres d'avant la saisie et paraît « bloqué » alors que la base, elle, est à jour.
+function caInvalideCache(){ _caLignesCache = null; }
 
 function caGranSet(gran){
   if(CA_GRANS.indexOf(gran)<0) return;
   _caGran = gran;
+  // [v1475] Ben : « quand je vais dans l'onglet année le CA de l'année en cours n'évolue pas
+  // malgré les commandes soldées ». CAUSE : le cache n'était vidé QUE par un rendu complet de
+  // l'accueil. Changer d'onglet appelait caChartRender() qui relisait le cache — donc des
+  // données figées, à TOUTES les granularités. Changer d'onglet est justement le geste de
+  // quelqu'un qui veut REGARDER ses chiffres : on recharge.
+  _caLignesCache = null;
   caChartRender();
 }
 // Redessine le graphique dans son hôte (#caChartHost). Idempotent : rappelable à volonté.
@@ -9811,10 +9821,19 @@ async function confirmDelLot(lotId){
   if(!estErreurSaisie && dispo>0){
     const coutTotal = materialLossAmount(lot, dispo);
     const mat = await db.materials.get(lot.materialId).catch(()=>null);
-    await db.materialLosses.add({
-      materialId: lot.materialId, materialNom: mat?mat.nom:'', lotId: lot.id, lotLabel: lot.lot||'',
-      date: today(), motif, qte: dispo, coutTotal
-    }).catch(e=>console.error('materialLoss', e));
+    // [v1474] AUDIT : l'échec était avalé alors que le lot est SUPPRIMÉ juste après et que le
+    // toast annonce « perte matière enregistrée ». Ben aurait perdu le lot ET la trace de sa
+    // perte, avec un message de succès. On n'efface donc le lot QUE si la perte est bien écrite.
+    try{
+      await db.materialLosses.add({
+        materialId: lot.materialId, materialNom: mat?mat.nom:'', lotId: lot.id, lotLabel: lot.lot||'',
+        date: today(), motif, qte: dispo, coutTotal
+      });
+    }catch(e){
+      console.error('materialLoss', e);
+      toast('⚠ La perte matière n\'a pas pu être enregistrée — le lot est conservé.');
+      return;
+    }
     await db.materialLots.delete(lotId);
     closeModal(); renderMaterials();
     toast(coutTotal>0 ? `Lot supprimé · ${euro(coutTotal)} en perte matière enregistrée` : 'Lot supprimé (sans valeur connue)');
@@ -11856,6 +11875,7 @@ async function docMarkPaidConfirm(id, fromList){
       o.paiements = (o.paiements||[]).concat([{date, montant:part, moyen}]);
       syncPaymentFields(o);
       await figerCoutMatiere(o);   // [v1342] on fige le coût matière AVANT que les lots ne s'épuisent
+      caInvalideCache();   // [v1475] le CA affiché doit refléter cette écriture
       await db.orders.update(o.id, {paiements:o.paiements, paiement:o.paiement, statutPaiement:o.statutPaiement,
         soldeDu:o.soldeDu, montantEncaisse:o.montantEncaisse, datePaiement:o.datePaiement, reglement:o.reglement,
         coutMatFige:o.coutMatFige, coutMatFigeLe:o.coutMatFigeLe});
@@ -16912,7 +16932,17 @@ async function prodEcartQualifySave(prodId, perdu){
     coutUnit: money2(coutMatUnit), coutTotal: money2(coutMatUnit*perdu),
     note: note
   };
-  await db.losses.add(loss).catch(e=>console.error('loss prod',e));
+  // [v1474] AUDIT : l'échec d'écriture était avalé dans la console — le toast annonçait quand
+  // même le succès et l'écran se fermait, alors que le stock venait d'être décrémenté juste
+  // au-dessus. Ben aurait cru sa casse enregistrée : stock diminué, perte absente, donc coût
+  // matières et compta faussés en silence. Une écriture qui échoue doit se VOIR.
+  try{
+    await db.losses.add(loss);
+  }catch(e){
+    console.error('loss prod', e);
+    toast('⚠ La casse n\'a PAS été enregistrée — le stock a été décrémenté, corrige-le à la main.');
+    return;
+  }
   closeModal(); renderProductions();
   toast(`Casse en production : ${qty(perdu)} ${(typeof prodComposant==='function'&&prodComposant(p)==='coques')?'coques':'pièce(s)'} · ${euro(loss.coutTotal)}`);
 }
@@ -20510,6 +20540,7 @@ async function confirmMarkPaid(id, fromModal){
   o.paiements=(o.paiements||[]).concat([{date, montant:mt, moyen}]);
   syncPaymentFields(o);
   await figerCoutMatiere(o);   // [v1342] idem — UN SEUL point de gel, appelé aux DEUX écritures (règle C, v1340)
+  caInvalideCache();   // [v1475] le CA affiché doit refléter cette écriture
   await db.orders.update(id, {paiements:o.paiements, paiement:o.paiement, statutPaiement:o.statutPaiement,
     soldeDu:o.soldeDu, montantEncaisse:o.montantEncaisse, datePaiement:o.datePaiement, reglement:o.reglement,
     coutMatFige:o.coutMatFige, coutMatFigeLe:o.coutMatFigeLe});
@@ -24311,6 +24342,7 @@ async function syncOrderEvent(oid){
 }
 
 async function saveCmd(id){
+  caInvalideCache();   // [v1475] idem : commande enregistrée ⇒ CA potentiellement modifié
   // validations par ligne
   if(!cmdLines.length){ toast('Ajoute au moins un produit'); return; }
   for(const ln of cmdLines){
@@ -24807,6 +24839,7 @@ async function corrigerEncaissement(orderId, index, nouveauMontant, motif){
   const o2 = Object.assign({}, o, { paiements });
   syncPaymentFields(o2);
 
+  caInvalideCache();   // [v1475] encaissement enregistré ⇒ le CA affiché doit le refléter
   await db.orders.update(+orderId, {
     paiements: o2.paiements,
     paiement: o2.paiement, statutPaiement: o2.statutPaiement,
@@ -24837,6 +24870,7 @@ async function corrigerEncaissement(orderId, index, nouveauMontant, motif){
     // [v1359] Si le journal échoue, on ANNULE TOUT. Une correction sans trace est exactement ce
     // que la loi interdit — mieux vaut refuser la correction que de la faire sans preuve.
     swallow(e, 'corrigerEncaissement journal');
+    caInvalideCache();   // [v1475] le CA affiché doit refléter cette écriture
     await db.orders.update(+orderId, { paiements: o.paiements });   // restaure l'état d'origine
     toast('Journal indisponible — correction annulée');
     return false;
@@ -40193,6 +40227,7 @@ function marketCloseSummary(vendu, caTheo){
     ${vendu>0?`<div style="display:flex;justify-content:space-between"><span>Prix moyen / macaron</span><b>${euro(ppu)}</b></div>`:''}${(()=>{ if(!(caTheo>0)) return ''; const ec=money2(tot-caTheo); return `<div style="display:flex;justify-content:space-between"><span>vs CA théorique (${euro(caTheo)})</span><b style="color:${Math.abs(ec)<0.01?'#3f7d52':(ec<0?'var(--red,#b3261e)':'#d98324')}">${ec>0?'+':''}${euro(ec)}</b></div>`; })()}${warn}`;
 }
 async function marketDoClose(marketId, vendu){
+  caInvalideCache();   // [v1475] la clôture d'un marché entre dans le CA : le graphique doit suivre
   const esp=money2(+val('mc_esp')||0), cb=money2(+val('mc_cb')||0), au=money2(+val('mc_autre')||0);
   const tot=addMoney(esp,cb,au);
   if(tot<=0 && vendu>0){ if(!confirm('Aucun encaissement saisi alors que des ventes sont calculées. Clôturer quand même ?')) return; }
@@ -51322,10 +51357,16 @@ async function stockAdjApply(prodId, delta, motif, note){
         if(rec){ const [ri,lots,mats]=await Promise.all([db.recipeItems.toArray(),db.materialLots.toArray(),db.materials.toArray().catch(()=>[])]);
           const cr=coutRevientRecette(rec,ri,lots); coutUnit=lossUnitCost(prodComposant(prodSnap),cr,mats); }
       }catch(e){ coutUnit=0; }
+      // [v1474] AUDIT : l'échec était avalé alors que le stock vient d'être ajusté et que le
+      // toast annonce « Stock mis à jour ». Une perte manquante fausse le coût matières et la
+      // compta, en silence. On prévient au lieu de laisser croire au succès.
+      try{
       await db.losses.add({ productionId:prodId, recipeId:prodSnap.recipeId, date:today(),
         motif:'Casse (scan boîte)', qte:Math.abs(d), enProduction:false,
         coutUnit:money2(coutUnit), coutTotal:money2(coutUnit*Math.abs(d)),
-        note: note||'' }).catch(e=>console.error('loss scan',e));
+        note: note||'' });
+      }catch(e){ console.error('loss scan', e);
+        toast('⚠ La casse n\'a PAS été enregistrée — le stock a bougé, corrige-le à la main.'); return; }
     }
     if(typeof markUnsaved==='function') markUnsaved();
     toast(`✓ Stock mis à jour (${d>0?'+':''}${qty(d)})`);
@@ -51514,10 +51555,14 @@ async function pickBatchDoPrelevement(prod, parfumPool, qteConfirmee, qteTheoriq
         if(rec){ const [ri,lots,mats]=await Promise.all([db.recipeItems.toArray(),db.materialLots.toArray(),db.materials.toArray().catch(()=>[])]);
           const cr=coutRevientRecette(rec,ri,lots); coutUnit=lossUnitCost(prodComposant(prod),cr,mats); }
       }catch(e){ coutUnit=0; }
+      // [v1474] Même correction que pour la casse au scan : l'échec doit se voir.
+      try{
       await db.losses.add({ productionId:prod.id, recipeId:prod.recipeId, date:today(),
         motif:'Écart au picking', qte:ecart, enProduction:false,
         coutUnit:money2(coutUnit), coutTotal:money2(coutUnit*ecart),
-        note:`Batch #${ctx.batch.id} — déclaré lors du prélèvement` }).catch(e=>console.error('loss picking',e));
+        note:`Batch #${ctx.batch.id} — déclaré lors du prélèvement` });
+      }catch(e){ console.error('loss picking', e);
+        toast('⚠ L\'écart n\'a PAS été enregistré en perte — vérifie le stock du lot.'); }
     }
 
     // Alimente le pool en attente de répartition
@@ -54288,7 +54333,20 @@ async function handleTraceAnchor(){
 
 
 const TABLES = ['suppliers','materials','materialLots','recipes','recipeItems','productions','prodConsumption','clients','orders','orderItems','events','products','charges','markets','marketMoves','losses','workSessions','pmsEquipments','temperatureLogs','pmsTasks','cleaningLogs','prodSessions','storageBoxes','equipmentSpecs','documents','components','packagingConsumption','fixJournal','batches',
-  'kv','auditLog'];   // [v1372] stockage unifié + journal d'audit — dans les sauvegardes comme le reste
+  'kv','auditLog',   // [v1372] stockage unifié + journal d'audit — dans les sauvegardes comme le reste
+  // [v1473] AUDIT : 15 tables étaient UTILISÉES par l'app mais absentes des sauvegardes. Une
+  // restauration sur appareil vierge (ou après une purge iOS) les perdait SILENCIEUSEMENT.
+  // Les trois premières sont les plus lourdes de conséquence :
+  //  · stockMoves     — journal des mouvements de stock, socle du fil de traçabilité d'une boîte
+  //  · journalCompta  — journal comptable
+  //  · materialLosses — pertes de matières premières
+  // Suivent l'espace R&D (le travail de création de Ben), la communication, et des tables
+  // techniques. `backups` et `errLog` restent volontairement DEHORS : sauvegarder la liste des
+  // sauvegardes dans une sauvegarde n'a pas de sens, et le journal d'erreurs est du diagnostic
+  // local qui gonflerait le fichier sans rien protéger.
+  'stockMoves','journalCompta','materialLosses',
+  'rdIngredients','rdIdees','rdTests','rdPreps','rdRefs',
+  'posts','blocs','prospects','personas','planOverrides'];
 // [v1372] LISTE FIGÉE des tables telles qu'elles étaient AVANT la v1372. La somme de contrôle
 // d'une sauvegarde est calculée sur une liste de tables : si cette liste change en silence,
 // TOUTES les sauvegardes passées deviennent « invalides » aux yeux du vérificateur — non parce
@@ -54465,7 +54523,15 @@ async function applyDump(dump){
       // [v1372] MÊME RÈGLE pour kv et auditLog : une sauvegarde d'AVANT v1372 ne connaît pas
       // ces tables — la restaurer ne doit pas EFFACER le stockage unifié ni le journal d'audit.
       // Un journal d'audit qu'une restauration peut vider n'est pas un journal d'audit.
-      if((t==='kv' || t==='auditLog') && !Array.isArray(dump[t])) continue;
+      //
+      // [v1473] RÈGLE GÉNÉRALISÉE — et c'est ce qui rend l'élargissement des sauvegardes SANS
+      // DANGER : une table absente du fichier n'est PAS une table vide, c'est une table INCONNUE
+      // de ce fichier. Toutes les sauvegardes déjà faites par Ben ignorent les 13 tables ajoutées
+      // ici ; sans cette garde, restaurer l'une d'elles EFFACERAIT sa traçabilité de stock, son
+      // journal comptable et son travail de R&D — précisément ce qu'on cherche à protéger.
+      // Le cas « la table existe et vaut [] » reste distinct : un tableau vide est une mesure
+      // (Ben n'avait rien), et il vide donc bien la table, comme avant.
+      if(!Array.isArray(dump[t])) continue;
       await db.table(t).clear();
       if(Array.isArray(dump[t]) && dump[t].length) await db.table(t).bulkAdd(dump[t]);
     }
@@ -63242,6 +63308,7 @@ async function prodRenderJournal(){
         <button class="qa" onclick="prodJournalOpen('${s.id}')">📊 Voir le tableau</button>
         <button class="qa" style="background:#aa7c39;color:#fff" onclick="prodSessParfumsConfirm('${s.id}')" title="Rattacher les parfums/recettes produits pendant cette session (affine le temps par recette, y compris pour tes anciennes sessions)">🎯 Parfums${s.parfumsConfirmes?' ✓':''}</button>
         <button class="qa" style="background:#6b4f45;color:#fff" onclick="prodSessTaches('${s.id}')" title="Corriger le parfum d'UNE tâche précise — le temps par parfum se recalcule selon tes corrections">🖊 Par tâche</button>
+        <button class="qa" style="background:#4a6b8a;color:#fff" onclick="prodSessHorairesForm('${s.id}')" title="Corriger l'heure de début et de fin — sert notamment à clôturer une session laissée ouverte trop longtemps">🕐 Horaires</button>
         ${!open?`<button class="qa" style="background:#3f7d52;color:#fff" onclick="prodSessReopen('${s.id}')" title="Rouvrir cette session pour y ajouter des tâches (ex : garnissage après refroidissement)">↻ Rouvrir</button>`:''}
         ${!open?`<button class="qa del" onclick="prodJournalDelete('${s.id}')">🗑</button>`:''}
       </div>
@@ -63256,6 +63323,60 @@ function prodJournalOpen(sessId){
   renderAtelier();
   // afficher CETTE session précise dans le Gantt
   setTimeout(()=>prodRenderGantt(s), 0);
+}
+// [v1472] CORRIGER LES HORAIRES D'UNE SESSION. Ben : « Je veux pouvoir modifier heure de début et
+// de fin de session d'atelier (fermer une session laissée ouverte pendant un temps démesurément
+// grand) ». `prodSessionEnd` fixe toujours la fin à MAINTENANT : une session oubliée toute la nuit
+// enregistrait donc 14 h d'atelier, ce qui pollue le temps par recette et la rentabilité.
+// Cet écran permet de saisir l'heure réelle, sur une session ouverte comme déjà clôturée.
+function prodSessHorairesForm(sessId){
+  const s = prodSessGet(sessId); if(!s){ toast('Session introuvable'); return; }
+  // <input datetime-local> attend l'heure LOCALE, pas UTC : on décale avant de formater, sinon
+  // Ben verrait s'afficher une heure différente de celle qu'il a réellement travaillée.
+  const toLocal = ms => { if(!ms) return ''; const d=new Date(ms);
+    return new Date(d.getTime() - d.getTimezoneOffset()*60000).toISOString().slice(0,16); };
+  const ouverte = !s.end;
+  const nbTaches = (s.tasks||[]).length;
+  openModal(`<h3>🕐 Horaires de la session</h3>
+    <p class="note">Session du <b>${fmtDate(s.date)}</b> · ${nbTaches} tâche(s)${ouverte?' · <b style="color:#b3261e">encore ouverte</b>':''}</p>
+    <div class="field"><label>Début</label>
+      <input type="datetime-local" id="sh_start" value="${toLocal(s.start)}"></div>
+    <div class="field"><label>Fin ${ouverte?'<span style="color:#9a8a82;font-weight:400">— renseigne-la pour clôturer la session</span>':''}</label>
+      <input type="datetime-local" id="sh_end" value="${toLocal(s.end)}"></div>
+    <p class="note">Les tâches qui dépasseraient de ces bornes seront ramenées à l'intérieur, pour que le temps par recette reste juste.</p>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="prodSessHorairesSave('${sessId}')">Enregistrer</button></div>`);
+}
+function prodSessHorairesSave(sessId){
+  const s = prodSessGet(sessId); if(!s){ toast('Session introuvable'); return; }
+  const lire = id => { const v = val(id); return v ? new Date(v).getTime() : null; };
+  const start = lire('sh_start');
+  const end   = lire('sh_end');
+  if(!start){ toast('Le début est obligatoire'); return; }
+  if(end && end < start){ toast('La fin ne peut pas précéder le début'); return; }
+  const etaitOuverte = !s.end;
+  s.start = start;
+  s.end   = end;   // null = la session reste (ou redevient) ouverte
+  // Les tâches doivent tenir dans la session : une tâche qui déborde produirait un temps par
+  // recette supérieur à la session elle-même. On RAMÈNE aux bornes plutôt que de refuser — la
+  // correction d'une session oubliée porte justement sur des tâches restées en cours.
+  let ajustees = 0;
+  (s.tasks||[]).forEach(t=>{
+    if(t.start!=null && t.start < start){ t.start = start; ajustees++; }
+    if(end!=null){
+      if(t.end==null){ t.end = end; ajustees++; }               // tâche jamais arrêtée : clôturée avec la session
+      else if(t.end > end){ t.end = end; ajustees++; }
+      if(t.start!=null && t.start > end){ t.start = end; ajustees++; }
+      // Une tâche en pause au moment de la clôture : on solde la pause à la fin retenue.
+      if(t.pauseAt){ t.pausedAccum = (+t.pausedAccum||0) + Math.max(0, end - (+t.pauseAt)); t.pauseAt = null; }
+    }
+  });
+  prodSessUpsert(s);
+  if(end && etaitOuverte && typeof prodStopTicking==='function') prodStopTicking();
+  if(typeof markUnsaved==='function') markUnsaved();
+  closeModal();
+  toast(`Horaires enregistrés ✓${ajustees?` · ${ajustees} tâche(s) ajustée(s)`:''}`);
+  if(typeof renderAtelier==='function') renderAtelier();
 }
 function prodJournalDelete(sessId){
   const s=prodSessGet(sessId); if(!s) return;
