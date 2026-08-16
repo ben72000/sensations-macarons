@@ -5285,3 +5285,41 @@ les points d'écriture l'appellent — compte exact vérifié, c'est lui qui a d
 rendu conserve ses garanties d'origine, série jusqu'à aujourd'hui et périodes vides à zéro (D).
 
 **Sensibilité vérifiée par réintroduction** : 2 assertions rougissent, dont le compte « 3/4 ».
+
+---
+
+## 2026-08-16 — CHERCHER LE CA MANQUANT  (v1475 → **v1476**)
+
+**Ben, après la v1475** : « Le montant affiché n'est toujours pas correct. »
+
+### Ce qui a été écarté AVANT de coder
+Réconciliation sur données identiques : la **carte** du tableau de bord, le **graphique mensuel** et
+le **graphique annuel** donnent exactement les mêmes chiffres, et la somme des mois égale l'année.
+Les trois surfaces sont donc **cohérentes entre elles** — l'écart est entre l'app et la **réalité**
+de Ben, pas une divergence interne. Corriger un calcul juste n'aurait rien donné.
+
+### 🚨 Ce qu'un sondage des formes de données a révélé
+`paiementsDe` ne compte une commande que si elle a un **registre de paiements non vide**, ou le
+statut **exactement** « Payé ». Trois formes d'argent réel y échappent :
+1. statut **« Partiel »** sans registre — un acompte encaissé, jamais compté ;
+2. commande **soldée** dont le statut est resté **« En attente »** ;
+3. registre présent mais dont **tous les montants valent 0**.
+
+### Le choix : diagnostiquer, pas réparer
+Compter automatiquement une commande « En attente » comme encaissée serait **inventer une recette**
+— et fausserait une déclaration URSSAF. L'app **liste** donc les commandes concernées
+(`auditCaManquant`, qui **n'écrit rien**), avec le motif, le nom du client et le montant en jeu.
+Chaque ligne ouvre la commande pour saisir l'encaissement réel. Un lien « Chercher le CA manquant »
+est posé dans les **deux** écrans de détail du CA, là où Ben constate l'écart.
+
+Exclusions correctes, vérifiées par test : les commandes **filles** (leur argent vit sur la mère),
+celles **sans montant**, et les **reprises d'historique** (hors CA par construction).
+
+### Suite v1476 : 23 assertions (`tests/v1476-ca-manquant.test.js`)
+Les trois formes qui échappent au CA (A) ; **non-régression** — registre, repli legacy « Payé »,
+commandes filles, paiement sans date (B) ; le diagnostic trouve les 3 cas, **réconciliation du total
+en jeu**, n'écrit rien, trie par montant décroissant, motifs distincts et lisibles (C) ; écran
+atteignable depuis les deux détails, message rassurant si aucune anomalie (D).
+
+**Sensibilité vérifiée par réintroduction** : retirer la garde « déjà compté » et l'exclusion des
+filles fait rougir 4 assertions.

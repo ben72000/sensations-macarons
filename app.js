@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1475'; // suite : voir tests/v1475-ca-graphique-fige.test.js
-const APP_MAJ = 'LE CA DU TABLEAU DE BORD RESTAIT FIGE. Ben : « Pourquoi le chiffre d affaire n evolue pas sur le tableau de bord ? Quand je vais dans l onglet annee le CA de l annee en cours n evolue pas malgre les commandes soldees ». LE MOTEUR ETAIT SAIN — verifie avant de chercher ailleurs : le calcul donne bien 725 € pour trois paiements et un marche sur 2026, et la somme des mois egale l annee. Le defaut etait dans le CACHE du graphique, vide UNIQUEMENT par un rendu complet de l accueil. Deux consequences : ① changer d onglet (Jour / Semaine / Mois / Annee) relisait le cache au lieu de recharger, donc des chiffres figes a TOUTES les granularites — alors que changer d onglet est justement le geste de quelqu un qui veut regarder ses chiffres ; ② l accueil peut rester monte pendant qu on saisit un encaissement ailleurs, et au retour le graphique montrait les chiffres d AVANT la saisie alors que la base etait a jour. FIX : changer d onglet recharge, et toute ecriture d argent invalide le cache — les quatre points d enregistrement de paiement, la sauvegarde d une commande et la cloture d un marche. ⚠️ LE QUATRIEME POINT a ete trouve PAR LE TEST, pas par mon inspection : mon grep manuel n en voyait que trois. Suite v1475 : 18 assertions, dont la non-regression du moteur et la verification que TOUS les points d ecriture sont couverts ; sensibilite verifiee par reintroduction (2 rouges, dont le compte 3/4).';
+const APP_VERSION = 'v1476'; // suite : voir tests/v1476-ca-manquant.test.js
+const APP_MAJ = 'CHERCHER LE CA MANQUANT. Ben : « le montant affiche n est toujours pas correct ». VERIFIE D ABORD, avant de coder : la carte du tableau de bord, le graphique mensuel et le graphique annuel donnent EXACTEMENT les memes chiffres, et la somme des mois egale l annee. Les trois surfaces sont donc coherentes ENTRE ELLES — l ecart est entre l app et la REALITE de Ben, pas une divergence interne. Corriger un calcul juste n aurait rien donne. CE QU UN SONDAGE DES FORMES DE DONNEES A REVELE : une commande n entre dans le CA que si elle a un registre de paiements non vide, OU le statut exactement « Paye ». Trois formes d argent reel y echappent : ① statut « Partiel » sans registre (un acompte encaisse, jamais compte) ; ② commande soldee dont le statut est reste « En attente » ; ③ registre present mais dont tous les montants valent 0. CHOIX ASSUME : ne PAS reparer automatiquement. Compter une commande « En attente » comme encaissee serait INVENTER une recette, et fausserait une declaration URSSAF. L app DIAGNOSTIQUE : un lien « Chercher le CA manquant » dans les deux ecrans de detail du CA liste les commandes concernees, avec le motif, le nom du client et le montant en jeu — chaque ligne ouvre la commande pour saisir l encaissement reel. Le diagnostic n ecrit RIEN. Suite v1476 : 23 assertions, dont la reconciliation du total en jeu et la non-regression des formes deja comptees (registre, repli legacy, commandes filles) ; sensibilite verifiee par reintroduction (4 rouges).';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
 const _APP_MAJ_v1448_ARCHIVE_INUTILISEE = 'LE CHAMP « N° LOT DE PRODUCTION » MENTAIT EN MODE DUO. Ben, capture à l\u2019appui : lançant Chocolat passion + Pistache en meringue commune, le champ affichait « 030826RAF » — ni CHP ni PIS, mais RAF (Coco Rafaello, une tout autre recette). CAUSE : la branche duo de saveProd() ne lit JAMAIS ce champ — chaque parfum reçoit son propre lot, calculé indépendamment. Sa valeur affichée venait de prodRefreshLot(), qui lit TOUJOURS la recette unique (f_rec) — or f_rec reste dans la page (juste masquée) en duo, avec la valeur de la DERNIÈRE recette affichée avant le passage en duo. Un champ qui ment ET n\u2019a aucun effet réel est pire qu\u2019un champ absent. Même défaut, plus discret, sur la case « diviser en 2 lots » (v1445/v1446) : cochée, ce champ n\u2019est pas plus lu par le lancement réel. FIX : le champ est désormais masqué dans ces deux cas ; à la place, les VRAIS numéros de lot qui seront utilisés sont prévisualisés — en mode duo dans le récapitulatif de répartition, et pour la division bicolore dans son propre encart — calculés avec EXACTEMENT la même formule que la sauvegarde réelle, jamais un second calcul qui pourrait diverger. Suite v1448 : 12 assertions (tests/v1448-lot-duo-preview.test.js), dont une réconciliation qui rejoue la vraie formule de sauvegarde et vérifie que l\u2019aperçu affiche bien 030826CHP-CO et 030826PIS-CO — jamais RAF.';
@@ -8242,6 +8242,7 @@ async function caPeriodeDetail(gran, cle){
     <p class="note">Du ${fmtDate(b.debut)} au ${fmtDate(b.fin)}. Touche une ligne pour ouvrir la commande.</p>
     ${rows}
     <div class="sum-box" style="border-top:2px solid var(--bordeaux);margin-top:10px"><span><b>Total encaissé</b></span><b style="color:var(--bordeaux)">${euro(total)}</b></div>
+    <p class="note" style="margin-top:8px">Un montant te semble manquer ? <a href="#" onclick="closeModal();auditCaManquantUI();return false;"><b>Chercher le CA manquant</b></a> — liste les commandes dont l'encaissement n'a jamais été saisi.</p>
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
 }
 
@@ -8365,6 +8366,7 @@ async function caMonthDetail(mk){
     ${rowsMk}
     <div class="sum-box" style="border-top:2px solid var(--bordeaux);margin-top:10px"><span><b>Total encaissé</b></span><b style="color:var(--bordeaux)">${euro(total)}</b></div>
     <p class="note" style="margin-top:6px">💡 En micro-entreprise, c'est ce <b>total encaissé</b> que tu déclares (URSSAF) — pas le CA facturé, qui suit la date de livraison et sert au pilotage.</p>
+    <p class="note">Un montant te semble manquer ? <a href="#" onclick="closeModal();auditCaManquantUI();return false;"><b>Chercher le CA manquant</b></a>.</p>
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
 }
 // Menu d'actions sur un produit fini en DLC (proche ou dépassée), depuis l'accueil.
@@ -11908,6 +11910,64 @@ async function docMarkPaidConfirm(id, fromList){
 // numéro légal séquentiel, la corriger silencieusement romprait l'inaltérabilité que
 // l'app garantit elle-même à l'utilisateur. Sert uniquement à lister les écarts pour
 // que Benjamin décide de la marche à suivre (ex : avoir/note de correction).
+// [v1476] DIAGNOSTIC « CA MANQUANT » — Ben : « le montant affiché n'est toujours pas correct ».
+// Les trois surfaces (carte, graphique mensuel, graphique annuel) sont COHÉRENTES ENTRE ELLES —
+// vérifié par réconciliation. L'écart est donc entre l'app et la RÉALITÉ de Ben : de l'argent
+// réellement encaissé qui n'entre pas dans le CA.
+//
+// `paiementsDe` ne compte une commande QUE si elle a un registre de paiements non vide, OU le
+// statut exactement « Payé ». Trois formes échappent donc au CA :
+//   ① statut « Partiel » sans registre — un acompte encaissé, jamais compté
+//   ② commande soldée dont le statut est resté « En attente »
+//   ③ registre présent mais dont tous les montants valent 0
+// Plutôt que de deviner laquelle touche Ben — et de corriger un cas qu'il n'a peut-être pas — on
+// LISTE ses commandes concernées, avec le montant en jeu. Le diagnostic ne modifie RIEN.
+async function auditCaManquant(){
+  const orders = await db.orders.toArray().catch(()=>[]);
+  const clients = await db.clients.toArray().catch(()=>[]);
+  const nom = id => (clients.find(c=>c.id===id)||{}).nom || '—';
+  const cas = [];
+  orders.forEach(o=>{
+    if(!o || o.commandeMereId!=null) return;          // fille : son argent vit sur la mère, normal
+    if(typeof estReprise==='function' && estReprise(o)) return;  // historique : hors CA, voulu
+    const total = money2(+o.montant||0);
+    if(total<=0) return;
+    const compte = paiementsDe(o).reduce((s,p)=>s+(+p.montant||0), 0);
+    if(compte > 0) return;                            // déjà compté : rien à signaler
+    const aRegistre = Array.isArray(o.paiements) && o.paiements.length;
+    let motif;
+    if(aRegistre) motif = 'registre de paiements présent mais tous les montants sont à 0';
+    else if(o.paiement === 'Partiel') motif = 'statut « Partiel » sans registre — acompte non enregistré';
+    else if(o.paiement === 'En attente' || !o.paiement) motif = 'statut « En attente » — si elle est réglée, l\'encaissement n\'a pas été saisi';
+    else motif = 'statut « ' + String(o.paiement) + ' » non reconnu';
+    cas.push({ id:o.id, client:nom(o.clientId), date:o.date||'', montant:total, statut:o.paiement||'—', motif });
+  });
+  cas.sort((a,b)=>b.montant-a.montant);
+  return { cas, totalManquant: money2(cas.reduce((s,c)=>s+c.montant,0)) };
+}
+// Écran de diagnostic. N'écrit rien : il montre, Ben décide.
+async function auditCaManquantUI(){
+  const r = await auditCaManquant();
+  if(!r.cas.length){
+    openModal(`<h3>🔎 CA manquant</h3>
+      <p class="note">Aucune commande n'échappe au calcul du CA : toutes celles qui ont un montant ont un encaissement enregistré.</p>
+      <p class="note">Si un chiffre te semble encore faux, l'écart vient d'ailleurs — dis-moi lequel et sur quelle période.</p>
+      <div class="modal-actions"><button class="btn" onclick="closeModal()">Fermer</button></div>`);
+    return;
+  }
+  const lignes = r.cas.slice(0,40).map(c=>
+    `<div class="sum-box lnk" onclick="closeModal();cmdView(${c.id})">
+       <span><b>${esc(c.client)}</b> · ${fmtDate(c.date)}<br>
+         <span style="font-size:.76rem;color:#8a6d3b">${esc(c.motif)}</span></span>
+       <b>${euro(c.montant)}</b></div>`).join('');
+  openModal(`<h3>🔎 CA manquant</h3>
+    <p class="note"><b>${r.cas.length} commande(s)</b> ont un montant mais AUCUN encaissement enregistré — elles n'entrent donc pas dans le CA.
+    Total en jeu : <b>${euro(r.totalManquant)}</b>.</p>
+    <p class="note">Ouvre une commande pour saisir son encaissement : le CA se mettra à jour aussitôt.</p>
+    ${lignes}
+    ${r.cas.length>40?`<p class="note">… et ${r.cas.length-40} autre(s).</p>`:''}
+    <div class="modal-actions"><button class="btn" onclick="closeModal()">Fermer</button></div>`);
+}
 async function docAuditPaiementsFantomes(){
   const docs = await db.documents.where('type').equals('facture').toArray().catch(()=>[]);
   const ecarts = [];

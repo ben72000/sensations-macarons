@@ -176,7 +176,8 @@ const SUITES = [
   'v1472-session-horaires.test.js',             // v1472 · corriger début/fin d'une session d'atelier (clôturer une session oubliée) avec bornage des tâches dans les nouvelles bornes
   'v1473-sauvegarde-completude.test.js',        // v1473 · 15 tables absentes des sauvegardes (dont stockMoves, journalCompta) + garde empêchant une ancienne sauvegarde d'effacer ce qu'elle ignore
   'v1474-pertes-echec-visible.test.js',         // v1474 · 4 écritures de perte dont l'échec était avalé alors que le stock avait déjà bougé + garde de motif sur les tables critiques
-  'v1475-ca-graphique-fige.test.js'             // v1475 · CA du tableau de bord figé : le cache du graphique n'était vidé qu'au rendu de l'accueil (changement d'onglet + écritures d'argent)
+  'v1475-ca-graphique-fige.test.js',            // v1475 · CA du tableau de bord figé : le cache du graphique n'était vidé qu'au rendu de l'accueil (changement d'onglet + écritures d'argent)
+  'v1476-ca-manquant.test.js'                   // v1476 · diagnostic « CA manquant » : commandes dont l'encaissement n'a jamais été saisi (statut Partiel/En attente sans registre)
 ];
 
 let allOk = true;
