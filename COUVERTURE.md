@@ -5374,3 +5374,52 @@ Une insertion par script a **tronqué une ligne** du bloc ajouté (échappement 
 contenant des accolades). Détecté immédiatement par `node --check`. La base a été **restaurée depuis
 le zip livré** et le bloc réinséré via un fichier séparé, validé isolément avant insertion — méthode
 à préférer pour tout ajout de fonction contenant des gabarits.
+
+---
+
+## 2026-08-18 — DEUX SÉANCES ENCAPSULÉES DANS UNE SEULE  (v1477 → **v1478**)
+
+**Demandé par Ben** : « sur la session ouverte j'ai en réalité 2 séances sur 2 jours différents,
+toutes les tâches sont rattachées et encapsulées dans la séance du 7 août. J'aimerai que l'app
+puisse automatiquement associer les séances au jour où celle-ci démarre. »
+
+### ⚠️ Le piège écarté — le cœur de cette version
+Sa séance va de **21:20 à 05:34** : elle **franchit minuit**. Une règle « un jour civil = une
+séance » l'aurait **coupée en deux** alors que c'est **une seule nuit de travail continue** — et
+aurait cassé précisément sa façon de produire. Prendre sa demande au pied de la lettre aurait donc
+créé un défaut pire que celui qu'elle corrige.
+
+Ce qui sépare deux séances chez lui n'est pas minuit, c'est le **temps sans rien faire** : il finit
+à 05:34, il dort, il reprend le lendemain soir. **Seuil tranché par Ben : 4 h sans activité.**
+
+### Le fonctionnement
+`prodSeancesDe` (pure) regroupe les tâches par trou d'inactivité et date chaque séance du jour où
+elle **démarre**, en heure locale. Les tâches qui **se chevauchent** sont gérées : la frontière est
+calculée sur la fin la plus tardive atteinte, donc une longue tâche qui couvre le trou empêche à
+juste titre la coupure — cas réel, sa session compte 119 tâches en parallèle.
+
+**Ben valide** : le bouton « ✂️ N séances » n'apparaît que si un découpage est réellement détecté,
+et un aperçu montre exactement ce qui sera créé (jour, horaires, nombre de tâches) **avant toute
+écriture**. La première séance garde la fiche d'origine — donc son identifiant et son historique —
+les suivantes deviennent des sessions distinctes. Aucune tâche n'est perdue ni modifiée.
+
+### Empêcher la récurrence
+`prodSessionStart` réutilisait **toujours** la session ouverte : c'est ainsi que les tâches du
+9 août se sont retrouvées dans la séance du 7. Une session inactive depuis 4 h est désormais
+clôturée **à sa dernière activité** — jamais à `Date.now()`, ce qui lui ferait absorber les heures
+d'inactivité (le défaut « 242 h » corrigé en v1477) — et une séance neuve s'ouvre. Le seuil est
+**partagé** avec le découpage : une seule définition de « séance » dans toute l'app.
+
+### Suite v1478 : 29 assertions (`tests/v1478-seances-par-jour.test.js`)
+**Le cas de Ben** — deux séances détectées, la nuit reste entière et datée du 07, la seconde datée
+du 09, réconciliation qu'aucune tâche n'est perdue (A) ; ce qui ne doit **pas** être découpé —
+pause de 3 h 59, nuit continue sur deux jours civils, seuil de 4 h inclusif (B) ; tâches qui se
+chevauchent (C) ; tâche jamais arrêtée ne fabriquant pas de fausse coupure (D) ; application du
+découpage (E) ; l'aperçu n'écrit rien (F) ; l'automatisme et son partage de seuil (G).
+
+**Sensibilité vérifiée par mutation** : remettre la règle naïve « un jour civil = une séance » fait
+rougir **8 assertions**, dont les deux qui protègent explicitement les nuits de travail.
+
+### Méthode
+Les deux blocs ajoutés ont été **écrits dans des fichiers séparés, validés isolément** (`node -c`)
+puis **testés avant insertion** — méthode adoptée après l'incident de troncature de la v1477.

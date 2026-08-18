@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1477'; // suite : voir tests/v1477-chrono-tache-bornee.test.js
-const APP_MAJ = 'UNE SESSION DE 8 H AFFICHAIT 242 H, ET LE TEMPS PAR TACHE EST DESORMAIS CORRIGEABLE. Capture de Ben : session du 07/08, 21:20-05:34 (8 h 14 reelles), 119 taches, total affiche « 242 h 09 » — et les pastilles de phases additionnees faisaient environ 21 h. Trois chiffres incompatibles. CAUSE, reconstituee AU CHIFFRE PRES : une tache n avait jamais ete arretee, et le calcul prenait alors MAINTENANT comme heure de fin. Le chrono continuait donc de tourner des jours apres la session : 242 h 09 = exactement l ecart entre le 07/08 21:20 et le jour de la capture. CE N ETAIT PAS QU UN AFFICHAGE : ce temps alimente le temps atelier agrege, donc le taux horaire et le cout de revient — des chiffres qui servent a fixer les prix. REGLE POSEE : une session CLOTUREE est bornee par sa fin ; le temps ne peut pas courir dans une journee deja refermee, et une tache oubliee s arrete avec sa session. Seule une session ENCORE OUVERTE mesure jusqu a maintenant, ce qui reste le comportement voulu du chrono en cours. Le bornage est applique a CINQ endroits : total de session, pastilles de phases, temps atelier agrege, temps par parfum et categories de planification. NOUVEAU, demande par Ben : un bouton par tache ouvre la correction de ses horaires — en heures OU directement en minutes (les deux se presentent en atelier), les deux champs se synchronisant. Une tache qui n a jamais ete arretee est SIGNALEE dans la liste. Gardes : une tache ne peut ni commencer avant sa session ni finir apres, sinon le temps par recette depasserait la session qui le contient. Suite v1477 : 29 assertions, dont la reconstitution du cas de Ben (8 h 14 au lieu de 242 h) ; sensibilite verifiee par reintroduction (5 rouges).';
+const APP_VERSION = 'v1478'; // suite : voir tests/v1478-seances-par-jour.test.js
+const APP_MAJ = 'DEUX SEANCES ENCAPSULEES DANS UNE SEULE : DECOUPAGE PROPOSE. Ben : « sur la session ouverte j ai en realite 2 seances sur 2 jours differents, toutes les taches sont rattachees et encapsulees dans la seance du 7 aout. J aimerai que l app puisse automatiquement associer les seances au jour ou celle-ci demarre ». LE PIEGE ECARTE, ET C EST LE COEUR DE CETTE VERSION : sa seance va de 21:20 a 05:34 — elle FRANCHIT MINUIT. Une regle « un jour civil = une seance » l aurait coupee en deux alors que c est UNE SEULE nuit de travail continue, et aurait casse precisement sa facon de produire. Ce qui separe deux seances chez lui, ce n est pas minuit mais le TEMPS SANS RIEN FAIRE : il finit a 05:34, il dort, il reprend le lendemain soir. SEUIL CHOISI PAR BEN : 4 h sans activite. L app detecte donc les seances par leur trou d inactivite, et date chacune du jour ou elle DEMARRE — une nuit du 7 au 8 reste entiere et datee du 7. BEN VALIDE : un bouton « N seances » n apparait que si un decoupage est reellement detecte, et un apercu montre exactement ce qui sera cree (jour, horaires, nombre de taches) avant toute ecriture. La premiere seance garde la fiche d origine, les suivantes deviennent des sessions distinctes ; aucune tache n est perdue ni modifiee. POUR QUE CA NE SE REPRODUISE PLUS : une session inactive depuis 4 h n est plus reutilisee — elle est clôturee A SA DERNIERE ACTIVITE (jamais a maintenant, ce qui lui ferait absorber les heures d inactivite, le defaut corrige en v1477) et une seance neuve s ouvre, datee du jour. Suite v1478 : 29 assertions, dont la garantie qu une nuit continue reste UNE seance ; la regle naive du jour civil, remise par mutation, fait rougir 8 assertions.';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
 const _APP_MAJ_v1448_ARCHIVE_INUTILISEE = 'LE CHAMP « N° LOT DE PRODUCTION » MENTAIT EN MODE DUO. Ben, capture à l\u2019appui : lançant Chocolat passion + Pistache en meringue commune, le champ affichait « 030826RAF » — ni CHP ni PIS, mais RAF (Coco Rafaello, une tout autre recette). CAUSE : la branche duo de saveProd() ne lit JAMAIS ce champ — chaque parfum reçoit son propre lot, calculé indépendamment. Sa valeur affichée venait de prodRefreshLot(), qui lit TOUJOURS la recette unique (f_rec) — or f_rec reste dans la page (juste masquée) en duo, avec la valeur de la DERNIÈRE recette affichée avant le passage en duo. Un champ qui ment ET n\u2019a aucun effet réel est pire qu\u2019un champ absent. Même défaut, plus discret, sur la case « diviser en 2 lots » (v1445/v1446) : cochée, ce champ n\u2019est pas plus lu par le lancement réel. FIX : le champ est désormais masqué dans ces deux cas ; à la place, les VRAIS numéros de lot qui seront utilisés sont prévisualisés — en mode duo dans le récapitulatif de répartition, et pour la division bicolore dans son propre encart — calculés avec EXACTEMENT la même formule que la sauvegarde réelle, jamais un second calcul qui pourrait diverger. Suite v1448 : 12 assertions (tests/v1448-lot-duo-preview.test.js), dont une réconciliation qui rejoue la vraie formule de sauvegarde et vérifie que l\u2019aperçu affiche bien 030826CHP-CO et 030826PIS-CO — jamais RAF.';
@@ -60549,6 +60549,32 @@ function prodAnyRunning(){
 // Ouvre une nouvelle session de production (ou retourne celle déjà ouverte).
 function prodSessionStart(note){
   let s = prodSessActive();
+  // [v1478] EMPÊCHE LA RÉCURRENCE. Avant, une session ouverte était TOUJOURS réutilisée : c'est
+  // ainsi que les tâches de Ben du 9 août se sont retrouvées encapsulées dans sa séance du 7.
+  // Si plus de 4 h se sont écoulées depuis la dernière activité, ce n'est plus la même séance :
+  // on clôture la précédente à sa dernière tâche et on en ouvre une neuve, datée d'AUJOURD'HUI.
+  // Le seuil est le même que celui du découpage — une seule définition de « séance » dans l'app.
+  if(s){
+    const derniere = (s.tasks||[]).reduce((max,t)=>{
+      const f = (+t.end) || (+t.start) || 0;
+      return f>max ? f : max;
+    }, (+s.start)||0);
+    if(derniere>0 && (Date.now()-derniere) >= PROD_SEANCE_GAP_MS){
+      // Clôture à la dernière activité réelle, PAS à maintenant : sinon la séance précédente
+      // absorberait les heures d'inactivité (le défaut « 242 h » corrigé en v1477).
+      (s.tasks||[]).forEach(t=>{
+        if(!t.end){
+          if(typeof prodTaskPaused==='function' && prodTaskPaused(t)){
+            t.pausedAccum=(+t.pausedAccum||0)+Math.max(0,derniere-(+t.pauseAt||derniere)); t.pauseAt=null;
+          }
+          t.end = derniere;
+        }
+      });
+      s.end = derniere;
+      prodSessUpsert(s);
+      s = null;   // on repart sur une séance neuve
+    }
+  }
   if(s) return s;
   s = { id:prodNewId(), date:today(), start:Date.now(), end:null, note:note||'', tasks:[] };
   prodSessUpsert(s);
@@ -62331,6 +62357,142 @@ function _prodModalSwap(html){
 // DEUX FAÇONS DE SAISIR, parce que les deux se présentent en atelier : soit on connaît les heures
 // (« j'ai garni de 22 h à 23 h 30 »), soit on connaît la DURÉE (« ça m'a pris 40 minutes »). Les
 // deux champs sont synchronisés : modifier la durée recale la fin à partir du début.
+// [v1478] DÉCOUPER UNE SESSION EN SÉANCES. Ben : « sur la session ouverte j'ai en réalité 2 séances
+// sur 2 jours différents, toutes les tâches sont rattachées et encapsulées dans la séance du
+// 7 août. J'aimerai que l'app puisse automatiquement associer les séances au jour où celle-ci
+// démarre ».
+//
+// ⚠️ POURQUOI PAS UNE RÈGLE « UN JOUR CIVIL = UNE SÉANCE » : la séance de Ben va de 21:20 à 05:34
+// — elle FRANCHIT MINUIT. Découper au changement de date la couperait en deux alors que c'est UNE
+// SEULE séance continue, et casserait précisément sa façon de travailler (il produit la nuit).
+// Ce qui sépare deux séances chez lui, c'est le TEMPS SANS RIEN FAIRE : il finit à 05:34, il dort,
+// il reprend le lendemain soir. C'est ce trou qui marque la frontière.
+//
+// SEUIL TRANCHÉ PAR BEN : 4 heures sans aucune tâche.
+const PROD_SEANCE_GAP_MS = 4 * 60 * 60 * 1000;
+
+// PURE. Regroupe les tâches d'une session en séances, séparées par un trou d'inactivité.
+// Renvoie [{ tasks, start, end, date }] — `date` = LE JOUR OÙ LA SÉANCE DÉMARRE (demande de Ben),
+// calculé en heure LOCALE : une séance commencée le 7 à 21:20 appartient au 7, pas au 8.
+function prodSeancesDe(sess, gapMs){
+  const gap = (+gapMs > 0) ? +gapMs : PROD_SEANCE_GAP_MS;
+  const tasks = ((sess && sess.tasks) || [])
+    .filter(t => t && +t.start > 0)
+    .slice()
+    .sort((a, b) => (+a.start || 0) - (+b.start || 0));
+  if(!tasks.length) return [];
+  const borne = (sess && +sess.end) || 0;
+  const finDe = t => {
+    const e = +t.end || borne || +t.start;
+    return Math.max(+t.start, borne ? Math.min(e, borne) : e);
+  };
+  const jourLocal = ms => {
+    const d = new Date(ms);
+    return new Date(d.getTime() - d.getTimezoneOffset()*60000).toISOString().slice(0,10);
+  };
+  const groupes = [];
+  let courant = null;
+  let finMax = 0;   // fin la plus tardive atteinte dans le groupe (les tâches se chevauchent)
+  tasks.forEach(t => {
+    const deb = +t.start;
+    if(courant && (deb - finMax) >= gap){
+      courant.end = finMax;
+      groupes.push(courant);
+      courant = null;
+    }
+    if(!courant){
+      courant = { tasks: [], start: deb, end: 0, date: jourLocal(deb) };
+      finMax = 0;
+    }
+    courant.tasks.push(t);
+    const f = finDe(t);
+    if(f > finMax) finMax = f;
+  });
+  if(courant){ courant.end = finMax; groupes.push(courant); }
+  return groupes;
+}
+
+// Combien de séances distinctes une session contient-elle ? (1 = rien à découper)
+function prodSeancesNb(sess, gapMs){ return prodSeancesDe(sess, gapMs).length; }
+
+// Applique le découpage : la session d'origine GARDE la première séance (elle conserve donc son
+// identifiant, ses éventuelles références et son historique), les suivantes deviennent de
+// nouvelles sessions datées de LEUR jour de démarrage.
+// N'écrit qu'après avoir vérifié qu'il y a bien plusieurs séances — jamais de découpage à vide.
+function prodSessDecouperAppliquer(sessId, gapMs){
+  const s = prodSessGet(sessId);
+  if(!s) return { ok:false, raison:'Session introuvable' };
+  const groupes = prodSeancesDe(s, gapMs);
+  if(groupes.length <= 1) return { ok:true, nb:0 };
+
+  const creees = [];
+  groupes.forEach((g, i) => {
+    if(i === 0){
+      s.tasks = g.tasks;
+      s.date  = g.date;
+      s.start = g.start;
+      // La session d'origine était peut-être encore ouverte : les séances ANTÉRIEURES sont
+      // forcément terminées, on les clôt à leur dernière tâche. Seule la DERNIÈRE séance peut
+      // rester ouverte, et seulement si la session l'était.
+      s.end = (groupes.length > 1) ? g.end : s.end;
+      prodSessUpsert(s);
+      return;
+    }
+    const derniere = (i === groupes.length - 1);
+    const nouvelle = {
+      id: prodNewId(),
+      date: g.date,
+      start: g.start,
+      end: (derniere && !s.end) ? null : g.end,
+      note: s.note || '',
+      tasks: g.tasks
+    };
+    prodSessUpsert(nouvelle);
+    creees.push(nouvelle);
+  });
+  return { ok:true, nb: creees.length, total: groupes.length };
+}
+
+// [v1478] APERÇU DU DÉCOUPAGE, avant toute écriture. Ben a choisi de valider lui-même : l'app
+// PROPOSE, elle ne réorganise pas son journal dans son dos. L'aperçu montre exactement ce qui va
+// être créé — jour, horaires, nombre de tâches — pour qu'il puisse refuser si la détection se
+// trompe.
+function prodSessDecouperForm(sessId){
+  const s = prodSessGet(sessId);
+  if(!s){ toast('Session introuvable'); return; }
+  const groupes = prodSeancesDe(s);
+  const hm = ms => new Date(ms).toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'});
+  if(groupes.length <= 1){
+    openModal('<h3>✂️ Découper en séances</h3>'
+      + '<p class="note">Cette session ne contient qu\'une seule séance : aucune coupure de 4 h ou plus entre deux tâches. Rien à découper.</p>'
+      + '<p class="note">Une séance qui franchit minuit (par exemple 21:20 → 05:34) reste volontairement entière : c\'est une seule nuit de travail.</p>'
+      + '<div class="modal-actions"><button class="btn" onclick="closeModal()">Fermer</button></div>');
+    return;
+  }
+  const lignes = groupes.map((g, i) =>
+    '<div class="sum-box"><span><b>Séance ' + (i+1) + '</b> · ' + fmtDate(g.date) + '<br>'
+    + '<span style="font-size:.78rem;color:#7a6a62">' + hm(g.start) + '–' + hm(g.end)
+    + ' · ' + g.tasks.length + ' tâche(s)</span></span>'
+    + '<b>' + prodDurShort(Math.max(0, g.end - g.start)) + '</b></div>'
+  ).join('');
+  openModal('<h3>✂️ Découper en séances</h3>'
+    + '<p class="note">Cette session contient <b>' + groupes.length + ' séances</b> séparées par au moins 4 h sans activité. '
+    + 'Chacune sera datée du jour où elle <b>démarre</b>.</p>'
+    + lignes
+    + '<p class="note" style="margin-top:8px">La première séance garde cette fiche ; les suivantes deviennent des sessions distinctes. Aucune tâche n\'est perdue ni modifiée.</p>'
+    + '<div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>'
+    + '<button class="btn gold" onclick="prodSessDecouperGo(\'' + escJs(sessId) + '\')">Découper</button></div>');
+}
+function prodSessDecouperGo(sessId){
+  const r = prodSessDecouperAppliquer(sessId);
+  if(!r || !r.ok){ toast((r && r.raison) || 'Découpage impossible'); return; }
+  if(!r.nb){ toast('Rien à découper'); return; }
+  if(typeof markUnsaved === 'function') markUnsaved();
+  closeModal();
+  toast(r.total + ' séances séparées ✓ — chacune datée de son jour de démarrage');
+  if(typeof renderAtelier === 'function') renderAtelier();
+}
+
 function prodTacheHorairesForm(sessId, taskId){
   const s = prodSessGet(sessId); if(!s){ toast('Session introuvable'); return; }
   const t = (s.tasks||[]).find(x=>String(x.id)===String(taskId));
@@ -63475,6 +63637,7 @@ async function prodRenderJournal(){
         <button class="qa" style="background:#aa7c39;color:#fff" onclick="prodSessParfumsConfirm('${s.id}')" title="Rattacher les parfums/recettes produits pendant cette session (affine le temps par recette, y compris pour tes anciennes sessions)">🎯 Parfums${s.parfumsConfirmes?' ✓':''}</button>
         <button class="qa" style="background:#6b4f45;color:#fff" onclick="prodSessTaches('${s.id}')" title="Corriger le parfum d'UNE tâche précise — le temps par parfum se recalcule selon tes corrections">🖊 Par tâche</button>
         <button class="qa" style="background:#4a6b8a;color:#fff" onclick="prodSessHorairesForm('${s.id}')" title="Corriger l'heure de début et de fin — sert notamment à clôturer une session laissée ouverte trop longtemps">🕐 Horaires</button>
+        ${(typeof prodSeancesNb==='function' && prodSeancesNb(s)>1) ? `<button class="qa" style="background:#8a6d3b;color:#fff" onclick="prodSessDecouperForm('${s.id}')" title="Cette session contient plusieurs séances séparées par au moins 4 h sans activité">✂️ ${prodSeancesNb(s)} séances</button>` : ''}
         ${!open?`<button class="qa" style="background:#3f7d52;color:#fff" onclick="prodSessReopen('${s.id}')" title="Rouvrir cette session pour y ajouter des tâches (ex : garnissage après refroidissement)">↻ Rouvrir</button>`:''}
         ${!open?`<button class="qa del" onclick="prodJournalDelete('${s.id}')">🗑</button>`:''}
       </div>

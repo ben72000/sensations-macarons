@@ -178,7 +178,8 @@ const SUITES = [
   'v1474-pertes-echec-visible.test.js',         // v1474 · 4 écritures de perte dont l'échec était avalé alors que le stock avait déjà bougé + garde de motif sur les tables critiques
   'v1475-ca-graphique-fige.test.js',            // v1475 · CA du tableau de bord figé : le cache du graphique n'était vidé qu'au rendu de l'accueil (changement d'onglet + écritures d'argent)
   'v1476-ca-manquant.test.js',                  // v1476 · diagnostic « CA manquant » : commandes dont l'encaissement n'a jamais été saisi (statut Partiel/En attente sans registre)
-  'v1477-chrono-tache-bornee.test.js'           // v1477 · session de 8 h affichant 242 h (tâche jamais arrêtée mesurée jusqu'à aujourd'hui) + édition du temps par tâche
+  'v1477-chrono-tache-bornee.test.js',          // v1477 · session de 8 h affichant 242 h (tâche jamais arrêtée mesurée jusqu'à aujourd'hui) + édition du temps par tâche
+  'v1478-seances-par-jour.test.js'              // v1478 · découpage d'une session en séances par trou d'inactivité (4 h), datées du jour de démarrage — une nuit à cheval sur 2 jours reste entière
 ];
 
 let allOk = true;
