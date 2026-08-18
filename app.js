@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1476'; // suite : voir tests/v1476-ca-manquant.test.js
-const APP_MAJ = 'CHERCHER LE CA MANQUANT. Ben : « le montant affiche n est toujours pas correct ». VERIFIE D ABORD, avant de coder : la carte du tableau de bord, le graphique mensuel et le graphique annuel donnent EXACTEMENT les memes chiffres, et la somme des mois egale l annee. Les trois surfaces sont donc coherentes ENTRE ELLES — l ecart est entre l app et la REALITE de Ben, pas une divergence interne. Corriger un calcul juste n aurait rien donne. CE QU UN SONDAGE DES FORMES DE DONNEES A REVELE : une commande n entre dans le CA que si elle a un registre de paiements non vide, OU le statut exactement « Paye ». Trois formes d argent reel y echappent : ① statut « Partiel » sans registre (un acompte encaisse, jamais compte) ; ② commande soldee dont le statut est reste « En attente » ; ③ registre present mais dont tous les montants valent 0. CHOIX ASSUME : ne PAS reparer automatiquement. Compter une commande « En attente » comme encaissee serait INVENTER une recette, et fausserait une declaration URSSAF. L app DIAGNOSTIQUE : un lien « Chercher le CA manquant » dans les deux ecrans de detail du CA liste les commandes concernees, avec le motif, le nom du client et le montant en jeu — chaque ligne ouvre la commande pour saisir l encaissement reel. Le diagnostic n ecrit RIEN. Suite v1476 : 23 assertions, dont la reconciliation du total en jeu et la non-regression des formes deja comptees (registre, repli legacy, commandes filles) ; sensibilite verifiee par reintroduction (4 rouges).';
+const APP_VERSION = 'v1477'; // suite : voir tests/v1477-chrono-tache-bornee.test.js
+const APP_MAJ = 'UNE SESSION DE 8 H AFFICHAIT 242 H, ET LE TEMPS PAR TACHE EST DESORMAIS CORRIGEABLE. Capture de Ben : session du 07/08, 21:20-05:34 (8 h 14 reelles), 119 taches, total affiche « 242 h 09 » — et les pastilles de phases additionnees faisaient environ 21 h. Trois chiffres incompatibles. CAUSE, reconstituee AU CHIFFRE PRES : une tache n avait jamais ete arretee, et le calcul prenait alors MAINTENANT comme heure de fin. Le chrono continuait donc de tourner des jours apres la session : 242 h 09 = exactement l ecart entre le 07/08 21:20 et le jour de la capture. CE N ETAIT PAS QU UN AFFICHAGE : ce temps alimente le temps atelier agrege, donc le taux horaire et le cout de revient — des chiffres qui servent a fixer les prix. REGLE POSEE : une session CLOTUREE est bornee par sa fin ; le temps ne peut pas courir dans une journee deja refermee, et une tache oubliee s arrete avec sa session. Seule une session ENCORE OUVERTE mesure jusqu a maintenant, ce qui reste le comportement voulu du chrono en cours. Le bornage est applique a CINQ endroits : total de session, pastilles de phases, temps atelier agrege, temps par parfum et categories de planification. NOUVEAU, demande par Ben : un bouton par tache ouvre la correction de ses horaires — en heures OU directement en minutes (les deux se presentent en atelier), les deux champs se synchronisant. Une tache qui n a jamais ete arretee est SIGNALEE dans la liste. Gardes : une tache ne peut ni commencer avant sa session ni finir apres, sinon le temps par recette depasserait la session qui le contient. Suite v1477 : 29 assertions, dont la reconstitution du cas de Ben (8 h 14 au lieu de 242 h) ; sensibilite verifiee par reintroduction (5 rouges).';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
 const _APP_MAJ_v1448_ARCHIVE_INUTILISEE = 'LE CHAMP « N° LOT DE PRODUCTION » MENTAIT EN MODE DUO. Ben, capture à l\u2019appui : lançant Chocolat passion + Pistache en meringue commune, le champ affichait « 030826RAF » — ni CHP ni PIS, mais RAF (Coco Rafaello, une tout autre recette). CAUSE : la branche duo de saveProd() ne lit JAMAIS ce champ — chaque parfum reçoit son propre lot, calculé indépendamment. Sa valeur affichée venait de prodRefreshLot(), qui lit TOUJOURS la recette unique (f_rec) — or f_rec reste dans la page (juste masquée) en duo, avec la valeur de la DERNIÈRE recette affichée avant le passage en duo. Un champ qui ment ET n\u2019a aucun effet réel est pire qu\u2019un champ absent. Même défaut, plus discret, sur la case « diviser en 2 lots » (v1445/v1446) : cochée, ce champ n\u2019est pas plus lu par le lancement réel. FIX : le champ est désormais masqué dans ces deux cas ; à la place, les VRAIS numéros de lot qui seront utilisés sont prévisualisés — en mode duo dans le récapitulatif de répartition, et pour la division bicolore dans son propre encart — calculés avec EXACTEMENT la même formule que la sauvegarde réelle, jamais un second calcul qui pourrait diverger. Suite v1448 : 12 assertions (tests/v1448-lot-duo-preview.test.js), dont une réconciliation qui rejoue la vraie formule de sauvegarde et vérifie que l\u2019aperçu affiche bien 030826CHP-CO et 030826PIS-CO — jamais RAF.';
@@ -60494,9 +60494,11 @@ function prodNewId(){ return 'p'+Date.now().toString(36)+Math.random().toString(
 // qu'elle n'a pas été arrêtée et on ne compte pas la durée absurde. Une vraie tâche d'atelier
 // (pesée, pochage, cuisson, repos) ne dépasse pas ce seuil. N'affecte PAS les tâches terminées.
 const PROD_TASK_OPEN_MAX_MS = 6*60*60*1000; // 6 heures
-function prodTaskNet(t){
+function prodTaskNet(t, borneFin){
   const open = !t.end;
-  const end = t.end || Date.now();
+  // [v1477] borneFin = fin de la session quand elle est cloturee. Sans elle, une tache laissee
+  // ouverte gonfle indefiniment (le plafond limitait la casse, mais un plafond n'est pas une mesure).
+  const end = t.end || borneFin || Date.now();
   let gross = Math.max(0, end - t.start);
   const accum = +t.pausedAccum||0;
   const live = (+t.pauseAt||0)>0 ? Math.max(0, Date.now()-(+t.pauseAt)) : 0;
@@ -60513,9 +60515,17 @@ function prodTaskPaused(t){ return t && (+t.pauseAt||0)>0; }
 function prodSessReelMs(s){
   const tasks=(s&&s.tasks)||[];
   if(!tasks.length) return 0;
+  // [v1477] Ben, capture a l'appui : sa session du 07/08 (21:20-05:34, donc 8 h 14 reelles)
+  // affichait « 242 h 09 ». CAUSE : une tache jamais terminee prenait Date.now() comme fin, son
+  // chrono continuant de tourner des jours apres la session — le total gonflait de 24 h par jour.
+  // Reconstitue au chiffre pres : 242 h 09 = l'ecart entre le 07/08 21:20 et le jour de la capture.
+  // REGLE : une session CLOTUREE est bornee par sa fin. Le temps ne peut pas courir dans une
+  // journee deja refermee. Seule une session ENCORE OUVERTE mesure jusqu'a maintenant.
+  const borne = (+s.end) || Date.now();
   let minStart=Infinity, maxEnd=0;
   tasks.forEach(t=>{
-    const st=+t.start||0; const en=+t.end|| Date.now();
+    const st=+t.start||0;
+    const en=Math.min((+t.end || borne), borne);
     if(st>0 && st<minStart) minStart=st;
     if(en>maxEnd) maxEnd=en;
   });
@@ -60524,7 +60534,8 @@ function prodSessReelMs(s){
 }
 // Cumul des durées de tâches (somme) : charge de travail si tout était fait à la chaîne.
 function prodSessCumulMs(s){
-  return ((s&&s.tasks)||[]).reduce((sum,t)=>sum+prodTaskNet(t),0);
+  const borne = (s && +s.end) || 0;
+  return ((s&&s.tasks)||[]).reduce((sum,t)=>sum+prodTaskNet(t, borne||undefined),0);
 }
 // Une tâche est-elle en cours (non terminée) ?
 function prodTaskRunning(t){ return t && !t.end; }
@@ -62315,6 +62326,89 @@ function _prodModalSwap(html){
 }
 
 // ── ÉCRAN 1 : la liste des tâches d'une session, parfum(s) visibles, tap pour corriger ──
+// [v1477] CORRIGER LES HORAIRES D'UNE TÂCHE. Ben : « je veux pouvoir changer l'heure du début et
+// de fin de session ainsi que le temps de chaque tâche si besoin ».
+// DEUX FAÇONS DE SAISIR, parce que les deux se présentent en atelier : soit on connaît les heures
+// (« j'ai garni de 22 h à 23 h 30 »), soit on connaît la DURÉE (« ça m'a pris 40 minutes »). Les
+// deux champs sont synchronisés : modifier la durée recale la fin à partir du début.
+function prodTacheHorairesForm(sessId, taskId){
+  const s = prodSessGet(sessId); if(!s){ toast('Session introuvable'); return; }
+  const t = (s.tasks||[]).find(x=>String(x.id)===String(taskId));
+  if(!t){ toast('Tâche introuvable'); return; }
+  const toLocal = ms => {
+    if(!ms) return '';
+    const d = new Date(ms);
+    return new Date(d.getTime() - d.getTimezoneOffset()*60000).toISOString().slice(0,16);
+  };
+  const borne = (+s.end) || undefined;
+  const netMin = Math.round(prodTaskNet(t, borne)/60000);
+  const ouverte = !t.end;
+  const alerte = ouverte
+    ? '<p class="note" style="color:#b3261e">Cette tâche n\'a jamais été arrêtée : son temps était compté jusqu\'à aujourd\'hui. Renseigne sa fin réelle.</p>'
+    : '';
+  openModal('<h3>🕐 '+esc(t.label||'Tâche')+'</h3>'
+    + '<p class="note">Session du '+fmtDate(s.date)+'</p>'
+    + alerte
+    + '<div class="field"><label>Début</label>'
+    + '<input type="datetime-local" id="th_start" value="'+toLocal(t.start)+'" onchange="prodTacheHorairesSync()"></div>'
+    + '<div class="field"><label>Fin</label>'
+    + '<input type="datetime-local" id="th_end" value="'+toLocal(t.end||borne)+'" onchange="prodTacheHorairesSync()"></div>'
+    + '<div class="field"><label>… ou directement la durée (minutes)</label>'
+    + '<input type="number" id="th_min" min="0" step="1" value="'+netMin+'" oninput="prodTacheHorairesDeMinutes()"></div>'
+    + '<p class="note">Modifier la durée recale la fin à partir du début. Les pauses éventuelles sont soldées : la durée saisie devient le temps réellement travaillé.</p>'
+    + '<div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>'
+    + '<button class="btn gold" onclick="prodTacheHorairesSave(\''+escJs(sessId)+'\',\''+escJs(taskId)+'\')">Enregistrer</button></div>');
+}
+// Début/fin modifiés → la durée affichée suit.
+function prodTacheHorairesSync(){
+  const a = val('th_start'), b = val('th_end');
+  if(!a || !b) return;
+  const min = Math.max(0, Math.round((new Date(b).getTime() - new Date(a).getTime())/60000));
+  const el = document.getElementById('th_min'); if(el) el.value = min;
+}
+// Durée modifiée → la fin suit.
+function prodTacheHorairesDeMinutes(){
+  const a = val('th_start'); if(!a) return;
+  const min = Math.max(0, Math.round(+val('th_min')||0));
+  const fin = new Date(new Date(a).getTime() + min*60000);
+  const el = document.getElementById('th_end');
+  if(el) el.value = new Date(fin.getTime() - fin.getTimezoneOffset()*60000).toISOString().slice(0,16);
+}
+function prodTacheHorairesSave(sessId, taskId){
+  const s = prodSessGet(sessId); if(!s){ toast('Session introuvable'); return; }
+  const t = (s.tasks||[]).find(x=>String(x.id)===String(taskId));
+  if(!t){ toast('Tâche introuvable'); return; }
+  const a = val('th_start'), b = val('th_end');
+  if(!a){ toast('Le début est obligatoire'); return; }
+  const start = new Date(a).getTime();
+  const end = b ? new Date(b).getTime() : null;
+  if(!isFinite(start)){ toast('Début invalide'); return; }
+  if(end != null && end < start){ toast('La fin ne peut pas précéder le début'); return; }
+  // GARDE : une tâche doit tenir DANS sa session. Sans elle, le temps par recette pourrait
+  // dépasser la session qui le contient — l'anomalie que l'audit interne surveille (INVARIANT T1),
+  // et la cause même du « 242 h » que Ben a constaté.
+  const hm = ms => new Date(ms).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+  if(s.start && start < +s.start){
+    toast('Cette tâche commencerait avant la session ('+hm(+s.start)+') — corrige d\'abord les horaires de la session.');
+    return;
+  }
+  if(s.end && end != null && end > +s.end){
+    toast('Cette tâche finirait après la session ('+hm(+s.end)+') — corrige d\'abord les horaires de la session.');
+    return;
+  }
+  t.start = start;
+  t.end = end;
+  // La durée saisie est le temps RÉELLEMENT travaillé : on solde les pauses, sinon elles seraient
+  // retranchées une seconde fois et la tâche afficherait moins que ce que Ben vient de corriger.
+  t.pausedAccum = 0;
+  t.pauseAt = null;
+  prodSessUpsert(s);
+  if(typeof markUnsaved==='function') markUnsaved();
+  closeModal();
+  toast('Horaires de la tâche enregistrés ✓');
+  if(typeof prodSessTaches==='function') prodSessTaches(sessId);
+}
+
 async function prodSessTaches(sessId){
   const s = (typeof prodSessGet === 'function') ? prodSessGet(sessId) : null;
   if(!s){ toast('Session introuvable'); return; }
@@ -62325,11 +62419,20 @@ async function prodSessTaches(sessId){
     const parfs = (Array.isArray(t.parfums)?t.parfums:[]).map(Number).filter(r=>Number.isFinite(r)&&r>0);
     const noms = parfs.length ? parfs.map(nomOf).map(esc).join(' + ') : '<span style="color:#9a8a82">aucun parfum (temps commun)</span>';
     const mut = parfs.length >= 2 ? ' <span class="tag" style="background:#8a6d3b;color:#fff;font-size:.6rem">mutualisée</span>' : '';
-    const dur = (typeof prodTaskNet === 'function' && typeof prodDurShort === 'function') ? prodDurShort(prodTaskNet(t)) : '';
-    return `<div class="sum-box" style="cursor:pointer;align-items:flex-start" onclick="prodTacheParfumsEdit('${escJs(s.id)}','${escJs(t.id)}')">
-      <span style="flex:1"><b>${esc(t.label || 'Tâche')}</b> · ${dur}<br>
+    // [v1477] Duree BORNEE par la fin de session (une tache oubliee n'affiche plus un temps qui
+    // court), tache jamais arretee SIGNALEE, et bouton dedie pour corriger ses horaires. Le clic
+    // sur la ligne reste reserve aux parfums : on ne change pas un geste que Ben connait deja.
+    const _b = (+s.end)||undefined;
+    const dur = (typeof prodTaskNet === 'function' && typeof prodDurShort === 'function') ? prodDurShort(prodTaskNet(t, _b)) : '';
+    const ouverte = !t.end;
+    return `<div class="sum-box" style="align-items:flex-start">
+      <span style="flex:1;cursor:pointer" onclick="prodTacheParfumsEdit('${escJs(s.id)}','${escJs(t.id)}')">
+        <b>${esc(t.label || 'Tâche')}</b> · ${dur}${ouverte?' <span class="tag" style="background:#b3261e;color:#fff;font-size:.6rem">jamais arrêtée</span>':''}<br>
         <span style="font-size:.78rem;color:#7a6a62">🎨 ${noms}${mut}</span></span>
-      <span style="color:#9a8a82">🖊</span>
+      <span style="display:flex;gap:6px;align-items:center;flex:none">
+        <button class="btn ghost sm" onclick="event.stopPropagation();prodTacheHorairesForm('${escJs(s.id)}','${escJs(t.id)}')" title="Corriger l'heure de début et de fin de cette tâche">🕐</button>
+        <span style="color:#9a8a82">🖊</span>
+      </span>
     </div>`;
   }).join('') : '<p class="note">Aucune tâche dans cette session.</p>';
   _prodModalSwap(`<h3>🖊 Parfums par tâche</h3>
@@ -62414,7 +62517,9 @@ async function revenuHoraireData(arg){
   const psAll = (typeof prodSessLoad==='function') ? prodSessLoad() : [];
   const psIn = psAll.filter(s=>inWin(s.date));
   let msAtelier = 0;
-  psIn.forEach(s=>{ (s.tasks||[]).forEach(t=>{ msAtelier += (typeof prodTaskNet==='function')?prodTaskNet(t):0; }); });
+  // [v1477] Borne : une tache oubliee gonflerait le temps atelier agrege, donc le taux horaire
+  // et le cout de revient.
+  psIn.forEach(s=>{ const _b=(+s.end)||undefined; (s.tasks||[]).forEach(t=>{ msAtelier += (typeof prodTaskNet==='function')?prodTaskNet(t,_b):0; }); });
   const hAtelier = msAtelier/3600000;
 
   const heuresMesurees = round3(hPointeuse + hAtelier);
@@ -63344,7 +63449,8 @@ async function prodRenderJournal(){
     const reelMs = prodSessReelMs(s);         // durée réelle « mur à mur » (chevauchements compris)
     const gainMs = Math.max(0, totMs - reelMs); // temps gagné grâce au chevauchement
     const phases = {};
-    tasks.forEach(t=>{ phases[t.phase]=(phases[t.phase]||0)+prodTaskNet(t); });
+    const _borne = (+s.end)||undefined;   // [v1477] meme bornage que le total, sinon les chips mentent
+    tasks.forEach(t=>{ phases[t.phase]=(phases[t.phase]||0)+prodTaskNet(t,_borne); });
     const phaseChips = Object.keys(phases).map(p=>{
       const meta = prodAllTasks().find(t=>t.phase===p);
       const col = meta?meta.color:'#8a7a72';
@@ -69039,7 +69145,7 @@ function _clesChronometrees(sessions, sinceStr){
     if(!jour) return;
     if(sinceStr && jour < sinceStr) return;
     (s.tasks||[]).forEach(t=>{
-      const net = (typeof prodTaskNet==='function') ? prodTaskNet(t) : 0;
+      const net = (typeof prodTaskNet==='function') ? prodTaskNet(t, (+s.end)||undefined) : 0;   // [v1477] borne
       if(!(net>0)) return;                       // une tâche à 0 n'a rien mesuré
       (Array.isArray(t.parfums)?t.parfums:[]).forEach(r=>{
         const n = +r; if(Number.isFinite(n) && n>0) out.add(n + '|' + jour);
@@ -71601,7 +71707,7 @@ function prodSessMinutesByCategory(sess){
   const acc = { coques:0, ganache:0, montage:0, vaisselle:0, entretien:0 };
   (sess.tasks||[]).forEach(t=>{
     const cat = prodTaskMrpCategory(t); if(!cat) return;
-    const ms = (typeof prodTaskNet==='function') ? prodTaskNet(t) : 0;
+    const ms = (typeof prodTaskNet==='function') ? prodTaskNet(t, (+sess.end)||undefined) : 0;   // [v1477] borne
     acc[cat] += ms/60000;
   });
   return acc;

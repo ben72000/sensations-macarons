@@ -5323,3 +5323,54 @@ atteignable depuis les deux détails, message rassurant si aucune anomalie (D).
 
 **Sensibilité vérifiée par réintroduction** : retirer la garde « déjà compté » et l'exclusion des
 filles fait rougir 4 assertions.
+
+---
+
+## 2026-08-17 — UNE SESSION DE 8 H AFFICHAIT 242 H  (v1476 → **v1477**)
+
+**Capture de Ben** : session du 07/08, **21:20–05:34** (donc 8 h 14 réelles), 119 tâches, total
+affiché **« 242 h 09 »**. Les pastilles de phases additionnées faisaient ~21 h. Trois chiffres
+incompatibles — et c'est cette incohérence, visible dans sa capture, qui a mis sur la piste.
+
+### 🚨 La cause, reconstituée au chiffre près
+Une tâche n'avait **jamais été arrêtée**. `prodSessReelMs` et `prodTaskNet` prenaient alors
+`Date.now()` comme fin : le chrono continuait de tourner des jours après la session, gonflant le
+total de 24 h par jour. Calcul de vérification : l'écart entre le 07/08 21:20 et le jour de la
+capture donne **242 h 09 exactement**. Le diagnostic n'était donc pas une hypothèse.
+
+### Ce n'était pas qu'un affichage
+Ce temps alimente `prodTempsParParfum` et le temps atelier agrégé, donc le **taux horaire** et le
+**coût de revient** — des chiffres dont Ben se sert pour fixer ses prix. Le bornage a été appliqué
+aux **cinq** endroits concernés : total de session, pastilles de phases, temps atelier agrégé, temps
+par parfum, catégories de planification.
+
+### La règle
+Une session **clôturée** est bornée par sa fin : le temps ne peut pas courir dans une journée déjà
+refermée, et une tâche oubliée s'arrête avec sa session. Seule une session **encore ouverte** mesure
+jusqu'à maintenant — comportement voulu du chrono en cours, préservé et testé.
+
+### La demande de Ben : corriger le temps par tâche
+Bouton dédié sur chaque tâche. Saisie **en heures** ou **directement en minutes** — les deux se
+présentent en atelier (« j'ai garni de 22 h à 23 h 30 » vs « ça m'a pris 40 minutes ») — les deux
+champs se synchronisant. Une tâche **jamais arrêtée** est signalée dans la liste et dans le
+formulaire. Les pauses sont **soldées** : la durée saisie devient le temps réellement travaillé,
+sinon elles seraient retranchées une seconde fois.
+
+**Gardes** : une tâche ne peut ni commencer avant sa session, ni finir après — sinon le temps par
+recette dépasserait la session qui le contient, l'anomalie même que l'audit interne surveille
+(INVARIANT T1) et la cause du « 242 h ».
+
+### Suite v1477 : 29 assertions (`tests/v1477-chrono-tache-bornee.test.js`)
+**Reconstitution du cas de Ben** — 8 h 14 et non 242 h, total jamais supérieur à la session, tâche
+oubliée bornée, réconciliation sur toutes les tâches (A) ; session **ouverte** mesurant toujours
+jusqu'à maintenant (B) ; pauses toujours déduites (C) ; les trois agrégats de coût bornés (D) ;
+l'éditeur par tâche, ses deux modes de saisie et ses gardes (E).
+
+**Sensibilité vérifiée par réintroduction** : remettre `Date.now()` comme borne et retirer la garde
+de session fait rougir 5 assertions.
+
+### ⚠️ Incident de manipulation, corrigé avant livraison
+Une insertion par script a **tronqué une ligne** du bloc ajouté (échappement Python sur une chaîne
+contenant des accolades). Détecté immédiatement par `node --check`. La base a été **restaurée depuis
+le zip livré** et le bloc réinséré via un fichier séparé, validé isolément avant insertion — méthode
+à préférer pour tout ajout de fonction contenant des gabarits.
