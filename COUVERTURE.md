@@ -5423,3 +5423,50 @@ rougir **8 assertions**, dont les deux qui protègent explicitement les nuits de
 ### Méthode
 Les deux blocs ajoutés ont été **écrits dans des fichiers séparés, validés isolément** (`node -c`)
 puis **testés avant insertion** — méthode adoptée après l'incident de troncature de la v1477.
+
+---
+
+## 2026-08-18 — FACTURÉ vs ENCAISSÉ : DEUX CHIFFRES JUSTES  (v1478 → **v1479**)
+
+**Ben, capture à l'appui** : « Pourquoi ces données ne se recoupent pas ? Regarde le "depuis le
+début" et le cumulé de 2025/2026. » En-tête : **12 036,14 €** au fil de l'app. Graphique, onglet
+Année : **10 325,59 €** sur 2025 + 2026.
+
+### Les deux chiffres étaient exacts
+- l'**en-tête** additionne le montant **facturé** des commandes (`o.montant`), encaissé ou non ;
+- le **graphique** additionne les **encaissements** réels (`paiementsDe`).
+
+L'écart de **1 710,55 €** est donc ce qui est facturé mais **pas encore encaissé**. Vérifié
+arithmétiquement sur les chiffres de la capture : `12 036,14 + 637,75 = 12 673,89` (l'activité
+globale), et `12 036,14 − 10 325,59 = 1 710,55`.
+
+### 🚨 Le vrai défaut était d'affichage
+Deux totaux côte à côte, **sans mention de leur base**, invitent à être comparés — et à conclure à
+une erreur de l'app. Corriger un calcul juste n'aurait rien donné ; le travail était de **nommer**.
+
+- L'en-tête annonce désormais « CA total depuis le début — **facturé** » et « activité globale
+  cumulée (montant des commandes) ».
+- Le graphique annonce « Chiffre d'affaires **encaissé** ».
+- Quand un écart existe, une ligne le **chiffre**, le **nomme** (« facturé mais pas encore
+  encaissé ») et **renvoie au détail** des commandes concernées — l'outil « Chercher le CA
+  manquant » livré en v1476, qui prend ici tout son sens.
+
+### Le total encaissé vient de la source unique
+Il est lu depuis `_caLignesToutes` — la fonction qui alimente le graphique — et non recalculé par
+une seconde addition. Une addition maison pourrait diverger du graphique et **recréer exactement le
+problème corrigé** (leçon de la v1461 : un seul calcul, lu par tous les écrans). Le cache est
+réutilisé quand il existe, et un échec de lecture ne casse pas l'accueil.
+
+L'écart se compare au **fil de l'eau seul**, pas à l'activité globale : les reprises d'historique
+sont hors CA encaissé par construction (déjà déclarées ailleurs), les inclure gonflerait l'écart à
+tort — vérifié par une assertion dédiée.
+
+### Suite v1479 : 23 assertions (`tests/v1479-facture-vs-encaisse.test.js`)
+L'arithmétique exacte de la capture (A) ; les deux bases sont bien différentes par construction, et
+aucune n'utilise la source de l'autre (B) ; le total encaissé vient de la source unique, l'écart ne
+peut être négatif, un échec est absorbé (C) ; **chaque base est nommée à l'écran** (D) ; l'écart est
+affiché seulement s'il existe, expliqué et relié au détail, masqué en confidentialité (E) ;
+non-régression sur le traitement des reprises d'historique (F).
+
+**Sensibilité vérifiée par réintroduction** : retirer les mentions de base et recalculer l'encaissé
+par une addition maison fait rougir 3 assertions.
