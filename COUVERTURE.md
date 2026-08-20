@@ -5470,3 +5470,51 @@ non-régression sur le traitement des reprises d'historique (F).
 
 **Sensibilité vérifiée par réintroduction** : retirer les mentions de base et recalculer l'encaissé
 par une addition maison fait rougir 3 assertions.
+
+---
+
+## 2026-08-20 — LE CALENDRIER GARDAIT LA DATE INITIALE  (v1479 → **v1480**)
+
+**Ben** : « Une commande initialement prévue à une date qui s'intègre au calendrier ne se met pas à
+jour lorsque la date est modifiée ultérieurement. Ainsi le calendrier affiche toujours la date
+initialement enregistrée. »
+
+### 🚨 La cause, vérifiée dans le moteur
+`syncOrderEvent` était pourtant correcte : elle supprime l'ancien événement puis recrée le nouveau.
+Le problème venait d'un cran plus bas — dans `dexie.min.js`, `equals(v)` est implémenté par
+`x => x[index] === v` : une **égalité stricte**, donc **sensible au type**.
+
+Un `refId` enregistré en **nombre** n'est jamais retrouvé par une recherche avec une **chaîne**, et
+inversement. L'ancien événement **survivait** donc à la mise à jour pendant que le nouveau
+s'ajoutait à côté : la date initiale restait affichée, doublée par la nouvelle. Reproduit en
+laboratoire sur les quatre combinaisons de types avant d'écrire la moindre ligne de correctif.
+
+### Le fix
+Une purge **unique**, `purgeEventsCommande(oid)`, qui compare sur la **valeur** et non sur le type —
+et qui nettoie **aussi les doublons déjà créés** par ce défaut. Sans ce rattrapage, les calendriers
+déjà pollués le seraient restés.
+
+### Le même piège servait sur trois autres chemins
+Corriger le seul `syncOrderEvent` aurait laissé la faille ailleurs. Tous alignés sur la purge
+unique :
+- **suppression** d'une commande — son événement serait resté au calendrier ;
+- **conversion en devis** — la commande disparaissait, l'événement non (aucun nettoyage n'existait) ;
+- **snapshot d'annulation** — sans lui, restaurer une commande supprimée la ramenait **sans sa date**.
+
+Les événements de **marché** conservent leur `equals` : leurs identifiants sont des chaînes
+(`'mk'+id`) des deux côtés, donc sains. Une garde trop large aurait condamné du code correct — le
+détecteur a été **affiné trois fois** plutôt que de « corriger » ce qui fonctionnait.
+
+### Suite v1480 : 28 assertions (`tests/v1480-calendrier-date-modifiee.test.js`)
+Les **quatre combinaisons de types** aboutissent à un seul événement, à la nouvelle date, l'ancienne
+ayant disparu (A) ; rattrapage des doublons existants, en **préservant** les événements d'un autre
+type et ceux des autres commandes (B) ; la purge n'attrape ni un `refId` nul ni la commande 70 quand
+on vise la 7 (C) ; les quatre chemins utilisent la purge unique, avec garde de motif (D) ;
+non-régression du comportement d'origine de `syncOrderEvent` (E).
+
+**Sensibilité vérifiée par réintroduction** : 8 assertions rougissent, dont « l'ancienne date a
+disparu » — le symptôme exact de Ben.
+
+⚠️ La mutation **plantait** d'abord au lieu de rougir : les bacs à sable ne fournissaient pas
+`where`, devenu inutile dans le code corrigé. Un stub **fidèle** au `equals` réel a été ajouté — une
+suite qui plante ne prouve pas qu'un défaut est détecté.

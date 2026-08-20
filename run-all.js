@@ -180,7 +180,8 @@ const SUITES = [
   'v1476-ca-manquant.test.js',                  // v1476 · diagnostic « CA manquant » : commandes dont l'encaissement n'a jamais été saisi (statut Partiel/En attente sans registre)
   'v1477-chrono-tache-bornee.test.js',          // v1477 · session de 8 h affichant 242 h (tâche jamais arrêtée mesurée jusqu'à aujourd'hui) + édition du temps par tâche
   'v1478-seances-par-jour.test.js',             // v1478 · découpage d'une session en séances par trou d'inactivité (4 h), datées du jour de démarrage — une nuit à cheval sur 2 jours reste entière
-  'v1479-facture-vs-encaisse.test.js'           // v1479 · en-tête (facturé) vs graphique (encaissé) : chaque base nommée et l'écart expliqué au lieu d'être laissé à calculer
+  'v1479-facture-vs-encaisse.test.js',          // v1479 · en-tête (facturé) vs graphique (encaissé) : chaque base nommée et l'écart expliqué au lieu d'être laissé à calculer
+  'v1480-calendrier-date-modifiee.test.js'      // v1480 · le calendrier gardait la date initiale : equals() sensible au type ne retrouvait pas l'ancien événement (4 chemins corrigés)
 ];
 
 let allOk = true;
