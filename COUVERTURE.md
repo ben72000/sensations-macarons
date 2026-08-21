@@ -5518,3 +5518,50 @@ disparu » — le symptôme exact de Ben.
 ⚠️ La mutation **plantait** d'abord au lieu de rougir : les bacs à sable ne fournissaient pas
 `where`, devenu inutile dans le code corrigé. Un stub **fidèle** au `equals` réel a été ajouté — une
 suite qui plante ne prouve pas qu'un défaut est détecté.
+
+---
+
+## 2026-08-20 — UNE SEULE DATE DÉCIDE DE TOUT  (v1480 → **v1481**)
+
+**Ben, après la v1480** : « la modification n'a rien apporté. La commande continue d'afficher la
+date d'origine sur le calendrier, peu importe les modifications apportées par la suite. »
+
+### ⚠️ Ma v1480 corrigeait un vrai défaut — mais pas le sien
+J'avais traité la suppression de l'ancien événement (`equals` sensible au type) **sans tracer la
+chaîne jusqu'à la donnée**. Le correctif était juste et reste utile ; il ne touchait simplement pas
+la cause de son symptôme. Leçon : remonter jusqu'à **la valeur affichée** avant de corriger un
+mécanisme, même quand le mécanisme est manifestement fautif.
+
+### 🚨 La vraie cause
+Le formulaire contenait **deux dates** :
+- « **Date** », en haut — celle que Ben modifie → `o.date` ;
+- « **Date de livraison** », dans le bloc 🚚 Livraison **replié par défaut** → `o.dateEvenement`.
+
+Et `syncOrderEvent` pose `o.dateEvenement || o.date` : **la seconde prime**. Renseignée une fois,
+elle fige le calendrier — et modifier la date du haut n'a plus aucun effet, exactement le symptôme
+décrit.
+
+### Tranché par Ben, et implémenté prudemment
+« Une seule date : celle du haut décide de tout. »
+
+`dateEvenement` est **lu à 32 endroits** (plan de production, rétroplanning, validité des devis).
+Les réécrire un par un aurait été risqué pour un gain nul. Le champ est donc **conservé en base**
+mais **alimenté par la date du haut** : un seul champ à saisir, une seule valeur possible. Le champ
+en double a été retiré du formulaire et remplacé par une mention indiquant où saisir la date.
+
+### Le rattrapage
+Les commandes déjà en base gardaient leur ancienne date figée — sans migration, Ben aurait dû
+rouvrir et réenregistrer chacune. `migrerDateUnique` les réaligne au démarrage et **resynchronise
+leur calendrier**. Elle n'écrit **que** `dateEvenement`, jamais l'inverse : écraser `date` avec
+l'ancienne valeur figerait précisément ce qu'on corrige. Elle ignore les commandes déjà cohérentes
+et celles sans date de référence. Idempotente.
+
+### Suite v1481 : 20 assertions (`tests/v1481-date-unique.test.js`)
+La date du haut alimente les deux à l'enregistrement (A) ; le champ en double a disparu du
+formulaire (B) ; **le rattrapage** — sens d'écriture, commandes épargnées, resynchronisation du
+calendrier, idempotence, et **le cas exact de Ben** : une commande figée sur le 01/09 alors que sa
+date est le 15/10 prend bien le 15/10 (C) ; une fois les deux dates alignées, le calendrier affiche
+la bonne (D).
+
+**Sensibilité vérifiée par réintroduction** : remettre la double saisie **et** inverser le sens de
+la migration fait rougir 7 assertions, dont celle qui interdit l'inversion.

@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1480'; // suite : voir tests/v1480-calendrier-date-modifiee.test.js
-const APP_MAJ = 'LE CALENDRIER GARDAIT LA DATE INITIALE D UNE COMMANDE. Ben : « une commande initialement prevue a une date qui s integre au calendrier ne se met pas a jour lorsque la date est modifiee ulterieurement ». CAUSE VERIFIEE DANS LE MOTEUR : `equals(v)` de dexie.min.js est implemente par `x => x[index] === v` — une egalite STRICTE, donc SENSIBLE AU TYPE. Un identifiant enregistre en NOMBRE n est jamais retrouve par une recherche avec une CHAINE, et inversement : l ancien evenement survivait a la mise a jour pendant que le nouveau s ajoutait a cote. D ou l ancienne date qui reste affichee, doublee par la nouvelle. FIX : une purge UNIQUE `purgeEventsCommande(oid)` qui compare sur la VALEUR et non sur le type, et qui nettoie AUSSI les doublons deja crees par ce defaut — sans ce rattrapage, les calendriers deja pollues le resteraient. LE MEME PIEGE SERVAIT SUR TROIS AUTRES CHEMINS, tous corriges : suppression d une commande, conversion en devis (ou l evenement restait alors que la commande disparaissait) et sauvegarde d annulation (sans quoi restaurer une commande la ramenait sans sa date). Les evenements de MARCHE gardent leur `equals` : leurs identifiants sont des chaines des deux cotes, donc sains — une garde trop large aurait condamne du code correct. Suite v1480 : 28 assertions, dont les quatre combinaisons de types et la preservation des evenements voisins ; sensibilite verifiee par reintroduction (8 rouges).';
+const APP_VERSION = 'v1481'; // suite : voir tests/v1481-date-unique.test.js
+const APP_MAJ = 'UNE SEULE DATE DECIDE DE TOUT — LA VRAIE CAUSE DU CALENDRIER FIGE. Ben, apres la v1480 : « la modification n a rien apporte, la commande continue d afficher la date d origine sur le calendrier ». MA CORRECTION PRECEDENTE TRAITAIT UN VRAI DEFAUT, MAIS PAS LE SIEN : j avais corrige la suppression de l ancien evenement sans tracer la chaine jusqu a LA DONNEE. Le formulaire contenait DEUX dates : celle du haut (« Date ») et une « Date de livraison » cachee dans le bloc Livraison, REPLIE PAR DEFAUT. Le calendrier affichait la seconde EN PRIORITE : renseignee une fois, elle figeait tout, et modifier la date du haut n avait plus aucun effet. TRANCHE PAR BEN : une seule date, celle du haut decide. IMPLEMENTATION PRUDENTE : le champ interne est lu a 32 endroits (plan de production, retroplanning, validite des devis) — les reecrire un par un aurait ete risque. Il est donc CONSERVE en base mais ALIMENTE par la date du haut : un seul champ a saisir, une seule valeur possible. Le champ en double a ete retire du formulaire et remplace par une mention indiquant ou saisir la date. RATTRAPAGE DES COMMANDES EXISTANTES : elles gardaient leur ancienne date figee ; une migration les realigne au demarrage et resynchronise leur calendrier. Elle n ecrit QUE dans le champ interne, jamais l inverse — ecraser la date du haut avec l ancienne valeur figerait precisement ce qu on corrige. Idempotente. Suite v1481 : 20 assertions, dont le cas exact de Ben ; sensibilite verifiee par reintroduction (7 rouges, dont l inversion dangereuse de la migration).';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
 const _APP_MAJ_v1448_ARCHIVE_INUTILISEE = 'LE CHAMP « N° LOT DE PRODUCTION » MENTAIT EN MODE DUO. Ben, capture à l\u2019appui : lançant Chocolat passion + Pistache en meringue commune, le champ affichait « 030826RAF » — ni CHP ni PIS, mais RAF (Coco Rafaello, une tout autre recette). CAUSE : la branche duo de saveProd() ne lit JAMAIS ce champ — chaque parfum reçoit son propre lot, calculé indépendamment. Sa valeur affichée venait de prodRefreshLot(), qui lit TOUJOURS la recette unique (f_rec) — or f_rec reste dans la page (juste masquée) en duo, avec la valeur de la DERNIÈRE recette affichée avant le passage en duo. Un champ qui ment ET n\u2019a aucun effet réel est pire qu\u2019un champ absent. Même défaut, plus discret, sur la case « diviser en 2 lots » (v1445/v1446) : cochée, ce champ n\u2019est pas plus lu par le lancement réel. FIX : le champ est désormais masqué dans ces deux cas ; à la place, les VRAIS numéros de lot qui seront utilisés sont prévisualisés — en mode duo dans le récapitulatif de répartition, et pour la division bicolore dans son propre encart — calculés avec EXACTEMENT la même formule que la sauvegarde réelle, jamais un second calcul qui pourrait diverger. Suite v1448 : 12 assertions (tests/v1448-lot-duo-preview.test.js), dont une réconciliation qui rejoue la vraie formule de sauvegarde et vérifie que l\u2019aperçu affiche bien 030826CHP-CO et 030826PIS-CO — jamais RAF.';
@@ -21975,7 +21975,7 @@ async function cmdForm(id, opts){
        <span class="collapse-arrow" id="livArrow">▸</span>
      </button>
      <div class="collapse-body" id="livBody" style="display:none">
-       <div class="field"><label>Date de livraison <span style="color:#9a8a82;font-weight:400">— la date qui pilote la fabrication (à noter toujours)</span></label><input type="date" id="f_dateEvenement" value="${esc(o.dateEvenement||'')}"></div>
+       <p class="note" style="margin:0 0 6px">🗓️ La <b>date de livraison</b> est celle saisie en haut du formulaire — <b>une seule date</b> pilote la fabrication, le calendrier et le rétroplanning. La modifier là-haut met tout à jour.</p>
        <div class="field"><label>Date de l'événement <span style="color:#9a8a82;font-weight:400">— facultatif · jour de la prestation (mariage, réception…), si différent de la livraison</span></label><input type="date" id="f_dateEvtReel" value="${esc(o.dateEvtReel||'')}"></div>
        <div class="field"><label>Heure de livraison <span style="color:#9a8a82;font-weight:400">— aussi accessible en haut du formulaire</span></label><input type="time" id="f_heureBas" value="${esc(o.heureLivraison||'')}" oninput="cmdSyncHeure(this.value,true);cmdFeasibilityRecalc()"></div>
        <div class="field"><label>Adresse / lieu de livraison <span style="color:#9a8a82;font-weight:400">— tapez pour rechercher (clients, lieux habituels)</span></label>
@@ -24415,6 +24415,40 @@ async function purgeEventsCommande(oid){
     return cibles.length;
   }catch(e){ swallow(e,'purgeEventsCommande'); return 0; }
 }
+// [v1481] RATTRAPAGE DES COMMANDES EXISTANTES. Ben a tranché : « une seule date, celle du haut
+// décide de tout ». Le correctif ci-dessus aligne les commandes à l'ENREGISTREMENT — mais celles
+// déjà en base gardent leur ancienne `dateEvenement`, qui prime sur `date` partout (calendrier,
+// rétroplanning, plan de production). Sans ce rattrapage, Ben devrait rouvrir et réenregistrer
+// chaque commande une par une pour que ses dates redeviennent justes.
+//
+// PRUDENCE : on ne touche QUE les commandes où les deux dates DIFFÈRENT, et on écrit `date` dans
+// `dateEvenement` — jamais l'inverse. La date du haut est la référence choisie par Ben ; écraser
+// `date` avec l'ancienne valeur reviendrait à figer précisément ce qu'on corrige.
+// Idempotente : relancée, elle ne trouve plus rien à aligner.
+async function migrerDateUnique(){
+  try{
+    if(localStorage.getItem('sm_dateUniqueMigree') === '1') return 0;
+    const orders = await db.orders.toArray().catch(() => []);
+    let n = 0;
+    for(const o of orders){
+      if(!o) continue;
+      const dev = (o.dateEvenement || '').slice(0, 10);
+      const d   = (o.date || '').slice(0, 10);
+      if(!d) continue;                 // sans date de référence, on ne devine pas
+      if(dev === d) continue;          // déjà cohérent
+      await db.orders.update(o.id, { dateEvenement: o.date });
+      // Le calendrier doit suivre : il lisait l'ancienne valeur.
+      if(typeof syncOrderEvent === 'function') await syncOrderEvent(o.id);
+      n++;
+    }
+    try{ localStorage.setItem('sm_dateUniqueMigree', '1'); }catch(e){ swallow(e, 'migrerDateUnique flag'); }
+    if(n > 0 && typeof toast === 'function'){
+      toast(n + ' commande(s) réalignée(s) sur leur date unique ✓');
+    }
+    return n;
+  }catch(e){ swallow(e, 'migrerDateUnique'); return 0; }
+}
+
 async function syncOrderEvent(oid){
   const o = await db.orders.get(oid).catch(()=>null);
   if(!o) return;
@@ -24512,7 +24546,7 @@ async function saveCmd(id){
   }
   const o={
     clientId:+val('f_cl')||0, date:val('f_date'),
-    heureLivraison: val('f_heure')||'', lieuLivraison: val('f_lieu')||'', dateEvenement: val('f_dateEvenement')||'', dateEvtReel: val('f_dateEvtReel')||'',
+    heureLivraison: val('f_heure')||'', lieuLivraison: val('f_lieu')||'', dateEvenement: (val('f_date')||val('f_dateEvenement')||'')   /* [v1481] UNE SEULE DATE */, dateEvtReel: val('f_dateEvtReel')||'',
     distanceKm: +val('f_distKm')||0, prixCarburant: +val('f_carbu')||0, tempsLivraisonMin: +val('f_tempsLiv')||0,
     fraisLivraison: (function(){ const mt=document.getElementById('f_mt'); return mt&&mt.dataset.fraisLivraison? +mt.dataset.fraisLivraison : 0; })(),
     consoVehicule: val('f_conso')!==''?(+val('f_conso')||0):null,
@@ -74323,6 +74357,7 @@ function startClock(){
     try{ await seedProducts(); }catch(e){ console.error('seedProducts',e); }
     try{ await seedCoffret10(); }catch(e){ console.error('seedCoffret10',e); }
     try{ await alignerCatalogueSurGrille(); }catch(e){ console.error('alignerCatalogueSurGrille',e); }
+    try{ await migrerDateUnique(); }catch(e){ console.error('migrerDateUnique',e); }
     try{ await seedPMS(); }catch(e){ console.error('seedPMS',e); }
     try{ await seedAllergenes(); }catch(e){ console.error('seedAllergenes',e); }
     try{ await seedEmballages(); }catch(e){ console.error('seedEmballages',e); }
