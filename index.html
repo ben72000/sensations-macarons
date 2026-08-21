@@ -919,6 +919,10 @@ input:not([type]), select, textarea{ font-size:16px !important; }
 .cal-head{text-align:center;font-size:.7rem;text-transform:uppercase;color:#9a8a82;font-weight:600;padding:6px}
 .cal-cell{min-height:78px;min-width:0;border:1px solid #f0eae0;border-radius:10px;padding:6px;font-size:.78rem;background:#fff;overflow:hidden}
 .cal-cell.other{background:var(--creme-2);opacity:.5}
+/* [v1483] Journee marquee indisponible : hachures + numero rouge. Volontairement DISCRET
+   (pas de fond plein) pour que les commandes deja posees ce jour-la restent lisibles. */
+.cal-cell.indispo{background:repeating-linear-gradient(45deg,#fdf0ee,#fdf0ee 6px,#f7ddd9 6px,#f7ddd9 12px);border-color:#e8b4ad}
+.cal-cell.indispo .cal-num{color:#b3261e}
 .cal-cell.today{border-color:var(--caramel);border-width:2px}
 .cal-num{font-weight:600;color:var(--bordeaux);font-size:.82rem}
 .cal-ev{display:block;max-width:100%;background:var(--bordeaux);color:var(--creme);border-radius:5px;padding:2px 5px;

@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1482'; // suite : voir tests/v1482-bicolore-lot-unique.test.js
-const APP_MAJ = 'ASSEMBLAGE BLOQUE SUR DES COQUES BICOLORES MIGREES, ET « #[object Object] » A L ECRAN. Ben : « les macarons chocolat passion sont chacun composes d une coque orange et d une coque marron. Lorsque je veux faire un assemblage l app me bloque » avec « Le second lot de coques doit etre different du premier ». DEUX DEFAUTS DANS SA CAPTURE, dont un qu il n avait pas signale. ① Partout ou le nom du parfum devait apparaitre, on lisait « #[object Object] » : la fonction de nommage attend un IDENTIFIANT de recette, les six appels de cet ecran lui passaient l OBJET LOT, et le repli produisait litteralement cette chaine. Elle accepte desormais les deux formes, et nomme aussi les lots sans recette (produit libre). ② LE BLOCAGE : la liste du 2e lot de coques n excluait PAS le lot deja choisi comme premier. Il y figurait, et le selectionner declenchait un refus — incomprehensible, puisque l app venait de le proposer. Il en est desormais exclu. SUR LE FOND : un lot SANS champ couleur porte les DEUX couleurs de sa recette. Les coques migrees de Ben se suffisent donc a elles-memes, et « Aucun » est le bon choix — mais rien ne le disait. L aide distingue maintenant les deux cas : lot portant deja les deux couleurs (laisse « Aucun ») ou lot d une seule couleur (designe le lot complementaire). Les trois gardes de sauvegarde restent en place : elles n etaient pas le defaut. Suite v1482 : 19 assertions, dont la preuve qu un lot migre porte bien les deux couleurs ; sensibilite verifiee par reintroduction (6 rouges).';
+const APP_VERSION = 'v1483'; // suite : voir tests/v1483-indisponibilites.test.js
+const APP_MAJ = 'INDISPONIBILITES AU CALENDRIER. Ben : « je veux pouvoir faire des croix sur le calendrier pour indiquer mon indisponibilite. Ainsi en un coup d oeil je vois si je peux prendre des commandes sur une periode precise ou non ». Un bouton « ✕ Indispo » active un mode ou toucher une journee la barre (et la retoucher la libere) ; un bouton « Periode » marque ou libere plusieurs jours d un coup, bornes incluses, pour des conges ou une semaine de poste chargee. Les journees barrees apparaissent hachurees avec une croix rouge, DISCRETEMENT : les commandes deja posees ce jour-la restent lisibles. Le clic ne bascule QUE dans le mode dedie — un doigt qui glisse ne doit pas marquer une journee par accident. STOCKAGE : la table des evenements avec un type dedie, donc AUCUN changement de schema — et surtout cette table est DEJA sauvegardee : une table neuve aurait du etre ajoutee a la main au perimetre, un oubli facile qui aurait fait perdre les indisponibilites a la premiere restauration. Elles sont exclues des « prochains evenements » du tableau de bord et des pastilles a lire du calendrier : ce sont des journees barrees, pas des echeances. ALERTE A LA PRISE DE COMMANDE, et c est ce qui rend la fonction utile : saisir une commande a une date barree affiche un rappel — NON BLOQUANT, car une indisponibilite est une preference, pas une regle physique, et Ben peut choisir d accepter quand meme. Suite v1483 : 34 assertions, dont les bornes incluses, l idempotence, les bornes inversees et le nettoyage des doublons ; sensibilite verifiee par reintroduction (9 rouges).';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
 const _APP_MAJ_v1448_ARCHIVE_INUTILISEE = 'LE CHAMP « N° LOT DE PRODUCTION » MENTAIT EN MODE DUO. Ben, capture à l\u2019appui : lançant Chocolat passion + Pistache en meringue commune, le champ affichait « 030826RAF » — ni CHP ni PIS, mais RAF (Coco Rafaello, une tout autre recette). CAUSE : la branche duo de saveProd() ne lit JAMAIS ce champ — chaque parfum reçoit son propre lot, calculé indépendamment. Sa valeur affichée venait de prodRefreshLot(), qui lit TOUJOURS la recette unique (f_rec) — or f_rec reste dans la page (juste masquée) en duo, avec la valeur de la DERNIÈRE recette affichée avant le passage en duo. Un champ qui ment ET n\u2019a aucun effet réel est pire qu\u2019un champ absent. Même défaut, plus discret, sur la case « diviser en 2 lots » (v1445/v1446) : cochée, ce champ n\u2019est pas plus lu par le lancement réel. FIX : le champ est désormais masqué dans ces deux cas ; à la place, les VRAIS numéros de lot qui seront utilisés sont prévisualisés — en mode duo dans le récapitulatif de répartition, et pour la division bicolore dans son propre encart — calculés avec EXACTEMENT la même formule que la sauvegarde réelle, jamais un second calcul qui pourrait diverger. Suite v1448 : 12 assertions (tests/v1448-lot-duo-preview.test.js), dont une réconciliation qui rejoue la vraie formule de sauvegarde et vérifie que l\u2019aperçu affiche bien 030826CHP-CO et 030826PIS-CO — jamais RAF.';
@@ -8539,7 +8539,9 @@ async function renderDash(){
   const prodEnRetard = prodOuvertes.filter(prodOpenOverdue);
   const prodSugg = assemblySuggestions(productions, recName);
 
-  const upcoming = events.filter(e=>e.date>=today()).sort((a,b)=>a.date.localeCompare(b.date)).slice(0,4);
+  // [v1483] Les indisponibilites sont des journees barrees au calendrier, pas des evenements a
+  // venir : les lister ici noierait les vraies echeances sous des lignes « Indisponible ».
+  const upcoming = events.filter(e=>e.date>=today() && e.type!=='indispo').sort((a,b)=>a.date.localeCompare(b.date)).slice(0,4);
   // [v1444] Les 6 barres fixes (et leurs 6 appels caDuMois par rendu d'accueil) ont disparu :
   // le graphique glissant charge les encaissements en UN seul passage, puis regroupe côté client
   // à la granularité choisie. Voir caChartRender / _caLignesToutes.
@@ -21951,7 +21953,8 @@ async function cmdForm(id, opts){
      <select id="f_cl" style="margin-top:6px" onchange="cmdSuggestClientAddress()">${clOpts||'<option value="0">— aucun —</option>'}</select>
      <button class="btn ghost sm" style="margin-top:6px" onclick="quickClient(${id||0})">+ Nouveau client</button>
    </div>
-   <div class="field"><label>Date</label><input type="date" id="f_date" value="${o.date||today()}" oninput="cmdFeasibilityRecalc();cmdTarifBandeau()"></div>
+   <div class="field"><label>Date</label><input type="date" id="f_date" value="${o.date||today()}" oninput="cmdFeasibilityRecalc();cmdTarifBandeau();cmdIndispoAlerte()"></div>
+   <div id="cmdIndispoAlerte"></div>
    <div id="f_tarifBandeau"></div>
    <!-- [v1464] Case « ancien tarif » : choix EXPLICITE de Ben, prioritaire sur la date. Sert au cas
         d'une commande prise avant le changement de grille mais livrée après — une date seule ne
@@ -51057,6 +51060,130 @@ async function aiExecute(){
 
 let calSearch='';
 let _calCache=null;
+// [v1483] INDISPONIBILITÉS AU CALENDRIER. Ben : « je veux pouvoir être capable de faire des croix
+// sur le calendrier pour indiquer mon indisponibilité. Ainsi en un coup d'œil je vois si je peux
+// prendre des commandes sur une période précise ou non ».
+//
+// STOCKAGE : on réutilise la table `events` avec `type:'indispo'`. Aucun changement de schéma, et
+// surtout : cette table est DÉJÀ dans le périmètre de sauvegarde (v1473). Une nouvelle table aurait
+// dû y être ajoutée à la main — un oubli facile, et des indisponibilités perdues à la restauration.
+// [v1483] ALERTE À LA PRISE DE COMMANDE. C'est ce qui donne son sens à la fonction : Ben veut voir
+// « si je peux prendre des commandes sur une période précise ». Sans cette alerte, il faudrait qu'il
+// pense à ouvrir le calendrier avant chaque saisie — et l'oubli arrive précisément les jours
+// chargés, ceux où il est justement indisponible.
+//
+// VOLONTAIREMENT NON BLOQUANTE : une indisponibilité est une préférence de Ben, pas une règle
+// physique. Il peut décider d'accepter quand même (un client fidèle, une petite commande). L'app
+// prévient, elle ne décide pas à sa place.
+async function cmdIndispoAlerte(){
+  const zone = document.getElementById('cmdIndispoAlerte');
+  if(!zone) return;
+  const d = (typeof val==='function') ? val('f_date') : '';
+  if(!d){ zone.innerHTML = ''; return; }
+  let off = false;
+  try{ off = await estIndispo(d); }catch(e){ swallow(e,'cmdIndispoAlerte'); return; }
+  zone.innerHTML = off
+    ? '<div class="sum-box" style="border:2px solid #b3261e;background:#fdf0ee;margin:6px 0">'
+      + '<span>✕ <b>Tu es marqué indisponible</b> le ' + esc(fmtDate(d)) + '.<br>'
+      + '<span style="font-size:.78rem;color:#7a6a60">Tu peux quand même enregistrer cette commande — c\'est un rappel, pas un blocage.</span></span></div>'
+    : '';
+}
+
+const INDISPO_TYPE = 'indispo';
+
+// Toutes les dates marquées indisponibles, sous forme d'ensemble (lecture rapide en rendu).
+function indispoSetDepuis(events){
+  const set = new Set();
+  (events||[]).forEach(e=>{ if(e && e.type===INDISPO_TYPE && e.date) set.add(String(e.date).slice(0,10)); });
+  return set;
+}
+// Une date est-elle marquée indisponible ?
+async function estIndispo(ymd){
+  if(!ymd) return false;
+  const evs = await db.events.toArray().catch(()=>[]);
+  return indispoSetDepuis(evs).has(String(ymd).slice(0,10));
+}
+// Bascule UNE journée. Renvoie le nouvel état (true = désormais indisponible).
+async function indispoToggle(ymd){
+  const d = String(ymd||'').slice(0,10);
+  if(!d) return false;
+  const evs = await db.events.toArray().catch(()=>[]);
+  const existants = evs.filter(e=>e && e.type===INDISPO_TYPE && String(e.date).slice(0,10)===d);
+  if(existants.length){
+    // Plusieurs entrées pour un même jour ne devraient pas exister, mais on nettoie tout : une
+    // croix qui ne part pas au premier clic serait pire que pas de croix du tout.
+    for(const e of existants) await db.events.delete(e.id).catch(()=>{});
+    return false;
+  }
+  await db.events.add({ date:d, titre:'Indisponible', type:INDISPO_TYPE }).catch(()=>{});
+  return true;
+}
+// Marque (ou libère) TOUTE une période, bornes incluses. `libere=true` pour effacer.
+// Renvoie le nombre de journées effectivement modifiées.
+async function indispoPeriode(debut, fin, libere){
+  let d1 = String(debut||'').slice(0,10), d2 = String(fin||'').slice(0,10);
+  if(!d1 || !d2) return 0;
+  if(d2 < d1){ const t = d1; d1 = d2; d2 = t; }   // bornes inversées : on remet dans l'ordre
+  const evs = await db.events.toArray().catch(()=>[]);
+  const dejaLa = indispoSetDepuis(evs);
+  let n = 0;
+  const cur = new Date(d1 + 'T12:00:00');         // midi : à l'abri des décalages d'heure d'été
+  const stop = new Date(d2 + 'T12:00:00');
+  const MAX = 400;                                 // garde-fou : pas de boucle infinie sur une saisie aberrante
+  let tours = 0;
+  while(cur <= stop && tours++ < MAX){
+    const ymd = new Date(cur.getTime() - cur.getTimezoneOffset()*60000).toISOString().slice(0,10);
+    if(libere){
+      if(dejaLa.has(ymd)){
+        const cibles = evs.filter(e=>e && e.type===INDISPO_TYPE && String(e.date).slice(0,10)===ymd);
+        for(const e of cibles) await db.events.delete(e.id).catch(()=>{});
+        n++;
+      }
+    }else if(!dejaLa.has(ymd)){
+      await db.events.add({ date:ymd, titre:'Indisponible', type:INDISPO_TYPE }).catch(()=>{});
+      n++;
+    }
+    cur.setDate(cur.getDate()+1);
+  }
+  return n;
+}
+
+// ---- Interface ----------------------------------------------------------------------------
+// Mode « pose de croix » : tant qu'il est actif, toucher un jour le bascule. Hors de ce mode, le
+// calendrier garde exactement son comportement d'avant — on ne veut pas qu'un doigt qui glisse
+// marque une journée indisponible par accident.
+let _calIndispoMode = false;
+function calIndispoModeToggle(){
+  _calIndispoMode = !_calIndispoMode;
+  renderCal();
+  if(_calIndispoMode) toast('Touche les journées à barrer. Retouche pour libérer.');
+}
+async function calIndispoJour(ymd){
+  const on = await indispoToggle(ymd);
+  if(typeof markUnsaved==='function') markUnsaved();
+  await renderCal();
+  toast(on ? '✕ Journée marquée indisponible' : '✓ Journée libérée');
+}
+function calIndispoPeriodeForm(){
+  const auj = (typeof today==='function') ? today() : '';
+  openModal('<h3>✕ Marquer une période</h3>'
+    + '<p class="note">Utile pour des congés, un déplacement, une semaine de poste chargée.</p>'
+    + '<div class="field"><label>Du</label><input type="date" id="ip_debut" value="'+auj+'"></div>'
+    + '<div class="field"><label>Au (inclus)</label><input type="date" id="ip_fin" value="'+auj+'"></div>'
+    + '<div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>'
+    + '<button class="btn ghost" onclick="calIndispoPeriodeGo(true)">Libérer</button>'
+    + '<button class="btn gold" onclick="calIndispoPeriodeGo(false)">Marquer</button></div>');
+}
+async function calIndispoPeriodeGo(libere){
+  const d1 = val('ip_debut'), d2 = val('ip_fin');
+  if(!d1 || !d2){ toast('Renseigne les deux dates'); return; }
+  const n = await indispoPeriode(d1, d2, libere);
+  if(typeof markUnsaved==='function') markUnsaved();
+  closeModal();
+  await renderCal();
+  toast(n ? (libere ? n+' journée(s) libérée(s) ✓' : n+' journée(s) marquée(s) ✕') : 'Aucun changement');
+}
+
 async function renderCal(){
   const events = await db.events.toArray();
   // index de recherche sur TOUS les événements (toutes dates), construit une fois
@@ -51069,12 +51196,18 @@ async function renderCal(){
   const first=new Date(y,m,1),start=(first.getDay()+6)%7;
   const days=new Date(y,m+1,0).getDate();
   const cells=[]; for(let i=0;i<start;i++)cells.push(null); for(let d=1;d<=days;d++)cells.push(d);
-  const evByDay={}; events.forEach(e=>{const d=new Date(e.date);if(d.getMonth()===m&&d.getFullYear()===y){(evByDay[d.getDate()]=evByDay[d.getDate()]||[]).push(e);}});
+  // [v1483] Les indisponibilites ne sont pas des evenements a lire : elles BARRENT la journee.
+  // On les sort de la liste affichee dans les cases, sinon chaque jour barre porterait aussi une
+  // pastille « Indisponible » qui n'apprend rien.
+  const _indispo = indispoSetDepuis(events);
+  const evByDay={}; events.filter(e=>e.type!==INDISPO_TYPE).forEach(e=>{const d=new Date(e.date);if(d.getMonth()===m&&d.getFullYear()===y){(evByDay[d.getDate()]=evByDay[d.getDate()]||[]).push(e);}});
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Calendrier</h1><p>Commandes & événements</p></div>
      <div class="flex"><div class="cal-nav"><button class="btn ghost sm" onclick="calMove(-1)">‹</button>
      <b style="min-width:150px;text-align:center;color:var(--bordeaux);text-transform:capitalize">${calRef.toLocaleDateString('fr-FR',{month:'long',year:'numeric'})}</b>
-     <button class="btn ghost sm" onclick="calMove(1)">›</button></div><button class="btn" onclick="evForm()">+ Événement</button></div></div>
+     <button class="btn ghost sm" onclick="calMove(1)">›</button></div><button class="btn" onclick="evForm()">+ Événement</button>
+     <button class="btn ghost" onclick="calIndispoModeToggle()" style="${_calIndispoMode?'background:#b3261e;color:#fff':''}">${_calIndispoMode?'✓ Terminer':'✕ Indispo'}</button>
+     <button class="btn ghost" onclick="calIndispoPeriodeForm()">📅 Période</button></div></div>
    <div class="panel">
      <input class="search" id="calSearch" style="width:100%;margin-bottom:12px" placeholder="Rechercher un événement ou une commande (toutes dates)…" value="${esc(calSearch)}" oninput="calFilter(this.value)" autocomplete="off" autocapitalize="off" autocorrect="off">
      <div id="calResults" style="display:none;margin-bottom:12px"></div>
@@ -51084,10 +51217,16 @@ async function renderCal(){
          if(d===null)return `<div class="cal-cell other"></div>`;
          const t=new Date();const isToday=t.getDate()===d&&t.getMonth()===m&&t.getFullYear()===y;
          const evs=evByDay[d]||[];
-         return `<div class="cal-cell ${isToday?'today':''}"><div class="cal-num">${d}</div>
+         // [v1483] Journee barree : fond raye + croix, lisible d'un coup d'oeil comme Ben le demande.
+         const _ymd = `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+         const _off = _indispo.has(_ymd);
+         const _clic = _calIndispoMode ? ` onclick="calIndispoJour('${_ymd}')" style="cursor:pointer"` : '';
+         return `<div class="cal-cell ${isToday?'today':''}${_off?' indispo':''}"${_clic}>
+          <div class="cal-num">${d}${_off?' <span style="color:#b3261e;font-weight:800">✕</span>':''}</div>
           ${evs.map(e=>`<div class="cal-ev ${e.type==='cmd'?'cmd':''}" onclick="evView(${e.id})" title="${esc(e.titre)}">${esc(e.titre)}</div>`).join('')}</div>`;
        }).join('')}</div>
-       <p class="note">Touchez un événement pour voir son détail. Les commandes apparaissent en caramel.</p>
+       <p class="note">Touchez un événement pour voir son détail. Les commandes apparaissent en caramel.
+       ${_calIndispoMode?'<br><b style="color:#b3261e">Mode indisponibilité actif</b> — touchez une journée pour la barrer, retouchez pour la libérer.':'<br>Les journées <b style="color:#b3261e">✕ barrées</b> sont vos indisponibilités : aucune commande à y prendre.'}</p>
      </div>
    </div>`;
   calFilter(calSearch);

@@ -5610,3 +5610,48 @@ les deux cas et l'option « Aucun » reste proposée (E).
 fonction `async` voisine (bac à sable impossible à construire) → bornage exact ; et la mutation
 **plantait** au lieu de rougir quand le helper disparaissait → la section dégrade désormais vers le
 comportement d'avant le correctif, pour rester **mesurable**.
+
+---
+
+## 2026-08-21 — INDISPONIBILITÉS AU CALENDRIER  (v1482 → **v1483**)
+
+**Demandé par Ben** : « je veux pouvoir être capable de faire des croix sur le calendrier pour
+indiquer mon indisponibilité. Ainsi en un coup d'œil je vois si je peux prendre des commandes sur
+une période précise ou non. »
+
+### Ce qui a été fait
+- **Bouton « ✕ Indispo »** : active un mode où toucher une journée la barre, retoucher la libère.
+  Le clic **n'est posé que dans ce mode** — un doigt qui glisse ne doit pas marquer une journée par
+  accident.
+- **Bouton « 📅 Période »** : marque ou libère plusieurs jours d'un coup, **bornes incluses**, pour
+  des congés ou une semaine de poste chargée. Bornes inversées acceptées et remises dans l'ordre.
+- **Rendu** : hachures + croix rouge, volontairement **discrets** (pas de fond plein) pour que les
+  commandes déjà posées ce jour-là restent lisibles.
+
+### Le choix de stockage, et pourquoi il compte
+Table `events` avec `type:'indispo'` : aucun changement de schéma, et surtout **cette table est déjà
+dans le périmètre de sauvegarde** (v1473). Une table neuve aurait dû y être ajoutée à la main — un
+oubli facile, et des indisponibilités perdues à la première restauration. Le raisonnement de la
+v1473 sert directement ici.
+
+Contrepartie traitée : les indisponibilités sont **exclues** des « prochains événements » du tableau
+de bord et des pastilles à lire du calendrier. Ce sont des journées barrées, pas des échéances —
+sans ce filtre, elles noieraient les vraies.
+
+### L'alerte qui rend la fonction utile
+Saisir une commande à une date barrée affiche un rappel dans le formulaire. **Non bloquant** : une
+indisponibilité est une préférence de Ben, pas une règle physique — il peut accepter quand même
+(client fidèle, petite commande). L'app prévient, elle ne décide pas à sa place.
+
+Sans cette alerte, il faudrait penser à ouvrir le calendrier avant chaque saisie — et l'oubli arrive
+précisément les jours chargés, ceux où il est justement indisponible.
+
+### Suite v1483 : 34 assertions (`tests/v1483-indisponibilites.test.js`)
+Poser/retirer une croix, date vide sans effet (A) ; **doublons** — une croix part toujours au
+premier clic (B) ; période bornes incluses, **idempotence**, bornes inversées, libération partielle
+avec réconciliation (C) ; un mois entier, garde-fou de boucle, dates construites à midi pour être à
+l'abri de l'heure d'été (D) ; ce que les indispos ne polluent pas (E) ; le clic réservé au mode
+dédié (F) ; l'alerte non bloquante et son câblage (G) ; **la table est bien sauvegardée** (H).
+
+**Sensibilité vérifiée par réintroduction de trois défauts plausibles** (borne de fin exclue,
+suppression d'un seul doublon, tableau de bord non filtré) : **9 assertions rougissent**.
