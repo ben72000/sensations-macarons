@@ -5565,3 +5565,48 @@ la bonne (D).
 
 **Sensibilité vérifiée par réintroduction** : remettre la double saisie **et** inverser le sens de
 la migration fait rougir 7 assertions, dont celle qui interdit l'inversion.
+
+---
+
+## 2026-08-21 — ASSEMBLAGE BLOQUÉ SUR COQUES BICOLORES MIGRÉES  (v1481 → **v1482**)
+
+**Ben, capture à l'appui** : « les macarons chocolat passion sont chacun composés d'une coque orange
+et d'une coque marron. Lorsque je veux faire un assemblage l'app me bloque » → *« Le second lot de
+coques doit être différent du premier. »*
+
+### 🚨 Deux défauts dans la capture, dont un non signalé
+**① `#[object Object]`** s'affichait partout où le nom du parfum devait apparaître. `_prodRecName`
+attend un **identifiant** de recette ; les **six** appels de cet écran lui passaient l'**objet lot**,
+et le repli `'#'+rid` produisait littéralement cette chaîne. Le helper accepte désormais les deux
+formes — plus sûr que corriger six appels et risquer d'en oublier un — et nomme aussi les lots sans
+recette (produit libre).
+
+**② Le blocage** : la liste du 2ᵉ lot de coques n'excluait **pas** le lot déjà choisi comme premier.
+Il y figurait, et le sélectionner déclenchait le refus — incompréhensible, puisque l'app venait de
+le proposer.
+
+### Sur le fond : le lot de Ben se suffit à lui-même
+`coqueColorProfile` est explicite : un lot **sans** champ `couleur` porte les **deux** couleurs de sa
+recette. Les coques migrées de Ben n'ont donc besoin d'**aucun** second lot — « Aucun » est le bon
+choix. Rien à l'écran ne le disait : l'aide affirmait qu'un macaron bicolore nécessite un lot
+complémentaire, ce qui n'est vrai que si les coques sont **séparées par couleur**.
+
+L'aide distingue maintenant les deux cas, en s'appuyant sur la donnée elle-même (`!p.couleur`).
+
+### Ce qui n'a PAS été touché
+Les trois gardes de `prodAssembleSave` (même lot, lot introuvable, lot qui n'est pas des coques)
+restent en place : elles sont correctes, elles n'étaient pas le défaut. Le problème était que
+l'écran **proposait** une option que la sauvegarde refuse ensuite.
+
+### Suite v1482 : 19 assertions (`tests/v1482-bicolore-lot-unique.test.js`)
+Un lot migré porte bien les deux couleurs, un lot marqué n'en porte qu'une (A) ; le nom accepte
+objet **et** identifiant, plus jamais « [object Object] », produit libre nommé (B) ; le lot courant
+est exclu de la liste (C) ; les trois gardes de sauvegarde tiennent toujours (D) ; l'aide distingue
+les deux cas et l'option « Aucun » reste proposée (E).
+
+**Sensibilité vérifiée par réintroduction** : 6 assertions rougissent.
+
+⚠️ Deux ajustements d'outillage en cours de route : une extraction à tranche fixe débordait sur une
+fonction `async` voisine (bac à sable impossible à construire) → bornage exact ; et la mutation
+**plantait** au lieu de rougir quand le helper disparaissait → la section dégrade désormais vers le
+comportement d'avant le correctif, pour rester **mesurable**.

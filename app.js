@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1481'; // suite : voir tests/v1481-date-unique.test.js
-const APP_MAJ = 'UNE SEULE DATE DECIDE DE TOUT — LA VRAIE CAUSE DU CALENDRIER FIGE. Ben, apres la v1480 : « la modification n a rien apporte, la commande continue d afficher la date d origine sur le calendrier ». MA CORRECTION PRECEDENTE TRAITAIT UN VRAI DEFAUT, MAIS PAS LE SIEN : j avais corrige la suppression de l ancien evenement sans tracer la chaine jusqu a LA DONNEE. Le formulaire contenait DEUX dates : celle du haut (« Date ») et une « Date de livraison » cachee dans le bloc Livraison, REPLIE PAR DEFAUT. Le calendrier affichait la seconde EN PRIORITE : renseignee une fois, elle figeait tout, et modifier la date du haut n avait plus aucun effet. TRANCHE PAR BEN : une seule date, celle du haut decide. IMPLEMENTATION PRUDENTE : le champ interne est lu a 32 endroits (plan de production, retroplanning, validite des devis) — les reecrire un par un aurait ete risque. Il est donc CONSERVE en base mais ALIMENTE par la date du haut : un seul champ a saisir, une seule valeur possible. Le champ en double a ete retire du formulaire et remplace par une mention indiquant ou saisir la date. RATTRAPAGE DES COMMANDES EXISTANTES : elles gardaient leur ancienne date figee ; une migration les realigne au demarrage et resynchronise leur calendrier. Elle n ecrit QUE dans le champ interne, jamais l inverse — ecraser la date du haut avec l ancienne valeur figerait precisement ce qu on corrige. Idempotente. Suite v1481 : 20 assertions, dont le cas exact de Ben ; sensibilite verifiee par reintroduction (7 rouges, dont l inversion dangereuse de la migration).';
+const APP_VERSION = 'v1482'; // suite : voir tests/v1482-bicolore-lot-unique.test.js
+const APP_MAJ = 'ASSEMBLAGE BLOQUE SUR DES COQUES BICOLORES MIGREES, ET « #[object Object] » A L ECRAN. Ben : « les macarons chocolat passion sont chacun composes d une coque orange et d une coque marron. Lorsque je veux faire un assemblage l app me bloque » avec « Le second lot de coques doit etre different du premier ». DEUX DEFAUTS DANS SA CAPTURE, dont un qu il n avait pas signale. ① Partout ou le nom du parfum devait apparaitre, on lisait « #[object Object] » : la fonction de nommage attend un IDENTIFIANT de recette, les six appels de cet ecran lui passaient l OBJET LOT, et le repli produisait litteralement cette chaine. Elle accepte desormais les deux formes, et nomme aussi les lots sans recette (produit libre). ② LE BLOCAGE : la liste du 2e lot de coques n excluait PAS le lot deja choisi comme premier. Il y figurait, et le selectionner declenchait un refus — incomprehensible, puisque l app venait de le proposer. Il en est desormais exclu. SUR LE FOND : un lot SANS champ couleur porte les DEUX couleurs de sa recette. Les coques migrees de Ben se suffisent donc a elles-memes, et « Aucun » est le bon choix — mais rien ne le disait. L aide distingue maintenant les deux cas : lot portant deja les deux couleurs (laisse « Aucun ») ou lot d une seule couleur (designe le lot complementaire). Les trois gardes de sauvegarde restent en place : elles n etaient pas le defaut. Suite v1482 : 19 assertions, dont la preuve qu un lot migre porte bien les deux couleurs ; sensibilite verifiee par reintroduction (6 rouges).';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
 const _APP_MAJ_v1448_ARCHIVE_INUTILISEE = 'LE CHAMP « N° LOT DE PRODUCTION » MENTAIT EN MODE DUO. Ben, capture à l\u2019appui : lançant Chocolat passion + Pistache en meringue commune, le champ affichait « 030826RAF » — ni CHP ni PIS, mais RAF (Coco Rafaello, une tout autre recette). CAUSE : la branche duo de saveProd() ne lit JAMAIS ce champ — chaque parfum reçoit son propre lot, calculé indépendamment. Sa valeur affichée venait de prodRefreshLot(), qui lit TOUJOURS la recette unique (f_rec) — or f_rec reste dans la page (juste masquée) en duo, avec la valeur de la DERNIÈRE recette affichée avant le passage en duo. Un champ qui ment ET n\u2019a aucun effet réel est pire qu\u2019un champ absent. Même défaut, plus discret, sur la case « diviser en 2 lots » (v1445/v1446) : cochée, ce champ n\u2019est pas plus lu par le lancement réel. FIX : le champ est désormais masqué dans ces deux cas ; à la place, les VRAIS numéros de lot qui seront utilisés sont prévisualisés — en mode duo dans le récapitulatif de répartition, et pour la division bicolore dans son propre encart — calculés avec EXACTEMENT la même formule que la sauvegarde réelle, jamais un second calcul qui pourrait diverger. Suite v1448 : 12 assertions (tests/v1448-lot-duo-preview.test.js), dont une réconciliation qui rejoue la vraie formule de sauvegarde et vérifie que l\u2019aperçu affiche bien 030826CHP-CO et 030826PIS-CO — jamais RAF.';
@@ -15127,7 +15127,18 @@ async function prodAssembleForm(id, opts){
   const p=await db.productions.get(id); if(!p){ toast('Sous-lot introuvable'); return; }
   const comp=prodComposant(p);
   if(comp!=='coques' && comp!=='ganache'){ toast('L\'assemblage part d\'un sous-lot coques ou ganache.'); return; }
-  const recName = (window._prodRecName)||((rid)=>'#'+rid);
+  // [v1482] `_prodRecName` attend un IDENTIFIANT de recette. Les six appels de cet ecran lui
+  // passaient l'OBJET LOT : le repli produisait litteralement « #[object Object] » a l'ecran,
+  // visible sur la capture de Ben. On accepte donc les deux formes plutot que de corriger six
+  // appels et risquer d'en oublier un — et on nomme les lots sans recette (produit libre).
+  const _recNameBrut = (window._prodRecName)||((rid)=>'#'+rid);
+  const recName = x => {
+    if(x && typeof x === 'object'){
+      if(x.produitLibre) return x.produitLibre;
+      return (x.recipeId!=null) ? _recNameBrut(x.recipeId) : '(sans nom)';
+    }
+    return _recNameBrut(x);
+  };
   const all=await db.productions.toArray();
   // Recette + composants supplémentaires requis (ex : chantache sur un GF).
   const _rec = await db.recipes.get(p.recipeId).catch(()=>null);
@@ -15250,15 +15261,27 @@ async function prodAssembleForm(id, opts){
     const _lots2 = _bicolore
       ? coquesPourCouleur(_lotsCoques, _coul2, _recById, _profilCible)
       : _lotsCoques;
-    const _opts2 = _lots2.map(c=>{
+    // [v1482] LE LOT DEJA CHOISI COMME PREMIER EST EXCLU de cette liste. Il y figurait, et le
+    // selectionner declenchait « Le second lot de coques doit etre different du premier » — un
+    // refus incomprehensible puisque l'app venait de le proposer. C'est le blocage rencontre par
+    // Ben avec ses coques migrees, qui portent DEJA les deux couleurs et n'ont donc besoin
+    // d'aucun second lot : l'option « Aucun » est la bonne pour lui.
+    const _opts2 = _lots2.filter(c=>+c.id !== +p.id).map(c=>{
       const capMac = Math.floor(round3(+c.qteRestante)/1);   // 1 coque/macaron quand 2 lots
       return `<option value="${c.id}">${esc(recName(c))} — ${esc(c.lotProduction||('#'+c.id))} · ${qty(c.qteRestante)} coques (≈ ${capMac} mac.)</option>`;
     }).join('');
     const _labelCoul = _bicolore
       ? `${coqueCouleurPastille(_coul2)}${esc(coqueCouleurLabel(_coul2))}`
       : 'autre couleur';
-    const _aide = _bicolore
-      ? `<b>${esc(recName(p))}</b> est un macaron <b>bicolore</b> (${_coulCible.map(k=>coqueCouleurPastille(k)+esc(coqueCouleurLabel(k))).join(' + ')}). Si ton lot de coques ne contient qu'<b>une</b> couleur, désigne ici le lot qui fournit l'autre. Chaque macaron prendra alors <b>1 coque de chaque lot</b>.`
+    // [v1482] Un lot SANS champ `couleur` porte les DEUX couleurs de sa recette (cf.
+    // coqueColorProfile) : c'est le cas des coques migrees de Ben, ou d'un batch produit d'un
+    // seul tenant. Il se suffit a lui-meme — le dire, au lieu de laisser croire qu'un second lot
+    // est obligatoire pour tout macaron bicolore.
+    const _lotDejaBicolore = _bicolore && !p.couleur;
+    const _aide = _lotDejaBicolore
+      ? `<b>${esc(recName(p))}</b> est un macaron <b>bicolore</b> (${_coulCible.map(k=>coqueCouleurPastille(k)+esc(coqueCouleurLabel(k))).join(' + ')}). Ce lot contient <b>déjà les deux couleurs</b> : laisse « Aucun » et chaque macaron prendra ses 2 coques dedans. Un second lot ne sert que si tes coques sont séparées par couleur.`
+      : _bicolore
+      ? `<b>${esc(recName(p))}</b> est un macaron <b>bicolore</b> (${_coulCible.map(k=>coqueCouleurPastille(k)+esc(coqueCouleurLabel(k))).join(' + ')}). Ce lot ne contient qu'<b>une</b> couleur : désigne ici le lot qui fournit l'autre. Chaque macaron prendra alors <b>1 coque de chaque lot</b>.`
       : `Facultatif — pour un mélange de couleurs (dégustation). Chaque macaron prendra <b>1 coque de chaque lot</b> au lieu de 2 du même.`;
     coques2Html = _lots2.length ? `
       <div class="field" style="margin-top:6px;${_bicolore?'border:2px solid #e5d8c8;border-radius:12px;padding:10px;background:#fdfaf6':''}">
