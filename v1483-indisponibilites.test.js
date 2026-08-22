@@ -129,6 +129,19 @@ async function testGarde(){
   check('H. la table « events » est dans le périmètre de sauvegarde', tables.includes('events'));
 }
 
+// ---- I. [v1484 — revue] LE CLIC NE DOIT PAS FAIRE DEUX CHOSES À LA FOIS ----
+// Trouvé en relisant mon propre code : en mode indisponibilité, le clic est posé sur la CASE
+// ENTIÈRE. Toucher une commande affichée dans cette case déclenchait donc les DEUX actions —
+// ouvrir la commande ET barrer la journée. Un jour se serait barré sans que Ben l'ait voulu.
+{
+  const srcCal = extractFunction('renderCal');
+  check('I. un clic sur un événement ne remonte plus à la case',
+    /onclick="event\.stopPropagation\(\);evView\(/.test(srcCal));
+  // La case garde bien son propre clic en mode indispo : les deux doivent coexister.
+  check('I. …et la case conserve son clic de bascule',
+    /_calIndispoMode \? ` onclick="calIndispoJour/.test(srcCal));
+}
+
 (async()=>{
   await testToggle();
   await testDoublons();
@@ -137,3 +150,4 @@ async function testGarde(){
   console.log(`\n${pass} passed, ${fail} failed`);
   if(fail){ failures.forEach(f => console.log('  ✗ ' + f)); process.exitCode = 1; }
 })().catch(e=>{ console.error('ERREUR SUITE', e); process.exitCode = 1; });
+

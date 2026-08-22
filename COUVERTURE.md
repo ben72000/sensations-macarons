@@ -5655,3 +5655,40 @@ dédié (F) ; l'alerte non bloquante et son câblage (G) ; **la table est bien s
 
 **Sensibilité vérifiée par réintroduction de trois défauts plausibles** (borne de fin exclue,
 suppression d'un seul doublon, tableau de bord non filtré) : **9 assertions rougissent**.
+
+---
+
+## 2026-08-22 — REVUE APPROFONDIE DE LA v1483  (v1483 → **v1484**)
+
+Revue demandée après livraison. Cible : **mon propre code récent**, là où le risque se concentre —
+les 134 suites manquantes ne le couvrent pas.
+
+### 🚨 ① Le clic faisait deux choses à la fois
+En mode indisponibilité, le clic de bascule était posé sur la **case entière**. Toucher une commande
+affichée dans cette case déclenchait donc **les deux** actions : ouvrir la commande **et** barrer la
+journée. Un jour se serait barré sans que Ben l'ait voulu — exactement le genre de défaut qui fait
+perdre confiance dans un calendrier. La propagation est stoppée sur les événements ; la case garde
+son propre clic, les deux coexistent (assertions I).
+
+### 🚨 ② Une accolade orpheline dans la feuille de style — antérieure à ce travail
+Le contrôle d'équilibre des accolades a signalé un déséquilibre. **Premier réflexe : vérifier si je
+l'avais introduit.** Test sur la v1479 : il était **déjà là**. Puis écarter les commentaires CSS
+comme cause : non, déséquilibre réel. Localisé ligne **1473** — une fermante qui referme une
+`@media` déjà close.
+
+Le deuxième bloc `<style>` était donc déséquilibré, ce qui peut faire **perdre silencieusement** les
+règles suivantes selon l'interprétation du navigateur. Retirée ; les deux blocs sont rééquilibrés et
+la présence des règles suivantes (module Préparation / Picking) est vérifiée.
+
+### Contrôles menés, tous verts
+- Les **20 fonctions** livrées ces dernières versions sont toutes définies
+- Ordre de déclaration du code calendrier correct (rien n'est utilisé avant d'exister)
+- Aucune écriture d'événement sans `type` — les deux signalements étaient des **faux positifs**
+  (regex tronquée sur un gabarit `${…}`), vérifiés ligne à ligne avant de conclure
+- Aucune régression du correctif v1480 : le seul `equals(refId)` restant est celui des marchés,
+  légitime
+
+### Méthode
+Deux signalements sur quatre étaient des faux positifs de mes propres détecteurs. **Chacun a été
+vérifié dans le code avant d'être retenu ou écarté** — la règle du projet depuis les 12 fausses
+alertes de portée transactionnelle.
