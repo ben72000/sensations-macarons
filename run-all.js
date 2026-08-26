@@ -184,7 +184,8 @@ const SUITES = [
   'v1480-calendrier-date-modifiee.test.js',     // v1480 · le calendrier gardait la date initiale : equals() sensible au type ne retrouvait pas l'ancien événement (4 chemins corrigés)
   'v1481-date-unique.test.js',                  // v1481 · LA vraie cause : deux dates dans le formulaire, celle du bloc Livraison replié primait — une seule date décide désormais, + migration
   'v1482-bicolore-lot-unique.test.js',          // v1482 · assemblage bloqué sur coques bicolores migrées (le lot courant était proposé comme 2e lot) + nom affiché « #[object Object] »
-  'v1483-indisponibilites.test.js'              // v1483 · croix d'indisponibilité au calendrier (jour + période) et alerte non bloquante à la prise de commande
+  'v1483-indisponibilites.test.js',             // v1483 · croix d'indisponibilité au calendrier (jour + période) et alerte non bloquante à la prise de commande
+  'v1485-tarif-pyramide-et-modele.test.js'      // v1485 · le tarif événement avec pyramide suit la grille (1,60 € / 1,90 €) + modèle 15 étages 285 macarons et sa migration
 ];
 
 let allOk = true;

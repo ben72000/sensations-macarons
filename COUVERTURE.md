@@ -5692,3 +5692,55 @@ la présence des règles suivantes (module Préparation / Picking) est vérifié
 Deux signalements sur quatre étaient des faux positifs de mes propres détecteurs. **Chacun a été
 vérifié dans le code avant d'être retenu ou écarté** — la règle du projet depuis les 12 fausses
 alertes de portée transactionnelle.
+
+---
+
+## 2026-08-23 — TARIF PYRAMIDE SUIVANT LA GRILLE + 4 NOUVELLES PYRAMIDES  (v1484 → **v1485**)
+
+### 🚨 Le tarif bloqué
+**Ben** : « le tarif de 1,90 € par macaron ne passe pas dans mes nouveaux tarifs. Ça reste bloqué à
+l'ancien. »
+
+`eventUnitPrice` renvoyait `PYRA_PRICE` — une constante **figée à 1,60 €** — dès qu'une pyramide
+était présente sur la ligne. Ce chemin **court-circuitait toute la grille** : c'était le **dernier
+prix en dur** de la chaîne tarifaire, même famille que les libellés figés à 0,25 € corrigés en
+v1469.
+
+**Règle tranchée par Ben** (question posée avant de coder, parce qu'il s'agit d'argent) : 1,60 € avec
+la case « anciens tarifs » cochée, 1,90 € sans.
+
+**L'historique est préservé au centime** : la grille historique porte `event:1.60`, exactement la
+valeur de la constante. Supprimer le cas particulier ne change donc **aucune facture passée** —
+vérifié par assertion, pas supposé.
+
+### L'écran aligné, et un piège trouvé en chemin
+Les **cinq** sites d'affichage ont été alignés. Dans l'optimiseur de pyramides, le prix unitaire
+affiché suivait déjà la grille pendant que **la multiplication utilisait encore la constante** : la
+ligne aurait annoncé « 100 × 1,90 € = 160,00 € ». Exactement le motif « calcul juste, écran faux »
+qui a mordu cinq fois sur ce projet — trouvé cette fois **avant** livraison, en relisant le rendu.
+
+### Les 4 nouvelles pyramides
+**Ben** : « 2 noires et 2 blanches […] 15 étages, du sommet à la base : 5 + 7 + 9 + … + 33 = 285. »
+Somme **vérifiée** : 285 ✓.
+
+**Un seul modèle pour les quatre** : la couleur ne change ni la capacité ni les paliers. En faire
+deux entrées doublerait les candidats de l'optimiseur sans rien apprendre — Ben choisit la couleur
+au montage, pas au devis.
+
+Les modèles vivant dans le stockage local, ajouter la valeur par défaut **ne suffisait pas** pour
+Ben, qui a déjà des modèles enregistrés. `pyraMigrer285` l'ajoute à sa liste : n'ajoute que si le
+modèle est absent (comparaison sur les **plateaux**, pas sur le nom), préserve tous les autres,
+ne réécrit le stockage qu'en cas de changement réel. Idempotente.
+
+L'optimiseur en déduit ses **15 paliers** (1 étage = 5 macarons … 15 étages = 285), donc le calcul
+automatique du nombre de macarons par étage fonctionne sur devis, factures et commandes.
+
+### Suite v1485 : 33 assertions (`tests/v1485-tarif-pyramide-et-modele.test.js`)
+Le prix suit la case, avec et sans pyramide (A) ; **non-régression** — les deux grilles portent bien
+1,60 / 1,90 (B) ; plus aucun prix figé affiché **ni multiplié**, et la multiplication de l'optimiseur
+utilise la même valeur que le prix affiché (C) ; le modèle — 15 étages, somme 285, suite exacte,
+sécable, un seul modèle pour 4 présentoirs (D) ; la migration — ajout, préservation, idempotence,
+doublon sous un autre nom, stockage corrompu (E) ; l'optimiseur déduit les 15 paliers, cumuls
+strictement croissants (F).
+
+**Sensibilité vérifiée par réintroduction de trois défauts** : 10 assertions rougissent.

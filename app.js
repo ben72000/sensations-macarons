@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1484'; // suite : voir tests/v1483-indisponibilites.test.js (section I)
-const APP_MAJ = 'REVUE APPROFONDIE DE LA v1483 : DEUX DEFAUTS REELS TROUVES ET CORRIGES. ① EN MODE INDISPONIBILITE, LE CLIC FAISAIT DEUX CHOSES A LA FOIS. Le clic de bascule etait pose sur la CASE ENTIERE : toucher une commande affichee dans cette case ouvrait la commande ET barrait la journee. Un jour se serait donc barre sans que Ben l ait voulu — exactement le genre de defaut qui fait perdre confiance dans un calendrier. La propagation est desormais stoppee sur les evenements ; la case garde son propre clic, les deux coexistent. ② UNE ACCOLADE FERMANTE ORPHELINE DANS LA FEUILLE DE STYLE (l.1473), ANTERIEURE A MON TRAVAIL — verifiee presente des la v1479. Elle fermait une seconde fois une media query deja close. Le deuxieme bloc de style etait donc desequilibre, ce qui peut faire perdre silencieusement les regles qui suivent selon l interpretation du navigateur. Retiree : les deux blocs de style sont maintenant equilibres, et les regles suivantes (module Preparation / Picking) sont verifiees presentes. AUTRES CONTROLES DE LA REVUE, TOUS VERTS : les 20 fonctions livrees ces dernieres versions sont bien definies ; l ordre de declaration du code calendrier est correct ; aucune ecriture d evenement sans type ; aucune regression du correctif v1480 sur les identifiants. Suite v1483 portee a 36 assertions (section I) ; sensibilite du nouveau defaut verifiee par reintroduction.';
+const APP_VERSION = 'v1485'; // suite : voir tests/v1485-tarif-pyramide-et-modele.test.js
+const APP_MAJ = 'LE TARIF EVENEMENT AVEC PYRAMIDE SUIT ENFIN LA GRILLE, ET LES 4 NOUVELLES PYRAMIDES SONT INTEGREES. Ben : « le tarif de 1,90 € par macaron ne passe pas dans mes nouveaux tarifs, ca reste bloque a l ancien », puis en tranchant : « en cliquant sur ancien tarif je veux 1,60 € dans le cadre d un evenement avec pyramide, et 1,90 € si la case n est pas cochee ». CAUSE : des qu une pyramide etait presente, le prix etait force a une constante FIGEE a 1,60 € qui court-circuitait toute la grille — le dernier prix en dur de la chaine tarifaire, meme famille que les libelles figes corriges en v1469. L HISTORIQUE EST PRESERVE AU CENTIME : la grille historique porte exactement 1,60 €, donc supprimer ce cas particulier ne change AUCUNE facture passee — verifie, pas suppose. L ECRAN A ETE ALIGNE AUSSI, sur les cinq endroits concernes : un piege a ete trouve en chemin dans l optimiseur, ou le prix unitaire affiche suivait deja la grille pendant que la multiplication utilisait encore la constante — la ligne aurait annonce « 100 × 1,90 € = 160,00 € ». NOUVEAU MODELE DE PYRAMIDE : les 4 presentoirs de Ben (2 noirs, 2 blancs), 15 etages du sommet a la base 5+7+9+…+33, somme verifiee a 285 macarons. UN SEUL modele pour les quatre : la couleur ne change ni la capacite ni les paliers, en faire deux entrees doublerait les candidats de l optimiseur sans rien apprendre. Comme les modeles vivent dans le stockage local, une migration prudente l ajoute a la liste existante de Ben : elle n ajoute que s il est absent, preserve tous les autres modeles et est idempotente. L optimiseur en deduit ses 15 paliers, donc le calcul automatique du nombre de macarons par etage fonctionne sur devis, factures et commandes. Suite v1485 : 33 assertions ; sensibilite verifiee par reintroduction de trois defauts (10 rouges).';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
 const _APP_MAJ_v1448_ARCHIVE_INUTILISEE = 'LE CHAMP « N° LOT DE PRODUCTION » MENTAIT EN MODE DUO. Ben, capture à l\u2019appui : lançant Chocolat passion + Pistache en meringue commune, le champ affichait « 030826RAF » — ni CHP ni PIS, mais RAF (Coco Rafaello, une tout autre recette). CAUSE : la branche duo de saveProd() ne lit JAMAIS ce champ — chaque parfum reçoit son propre lot, calculé indépendamment. Sa valeur affichée venait de prodRefreshLot(), qui lit TOUJOURS la recette unique (f_rec) — or f_rec reste dans la page (juste masquée) en duo, avec la valeur de la DERNIÈRE recette affichée avant le passage en duo. Un champ qui ment ET n\u2019a aucun effet réel est pire qu\u2019un champ absent. Même défaut, plus discret, sur la case « diviser en 2 lots » (v1445/v1446) : cochée, ce champ n\u2019est pas plus lu par le lancement réel. FIX : le champ est désormais masqué dans ces deux cas ; à la place, les VRAIS numéros de lot qui seront utilisés sont prévisualisés — en mode duo dans le récapitulatif de répartition, et pour la division bicolore dans son propre encart — calculés avec EXACTEMENT la même formule que la sauvegarde réelle, jamais un second calcul qui pourrait diverger. Suite v1448 : 12 assertions (tests/v1448-lot-duo-preview.test.js), dont une réconciliation qui rejoue la vraie formule de sauvegarde et vérifie que l\u2019aperçu affiche bien 030826CHP-CO et 030826PIS-CO — jamais RAF.';
@@ -4823,13 +4823,33 @@ const EVENT_PRICE = 1.60;       // prix par macaron
 const EVENT_MIN = 35;           // quantité minimale
 const EQUIP_PRICE = 20;         // location présentoir / pyramide (par unité)
 const EVENT_MIN_EQUIP = 1;      // au moins 1 pyramide obligatoire
-const PYRA_PRICE = 1.60;        // prix au macaron en mode événement-pyramide
+// [v1485] Ancien prix figé du macaron en mode pyramide. CONSERVÉ comme repli seulement : le prix
+// réel vient désormais de la grille (1,60 € avec « anciens tarifs », 1,90 € sinon).
+const PYRA_PRICE = 1.60;
+// Prix pyramide EN VIGUEUR, pour les écrans de planification qui n'ont pas de ligne sous la main.
+function pyraPrixCourant(){
+  try{ const g = grilleCourante(); return (g && g.event!=null) ? +g.event : PYRA_PRICE; }
+  catch(e){ return PYRA_PRICE; }
+}
 // Prix unitaire du macaron en événement, SELON LA GRILLE de la ligne (v1463).
 // La règle « pyramide présente → tarif pyramide » est conservée telle quelle : elle décrit le
 // mode de prestation, pas la grille tarifaire. Seul le tarif événement standard suit la grille.
 function eventUnitPrice(ln){
-  if((+(ln&&ln.equip)||0)>0) return PYRA_PRICE;
+  // [v1485] Ben : « le tarif de 1,90 € par macaron ne passe pas dans mes nouveaux tarifs, ça reste
+  // bloqué à l'ancien », puis : « en cliquant sur ancien tarif je veux 1,60 € dans le cadre d'un
+  // événement avec pyramide, et 1,90 € si la case n'est pas cochée ».
+  // CAUSE : dès qu'une pyramide était présente, le prix était force a PYRA_PRICE — une constante
+  // figée à 1,60 € qui COURT-CIRCUITAIT la grille. C'est le dernier prix en dur de la chaîne
+  // tarifaire (même famille que les libellés figés corrigés en v1469).
+  // L'HISTORIQUE EST PRÉSERVÉ AU CENTIME : la grille historique porte event:1.60, exactement la
+  // valeur de la constante. Supprimer le cas particulier ne change donc AUCUNE facture passée.
   const g = tarifsDeLigne(ln);
+  return (g && g.event!=null) ? +g.event : EVENT_PRICE;
+}
+// Prix du macaron en événement pour une COMMANDE (et non une ligne) : sert aux écrans qui
+// n'ont pas de ligne sous la main. Même règle, même source.
+function eventUnitPricePourCmd(o){
+  const g = (typeof grillePourCommande==='function') ? grillePourCommande(o) : null;
   return (g && g.event!=null) ? +g.event : EVENT_PRICE;
 }
 // Location d'une pyramide, selon la grille de la ligne (20 € avant le 01/09/2026, 22 € après).
@@ -10809,6 +10829,35 @@ function pyraMontageResume(ln, models){
   return res;
 }
 
+// [v1485] NOUVELLES PYRAMIDES DE BEN — 4 présentoirs (2 noirs, 2 blancs), 15 étages, 285 macarons.
+// Ben : « 15 étages, du sommet à la base : 5 + 7 + 9 + 11 + 13 + 15 + 17 + 19 + 21 + 23 + 25 + 27 +
+// 29 + 31 + 33 = 285 ». Somme vérifiée : 285 ✓.
+//
+// UN SEUL MODÈLE POUR LES QUATRE : la couleur ne change ni la capacité ni les paliers. En faire
+// deux entrées (« noire » / « blanche ») doublerait les candidats de l'optimiseur sans rien
+// apprendre — Ben choisit la couleur au montage, pas au devis.
+const PYRA_MODELE_285 = { nom:'Pyramide 15 étages (285)', plateaux:[5,7,9,11,13,15,17,19,21,23,25,27,29,31,33], secable:true };
+
+// Les modèles vivent dans le stockage local : ajouter la valeur par défaut ne suffirait pas pour
+// Ben, qui a déjà des modèles enregistrés. Cette migration l'ajoute à sa liste existante.
+// PRUDENTE : elle n'ajoute que si le modèle est absent, ne touche à aucun autre, et ne réécrit
+// le stockage que si elle a effectivement changé quelque chose. Idempotente.
+function pyraMigrer285(){
+  try{
+    const brut = localStorage.getItem('sm_pyraModels');
+    if(!brut) return 0;                       // aucun modèle personnalisé : la valeur par défaut suffit
+    const list = JSON.parse(brut);
+    if(!Array.isArray(list)) return 0;
+    const memeModele = m => m && Array.isArray(m.plateaux)
+      && m.plateaux.length === PYRA_MODELE_285.plateaux.length
+      && m.plateaux.every((v,i)=> +v === PYRA_MODELE_285.plateaux[i]);
+    if(list.some(memeModele)) return 0;       // déjà présent
+    list.push(JSON.parse(JSON.stringify(PYRA_MODELE_285)));
+    localStorage.setItem('sm_pyraModels', JSON.stringify(list));
+    return 1;
+  }catch(e){ swallow(e,'pyraMigrer285'); return 0; }
+}
+
 function pyraModels(){
   try{ const j=JSON.parse(localStorage.getItem('sm_pyraModels')||'null'); if(Array.isArray(j)&&j.length) return _pyraMigrate(j); }catch(e){swallow(e,'pyraModels')}
   return [
@@ -10817,7 +10866,8 @@ function pyraModels(){
     // Les anciennes valeurs [5,10,14,18,22,26,30,34,37,41] étaient une estimation à 10 plateaux surdimensionnée.
     { nom:'Pyramide transparente', plateaux:[4,7,10,13,16,19], secable:true },
     { nom:'Bloc 35',               plateaux:[35],              secable:false },
-    { nom:'Matfer noire (estim.)', plateaux:[6,11,16,20,24,28,32,35,38], secable:true }
+    { nom:'Matfer noire (estim.)', plateaux:[6,11,16,20,24,28,32,35,38], secable:true },
+    PYRA_MODELE_285   // [v1485] les 4 nouveaux presentoirs de Ben (2 noirs, 2 blancs)
   ];
 }
 // [v1213] Migration one-shot : si un localStorage existant contient encore l'ANCIENNE Pyramide
@@ -10983,7 +11033,7 @@ async function renderPyramides(){
   }).join('');
 
   main.innerHTML=`
-   <div class="topbar"><div><h1>Pyramides événement</h1><p>Optimiseur de paliers · prix ${euro(PYRA_PRICE)}/macaron · boîtes de transport</p></div></div>
+   <div class="topbar"><div><h1>Pyramides événement</h1><p>Optimiseur de paliers · prix ${euro(pyraPrixCourant())}/macaron · boîtes de transport</p></div></div>
 
    <div class="panel">
      <h2>🔺 Simulateur</h2>
@@ -10998,7 +11048,7 @@ async function renderPyramides(){
          <div style="font-size:.78rem;color:#3f7d52;font-weight:600;text-transform:uppercase;letter-spacing:.03em">Proposition</div>
          <div style="font-size:1.3rem;font-weight:700;color:var(--bordeaux);margin:3px 0">${opt.propose} macarons${opt.exact?'':` <span style="font-size:.8rem;font-weight:400;color:#9a8a82">(au lieu de ${_pyraVoulu})</span>`}</div>
          <div style="font-size:.82rem;color:#6a5a52">Pyramide de <b>${opt.etages} plateau(x)</b> complets depuis le sommet — visuel parfait, sans trou.</div>
-         <div style="font-size:.9rem;color:var(--bordeaux);margin-top:6px">Prix : <b>${opt.propose} × ${euro(PYRA_PRICE)} = ${euro(opt.propose*PYRA_PRICE)}</b></div>
+         <div style="font-size:.9rem;color:var(--bordeaux);margin-top:6px">Prix : <b>${opt.propose} × ${euro(pyraPrixCourant())} = ${euro(opt.propose*pyraPrixCourant())}</b></div>
        </div>
        ${opt.exact?'':`<p class="note" style="margin:4px 0 0">💡 Tu peux dire : « Pour un visuel optimal sans plateau à trou, je vous propose <b>${opt.propose}</b> macarons. »</p>`}
      `:`<div class="banner" style="background:#fdf3e7;border-color:#f0c89a;margin:6px 0">⚠️ <div>${_pyraVoulu} dépasse la capacité de ce modèle (max <b>${opt.max}</b>). Choisis un modèle plus grand ou plusieurs pyramides.</div></div>`}
@@ -23096,11 +23146,11 @@ function drawEventLine(ln,i){
   </div>`;
   // --- Logique pyramide intégrée ---
   const hasPyra=(+ln.equip||0)>0;                 // une pyramide est présente
-  const prixMac = hasPyra ? PYRA_PRICE : EVENT_PRICE;   // 1,60€ conditionné à la pyramide
+  const prixMac = eventUnitPrice(ln);   // [v1485] suit la grille (case « anciens tarifs »), plus de prix fige
   const totalLigne = (+ln.evQte||0)*prixMac + pyraTotalLigne(ln) + accessoireDecoTotal(ln);
 
   return `<div class="cmd-line">
-    <div class="line-head"><span class="line-type">Événement <span class="line-sub">${hasPyra?`${euro(PYRA_PRICE)}/macaron (pyramide)`:`${euro(EVENT_PRICE)}/macaron`} · min ${EVENT_MIN} · ≥1 pyramide</span></span><span class="line-del" onclick="removeLine(${i})">✕ retirer</span></div>
+    <div class="line-head"><span class="line-type">Événement <span class="line-sub">${euro(eventUnitPrice(ln))}/macaron${hasPyra?' (pyramide)':''} · min ${EVENT_MIN} · ≥1 pyramide</span></span><span class="line-del" onclick="removeLine(${i})">✕ retirer</span></div>
     <div class="row2">
       <div class="field"><label>Nombre de macarons</label><input type="number" min="${EVENT_MIN}" value="${ln.evQte}" oninput="setEventQte(${i},this.value)"></div>
       <div class="field"><label>Pyramides / présentoirs <span style="font-weight:400;color:#9a8a82;font-size:.74rem">(max)</span></label><input type="number" min="0" inputmode="numeric" value="${(()=>{const f=(ln.evFiltrePyr!=null?+ln.evFiltrePyr:+ln.equip||0);return f>0?f:'';})()}" placeholder="toutes les options" oninput="setEventEquip(${i},this.value)"></div>
@@ -23150,7 +23200,7 @@ function drawEventLine(ln,i){
         <span>${nbDiff} parfum(s) attribué(s)${evSansParfum?` + ${evSansParfum} sans parfum`:''}</span>
         <b style="color:${col};font-size:1.1rem">${txt}</b></div>`;
     })()}
-    <div class="sum-box"><span>${ln.evQte} macarons${hasPyra?` × ${euro(PYRA_PRICE)}`:''} · ${ln.equip} pyramide(s)</span><b>${euro(totalLigne)}</b></div>
+    <div class="sum-box"><span>${ln.evQte} macarons${hasPyra?` × ${euro(eventUnitPrice(ln))}`:''} · ${ln.equip} pyramide(s)</span><b>${euro(totalLigne)}</b></div>
     ${lineRemiseRow(ln,i)}
   </div>`;
 }
@@ -74520,6 +74570,7 @@ function startClock(){
     try{ await seedCoffret10(); }catch(e){ console.error('seedCoffret10',e); }
     try{ await alignerCatalogueSurGrille(); }catch(e){ console.error('alignerCatalogueSurGrille',e); }
     try{ await migrerDateUnique(); }catch(e){ console.error('migrerDateUnique',e); }
+    try{ pyraMigrer285(); }catch(e){ console.error('pyraMigrer285',e); }
     try{ await seedPMS(); }catch(e){ console.error('seedPMS',e); }
     try{ await seedAllergenes(); }catch(e){ console.error('seedAllergenes',e); }
     try{ await seedEmballages(); }catch(e){ console.error('seedEmballages',e); }
