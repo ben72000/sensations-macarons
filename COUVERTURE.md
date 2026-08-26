@@ -5744,3 +5744,45 @@ doublon sous un autre nom, stockage corrompu (E) ; l'optimiseur déduit les 15 p
 strictement croissants (F).
 
 **Sensibilité vérifiée par réintroduction de trois défauts** : 10 assertions rougissent.
+
+---
+
+## 2026-08-26 — LA PERSONNALISATION LOGO ÉTAIT INSAISISSABLE  (v1485 → **v1486**)
+
+**Ben** : « je veux que tu intègres la personnalisation logo », puis, après ma première réponse :
+« tu as vérifié si c'était aussi accessible depuis devis facture ? Car je ne le vois pas ».
+
+### Ce qui existait déjà — et ma réponse incomplète
+Le barème dégressif (1 € jusqu'à 99, 0,80 € jusqu'à 300, 0,70 € au-delà), le calcul, le forfait
+création de 40 € par modèle **et** l'affichage sur devis comme sur facture avaient été livrés en
+v1463. Tout était juste, et je l'avais vérifié — **mais uniquement dans le formulaire de commande**.
+Ben a dû me demander lui-même de regarder les documents. La leçon « vérifier l'écran, pas seulement
+la fonction » vaut aussi pour **tous** les écrans concernés, pas seulement celui qu'on a sous la main.
+
+### 🚨 Le défaut
+Le bloc de saisie était en `display:none` **tant que la valeur n'était pas déjà supérieure à zéro**.
+Il ne s'affichait donc que s'il avait **déjà été rempli** : la première saisie était impossible. Les
+devis et factures ne pouvaient jamais recevoir de valeur — ils affichaient fidèlement un zéro.
+
+Le bloc personnalisation **couleurs** juste au-dessus a une case à cocher qui le révèle ; le bloc
+logo n'en avait aucune. C'est l'oubli — encore la famille « fonction juste, jamais atteignable »
+(v1428, v1439, v1471).
+
+### Le fix
+Une case « Personnalisation logo — indépendante des couleurs », calquée sur celle des couleurs. La
+**décocher vide aussi le forfait création** : laisser un forfait sur une commande dont l'option est
+désactivée facturerait un supplément invisible à l'écran. Le drapeau est **persisté**, sans quoi
+rouvrir une commande cochée mais aux quantités encore vides refermerait le bloc.
+
+### ⚠️ Trou de test comblé en chemin
+La vérification par mutation a révélé que **trois défauts sur quatre** étaient détectés, mais pas le
+déplacement d'une borne de palier : mes assertions validaient le calcul avec une grille écrite
+**dans le test**, pas celle de l'app. Modifier les paliers dans `app.js` passait donc inaperçu. Une
+section vérifie désormais les **paliers réels** — et la mutation qui passait est maintenant rouge.
+
+### Suite v1486 : 36 assertions (`tests/v1486-logo-accessible.test.js`)
+Le barème sur les bornes 99/100/300/301, palier appliqué sur **tout** le volume, quantité négative
+sans crédit (A) ; **les paliers réels de l'app** et le forfait à 40 € (A bis) ; indépendance des
+deux personnalisations, forfait par modèle (B) ; grille historique sans supplément (C) ; la case,
+le vidage des **deux** champs, la persistance du drapeau (D) ; la ligne sur devis et facture, avec
+**réconciliation** 150 × 0,80 = 120,00 € (E).
