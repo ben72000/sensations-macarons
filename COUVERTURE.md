@@ -5875,3 +5875,50 @@ les champs (E).
 
 **Sensibilité vérifiée par réintroduction** : 4 assertions rougissent, la garde **nommant** les
 champs perdus.
+
+---
+
+## 2026-08-27 — LE DEVIS CHANGEAIT DE GRILLE EN CHANGEANT D'ÉCRAN  (v1488 → **v1489**)
+
+**Ben** : « sur la page listant les devis le montant n'est pas conforme. Quand je clique dessus pour
+voir le détail là j'ai bien tout indiqué avec les prix. En revanche quand je fais visualiser devis
+là ça disparaît de nouveau. Seule la quantité de macarons reste. »
+
+### 🚨 Trois symptômes, une seule cause
+Le devis n'enregistrait **ni `tarifRef` ni `ancienTarif`**. Or `grillePourCommande` traite un
+contexte **sans marqueur** comme une commande **héritée** et renvoie la grille **historique** — où le
+logo n'existe pas (`logoPaliers:null`).
+
+Le supplément valait donc **zéro** au rendu, et une ligne à zéro ne s'affiche pas. Le **détail**, lui,
+lit des montants déjà calculés : d'où un écran juste et l'autre vide, sur le **même document**.
+
+C'est la description précise de Ben — *quel écran montre quoi* — qui a permis de trouver la cause.
+Sans elle, j'aurais corrigé le total, qui n'était pas en cause. Il avait d'ailleurs lui-même rectifié
+son diagnostic initial en cours de route.
+
+### Le fix
+Le devis porte désormais les **mêmes marqueurs que la commande**, **écrits et relus** — sinon perte
+au premier aller-retour, la leçon de la v1488, appliquée cette fois d'emblée.
+
+Son sous-total inclut enfin **logo et forfait création**, aligné sur la méthode que la **facture**
+utilisait déjà. Le commentaire de la facture décrivait même exactement ce symptôme : *« le repli doit
+inclure logo et forfait, sinon le total afficherait moins que la somme des lignes juste au-dessus »*.
+Le devis n'avait jamais été aligné dessus.
+
+### Le rattrapage, prudent parce qu'il s'agit d'argent
+`migrerDevisTarifRef` : **jamais** une facture (un document émis ne se retarife pas), seulement les
+devis **sans aucun marqueur**, `tarifRef` prend **la date du devis** et non celle du jour (un devis
+d'août ne doit pas basculer sur la grille de septembre), et `ancienTarif` reste **false** — on ne
+devine pas un choix jamais exprimé. Idempotente.
+
+### Suite v1489 : 27 assertions (`tests/v1489-devis-grille-tarifaire.test.js`)
+La règle de résolution de grille (A) ; marqueurs écrits **et** relus (B) ; le sous-total inclut logo
+et forfait (C) ; le rattrapage et ses cinq cas limites (D) ; **réconciliation avant/après** — 150
+macarons logotés valaient 0 €, ils valent 120 €, et un devis « anciens tarifs » garde bien
+l'ancienne grille (E).
+
+**Sensibilité vérifiée par réintroduction** : 6 assertions rougissent.
+
+⚠️ La première tentative de mutation a **échoué sans être appliquée** — et la suite est restée verte,
+ce qui ne prouvait rien. Reprise avec vérification explicite que la mutation était bien en place
+avant de conclure (règle du projet depuis la v1454).

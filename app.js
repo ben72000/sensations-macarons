@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1488'; // suite : voir tests/v1488-devis-relecture-logo.test.js
-const APP_MAJ = 'LA VRAIE CAUSE : LE DEVIS NE SE RELISAIT PAS. Ben, apres la v1487 : « a l enregistrement le probleme reste entier. Pas de sauvegarde. Tout se passe bien au moment de remplir mais rien ne s enregistre a la fin ». MA v1487 CORRIGEAIT L ECRITURE — et elle avait raison, les champs manquaient vraiment dans les constructeurs de documents. Mais le symptome venait de l autre bout : LA RELECTURE. Quand le formulaire rouvre un devis, il reconstruit son modele CHAMP PAR CHAMP depuis le document, et les champs logo n y figuraient pas. A la reouverture, les champs paraissaient donc vides — et en reenregistrant, ces vides ECRASAIENT les bonnes valeurs. D ou l impression que rien ne se sauvegarde jamais, alors que l ecriture, elle, fonctionnait. ⚠️ MEME LECON QU EN v1481 : j ai corrige un mecanisme fautif sans suivre la boucle COMPLETE ecriture → relecture → reecriture. Un aller simple verifie ne prouve pas qu un aller-retour tient. UNE GARDE GENERIQUE A ETE AJOUTEE, celle qui aurait evite ce bug : elle compare ce que le devis ECRIT a ce qu il RELIT, et signale tout champ de saisie oublie — les champs REGENERES a l enregistrement (montant, numero, validite, statut…) sont exclus, leur absence etant normale. Verification faite : plus aucun champ de saisie n est perdu. Suite v1488 : 18 assertions, dont la reconciliation sur le cycle complet ecriture → relecture → reecriture ; sensibilite verifiee par reintroduction (4 rouges, la garde NOMMANT les champs perdus).';
+const APP_VERSION = 'v1489'; // suite : voir tests/v1489-devis-grille-tarifaire.test.js
+const APP_MAJ = 'LE DEVIS CHANGEAIT DE GRILLE EN CHANGEANT D ECRAN. Ben : « sur la page listant les devis le montant n est pas conforme. Quand je clique dessus pour voir le detail la j ai bien tout indique avec les prix. En revanche quand je fais visualiser devis la ca disparait de nouveau. Seule la quantite de macarons reste ». TROIS SYMPTOMES, UNE SEULE CAUSE : le devis n enregistrait NI `tarifRef` NI `ancienTarif`. Or le resolveur traite un contexte SANS marqueur comme une commande HERITEE et renvoie la grille HISTORIQUE — ou le logo n existe pas. Le supplement valait donc ZERO au rendu, et une ligne a zero ne s affiche pas. Le detail, lui, lit des montants deja calcules : d ou un ecran juste et l autre vide, sur le MEME document. C est la description precise de Ben (quel ecran montre quoi) qui a permis de trouver la cause — sans elle j aurais corrige le total, qui n etait pas en cause. FIX : le devis porte desormais les MEMES marqueurs que la commande, ecrits ET relus (sinon perte au premier aller-retour, lecon v1488). Son sous-total inclut enfin le logo et le forfait creation, alignes sur la methode que la FACTURE utilisait deja — son commentaire decrivait meme exactement ce symptome, mais le devis n avait jamais ete aligne dessus. RATTRAPAGE des devis existants, prudent parce qu il s agit d argent : seuls les DEVIS (jamais une facture emise), seulement ceux sans aucun marqueur, `tarifRef` prend LA DATE DU DEVIS et non celle du jour, et `ancienTarif` reste false — on ne devine pas un choix que Ben n a jamais exprime. Idempotente. Suite v1489 : 27 assertions, dont la reconciliation avant/apres (150 macarons logotes : 0 € avant, 120 € apres) ; sensibilite verifiee par reintroduction (6 rouges).';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
 const _APP_MAJ_v1448_ARCHIVE_INUTILISEE = 'LE CHAMP « N° LOT DE PRODUCTION » MENTAIT EN MODE DUO. Ben, capture à l\u2019appui : lançant Chocolat passion + Pistache en meringue commune, le champ affichait « 030826RAF » — ni CHP ni PIS, mais RAF (Coco Rafaello, une tout autre recette). CAUSE : la branche duo de saveProd() ne lit JAMAIS ce champ — chaque parfum reçoit son propre lot, calculé indépendamment. Sa valeur affichée venait de prodRefreshLot(), qui lit TOUJOURS la recette unique (f_rec) — or f_rec reste dans la page (juste masquée) en duo, avec la valeur de la DERNIÈRE recette affichée avant le passage en duo. Un champ qui ment ET n\u2019a aucun effet réel est pire qu\u2019un champ absent. Même défaut, plus discret, sur la case « diviser en 2 lots » (v1445/v1446) : cochée, ce champ n\u2019est pas plus lu par le lancement réel. FIX : le champ est désormais masqué dans ces deux cas ; à la place, les VRAIS numéros de lot qui seront utilisés sont prévisualisés — en mode duo dans le récapitulatif de répartition, et pour la division bicolore dans son propre encart — calculés avec EXACTEMENT la même formule que la sauvegarde réelle, jamais un second calcul qui pourrait diverger. Suite v1448 : 12 assertions (tests/v1448-lot-duo-preview.test.js), dont une réconciliation qui rejoue la vraie formule de sauvegarde et vérifie que l\u2019aperçu affiche bien 030826CHP-CO et 030826PIS-CO — jamais RAF.';
@@ -21976,6 +21976,9 @@ async function cmdForm(id, opts){
               // etre ajoute ICI AUSSI, sinon il est perdu au premier aller-retour.
               logo:!!(dv.logo||+dv.persoLogoNb>0||+dv.forfaitCreationNb>0),
               persoLogoNb:+dv.persoLogoNb||0, forfaitCreationNb:+dv.forfaitCreationNb||0,
+              // [v1489] Les marqueurs de tarif suivent la meme regle que le reste : ecrits ET relus,
+              // sinon le devis changerait de grille au premier aller-retour (lecon v1488).
+              tarifRef:dv.tarifRef||'', ancienTarif:!!dv.ancienTarif,
               statut:'À préparer', paiement:'En attente'}
             : {date:today(),statut:'À préparer',paiement:'En attente',perso:false};
   } else {
@@ -24543,6 +24546,38 @@ async function purgeEventsCommande(oid){
 // `dateEvenement` — jamais l'inverse. La date du haut est la référence choisie par Ben ; écraser
 // `date` avec l'ancienne valeur reviendrait à figer précisément ce qu'on corrige.
 // Idempotente : relancée, elle ne trouve plus rien à aligner.
+// [v1489] RATTRAPAGE DES DEVIS EXISTANTS. Les devis enregistrés avant cette version ne portent ni
+// `tarifRef` ni `ancienTarif` : `grillePourCommande` les traite donc comme hérités et leur applique
+// la grille HISTORIQUE, où le logo n'existe pas. Leur supplément vaut zéro au rendu — c'est le
+// « ça disparaît quand je visualise » de Ben.
+//
+// PRUDENCE, PARCE QU'IL S'AGIT D'ARGENT :
+//  · on ne touche QU'AUX devis, jamais aux factures (un document émis ne se retarife pas) ;
+//  · on ne touche qu'à ceux qui n'ont AUCUN marqueur — un devis déjà marqué garde le sien ;
+//  · `tarifRef` prend la DATE DU DEVIS, pas la date du jour : c'est elle qui décrit quand il a été
+//    établi, et un devis d'août ne doit pas basculer sur la grille de septembre par accident ;
+//  · `ancienTarif` reste FALSE : on ne peut pas deviner un choix que Ben n'a jamais exprimé, et
+//    false = « tarifs en vigueur », ce qui correspond au comportement qu'il attend.
+// Idempotente : relancée, elle ne trouve plus rien.
+async function migrerDevisTarifRef(){
+  try{
+    if(localStorage.getItem('sm_devisTarifRefMigre') === '1') return 0;
+    const docs = await db.documents.toArray().catch(() => []);
+    let n = 0;
+    for(const d of docs){
+      if(!d || d.type !== 'devis') continue;              // jamais une facture
+      if(d.tarifRef || d.ancienTarif) continue;           // déjà marqué : on n'y touche pas
+      const ref = (d.date || '').slice(0, 10);
+      if(!ref) continue;                                  // sans date, on ne devine pas
+      await db.documents.update(d.id, { tarifRef: ref, ancienTarif: false });
+      n++;
+    }
+    try{ localStorage.setItem('sm_devisTarifRefMigre', '1'); }catch(e){ swallow(e, 'migrerDevisTarifRef flag'); }
+    if(n > 0 && typeof toast === 'function') toast(n + ' devis realigne(s) sur la grille tarifaire ✓');
+    return n;
+  }catch(e){ swallow(e, 'migrerDevisTarifRef'); return 0; }
+}
+
 async function migrerDateUnique(){
   try{
     if(localStorage.getItem('sm_dateUniqueMigree') === '1') return 0;
@@ -24787,6 +24822,16 @@ async function saveCmd(id){
       // Sans eux, le devis figeait un supplement a ZERO alors que la commande le portait.
       logo:!!(o.logo||+o.persoLogoNb>0||+o.forfaitCreationNb>0),
       persoLogoNb:+o.persoLogoNb||0, forfaitCreationNb:+o.forfaitCreationNb||0,
+      // [v1489] Ben : « quand je fais visualiser devis ça disparaît de nouveau. Seule la quantite
+      // de macarons reste ». CAUSE : le devis ne portait NI `tarifRef` NI `ancienTarif`. Or
+      // `grillePourCommande` traite un contexte sans marqueur comme une commande HERITEE et renvoie
+      // la grille HISTORIQUE — ou le logo n'existe pas (`logoPaliers:null`). Le supplement valait
+      // donc ZERO au rendu, et une ligne a zero ne s'affiche pas. Le detail, lui, lit des montants
+      // deja calcules : d'ou l'ecran correct d'un cote et vide de l'autre.
+      // Le devis doit porter les MEMES marqueurs que la commande, sinon il change de grille en
+      // changeant d'ecran.
+      tarifRef: o.tarifRef || (val('f_date')||today()),
+      ancienTarif: !!o.ancienTarif,
       notes:o.notes,
       acompte: 0,                           // acompte reçu (déclenche la conversion une fois > 0)
       validiteJours:_validiteJours, expiration:ymdLocal(exp), // [v1269] validité pilotée par la deadline de livraison
@@ -58848,7 +58893,16 @@ async function genererDevisDoc(docId){
   // Total = montant stocké du devis si dispo (déjà net, perso incluse, remise appliquée).
   // Sous-total = lignes NETTES (remises de ligne déjà déduites, affichées par ligne) + perso.
   // La remise GLOBALE (gpct) s'applique une fois sur ce sous-total, séparément.
-  const totalBrut = money2(lignes.reduce((s,ln)=>s+lineTotalStored(ln),0) + persoMt);
+  // [v1489] Ben : « quand je visualise le devis depuis la page devis le montant n'est pas
+  // coherent. C'est comme si le montant de la personnalisation du logo n'etait pas enregistre ».
+  // CAUSE : ce sous-total additionnait les lignes + la personnalisation COULEURS, mais NI le
+  // logo NI le forfait creation. La ligne logo s'affichait donc dans le detail sans jamais
+  // entrer dans le total — le devis annoncait moins que la somme de ses propres lignes.
+  // La FACTURE incluait deja ces montants (l.59208) avec ce commentaire : « le repli doit
+  // inclure logo et forfait, sinon le total afficherait moins que la somme des lignes juste
+  // au-dessus ». Le devis n'avait jamais ete aligne dessus. Meme methode, meme ordre.
+  const _logoMt = logoMontantPour(d.persoLogoNb, d) + forfaitCreationPour(d.forfaitCreationNb, d);
+  const totalBrut = money2(lignes.reduce((s,ln)=>s+lineTotalStored(ln),0) + persoMt + _logoMt);
   const total = (d.montant!=null) ? +d.montant : money2(totalBrut - money2(totalBrut*gpct/100));
   const reductions = money2(Math.max(0, totalBrut - total));
   // Pourcentage de remise à afficher : le % global saisi si présent, sinon le % effectif.
@@ -74623,6 +74677,7 @@ function startClock(){
     try{ await alignerCatalogueSurGrille(); }catch(e){ console.error('alignerCatalogueSurGrille',e); }
     try{ await migrerDateUnique(); }catch(e){ console.error('migrerDateUnique',e); }
     try{ pyraMigrer285(); }catch(e){ console.error('pyraMigrer285',e); }
+    try{ await migrerDevisTarifRef(); }catch(e){ console.error('migrerDevisTarifRef',e); }
     try{ await seedPMS(); }catch(e){ console.error('seedPMS',e); }
     try{ await seedAllergenes(); }catch(e){ console.error('seedAllergenes',e); }
     try{ await seedEmballages(); }catch(e){ console.error('seedEmballages',e); }

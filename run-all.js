@@ -188,7 +188,8 @@ const SUITES = [
   'v1485-tarif-pyramide-et-modele.test.js',     // v1485 · le tarif événement avec pyramide suit la grille (1,60 € / 1,90 €) + modèle 15 étages 285 macarons et sa migration
   'v1486-logo-accessible.test.js',              // v1486 · personnalisation logo insaisissable : le bloc n'apparaissait que s'il était déjà rempli (case à cocher manquante)
   'v1487-devis-logo-persiste.test.js',          // v1487 · le devis perdait la personnalisation logo : champs jamais copiés dans 3 constructeurs de documents, aller ET retour
-  'v1488-devis-relecture-logo.test.js'          // v1488 · LA vraie cause : la relecture d'un devis ignorait les champs logo, et les vides écrasaient les bonnes valeurs
+  'v1488-devis-relecture-logo.test.js',         // v1488 · LA vraie cause : la relecture d'un devis ignorait les champs logo, et les vides écrasaient les bonnes valeurs
+  'v1489-devis-grille-tarifaire.test.js'        // v1489 · le devis sans tarifRef retombait sur la grille historique : supplément à zéro et ligne invisible au rendu
 ];
 
 let allOk = true;
