@@ -190,7 +190,8 @@ const SUITES = [
   'v1487-devis-logo-persiste.test.js',          // v1487 · le devis perdait la personnalisation logo : champs jamais copiés dans 3 constructeurs de documents, aller ET retour
   'v1488-devis-relecture-logo.test.js',         // v1488 · LA vraie cause : la relecture d'un devis ignorait les champs logo, et les vides écrasaient les bonnes valeurs
   'v1489-devis-grille-tarifaire.test.js',       // v1489 · le devis sans tarifRef retombait sur la grille historique : supplément à zéro et ligne invisible au rendu
-  'v1490-event-tarif-saisie.test.js'            // v1490 · tarif événement figé à 1,60 € pendant la saisie : mauvais résolveur de grille (piège des DEUX résolveurs, v1469)
+  'v1490-event-tarif-saisie.test.js',           // v1490 · tarif événement figé à 1,60 € pendant la saisie : mauvais résolveur de grille (piège des DEUX résolveurs, v1469)
+  'v1491-fausses-reductions.test.js'            // v1491 · CAUSE RACINE : la réduction du devis était déduite de l'écart, déguisant toute incohérence en geste commercial
 ];
 
 let allOk = true;

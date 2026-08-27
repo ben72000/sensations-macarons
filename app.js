@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1490'; // suite : voir tests/v1490-event-tarif-saisie.test.js
-const APP_MAJ = 'LE TARIF EVENEMENT RETOMBAIT A 1,60 € PENDANT LA SAISIE — DEFAUT QUE J AVAIS MOI-MEME INTRODUIT EN v1485. Ben : « j ai supprime la commande pour tout recommencer et le tarif de 1,90 € n est plus disponible. Ca revient a 1,60 € peu importe que la case appliquer les anciens tarifs soit cochee ou non ». CAUSE : en v1485 j avais remplace la constante figee par le resolveur des lignes ENREGISTREES, ou l absence de marqueur signifie « ligne heritee » et renvoie l ancienne grille. Or une ligne EN COURS DE SAISIE n a pas encore de marqueur : elle retombait donc TOUJOURS sur 1,60 €, case cochee ou non. C est EXACTEMENT le piege documente en v1469 — DEUX RESOLVEURS DISTINCTS, l un pour les lignes enregistrees, l autre pour le modele d edition — et j y suis retombe. FIX : une variante de saisie qui consulte la CASE DU FORMULAIRE quand le marqueur manque, comme le font deja grand format, vrac et sachet. Elle est utilisee par le calcul de la ligne en edition ET par ses TROIS points d affichage — un calcul juste qui n atteint pas l ecran n est pas une correction. Les chemins de donnees ENREGISTREES gardent l ancien resolveur : c est lui qui protege l historique, une ligne d avant la v1463 devant rester sur l ancienne grille quelle que soit la case cochee aujourd hui. Une assertion de la suite v1485 exigeait l ancien appel sur ce chemin de saisie : elle a ete alignee sur la nouvelle regle, c est le test qui devait suivre. Suite v1490 : 19 assertions, dont la preuve que la case fait desormais une difference sur une ligne neuve ; sensibilite verifiee par reintroduction du defaut de v1485 (4 rouges).';
+const APP_VERSION = 'v1491'; // suite : voir tests/v1491-fausses-reductions.test.js
+const APP_MAJ = 'LES FAUSSES REDUCTIONS — LA CAUSE RACINE QUI MASQUAIT TOUT LE RESTE. Ben : « j inscris toutes les lignes au devis et quand je l enregistre ca me cree de fausses reductions pour combler l ecart entre le prix reel et le prix enregistre ». C ETAIT LA VRAIE EXPLICATION DE TOUTE LA SERIE : la reduction affichee sur le devis etait DEDUITE DE L ECART entre le total recalcule et le montant enregistre, jamais des remises reellement saisies. Tout desaccord se transformait donc en « reduction » — un ecart de donnees DEGUISE EN GESTE COMMERCIAL, sur un document envoye aux clients. C est ce mecanisme qui a MASQUE les quatre defauts precedents (ecriture, relecture, grille, saisie) : il les absorbait au lieu de les montrer, et chaque correction faisait reapparaitre l ecart ailleurs sous forme de remise. REGLE POSEE : une reduction ne s affiche que si elle a ete SAISIE. Un ecart residuel n est pas une remise — il est NOMME, et le total est recalcule pour rester coherent avec ses propres lignes, avec un avertissement invitant a reenregistrer le devis. Le total, l acompte et le message au client basculent ensemble, pour qu aucun ne contredise les autres. CORRIGE AUSSI : le supplement logo et le forfait creation entrent desormais dans la base de la remise globale — sans eux une remise en euros etait plafonnee trop bas (600 € demandes rabotes a 500 €), ecart visible seulement quand une remise etait appliquee. LIVRE AVEC : un ecran « 🔎 Diagnostic » sur la page Devis, qui montre CE QUI EST REELLEMENT EN BASE — champs logo, marqueurs de grille, grille appliquee, montant fige, et le detail ligne par ligne. Il n ecrit rien. Suite v1491 : 32 assertions ; sensibilite verifiee par reintroduction (2 rouges).';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
 const _APP_MAJ_v1448_ARCHIVE_INUTILISEE = 'LE CHAMP « N° LOT DE PRODUCTION » MENTAIT EN MODE DUO. Ben, capture à l\u2019appui : lançant Chocolat passion + Pistache en meringue commune, le champ affichait « 030826RAF » — ni CHP ni PIS, mais RAF (Coco Rafaello, une tout autre recette). CAUSE : la branche duo de saveProd() ne lit JAMAIS ce champ — chaque parfum reçoit son propre lot, calculé indépendamment. Sa valeur affichée venait de prodRefreshLot(), qui lit TOUJOURS la recette unique (f_rec) — or f_rec reste dans la page (juste masquée) en duo, avec la valeur de la DERNIÈRE recette affichée avant le passage en duo. Un champ qui ment ET n\u2019a aucun effet réel est pire qu\u2019un champ absent. Même défaut, plus discret, sur la case « diviser en 2 lots » (v1445/v1446) : cochée, ce champ n\u2019est pas plus lu par le lancement réel. FIX : le champ est désormais masqué dans ces deux cas ; à la place, les VRAIS numéros de lot qui seront utilisés sont prévisualisés — en mode duo dans le récapitulatif de répartition, et pour la division bicolore dans son propre encart — calculés avec EXACTEMENT la même formule que la sauvegarde réelle, jamais un second calcul qui pourrait diverger. Suite v1448 : 12 assertions (tests/v1448-lot-duo-preview.test.js), dont une réconciliation qui rejoue la vraie formule de sauvegarde et vérifie que l\u2019aperçu affiche bien 030826CHP-CO et 030826PIS-CO — jamais RAF.';
@@ -11383,6 +11383,7 @@ async function renderDocuments(){
 
    <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
      <button class="btn gold" onclick="docNewDevis()">+ Nouveau devis</button>
+     <button class="btn ghost" onclick="diagDevis()" title="Montre ce qui est reellement enregistre dans le dernier devis">🔎 Diagnostic</button>
      <button class="btn ghost" onclick="devisGroupeStart()" title="Récapituler plusieurs devis et/ou commandes dans un seul document">📋 Devis groupé</button>
      <button class="btn ghost" onclick="docAuditPaiementsFantomesUI()" title="Vérifie la cohérence du suivi de règlement des factures validées">🔍 Audit règlements</button>
    </div>
@@ -24575,6 +24576,71 @@ async function purgeEventsCommande(oid){
 //  · `ancienTarif` reste FALSE : on ne peut pas deviner un choix que Ben n'a jamais exprimé, et
 //    false = « tarifs en vigueur », ce qui correspond au comportement qu'il attend.
 // Idempotente : relancée, elle ne trouve plus rien.
+// [v1491] DIAGNOSTIC DEVIS. Quatre versions de correctifs (v1487 écriture, v1488 relecture,
+// v1489 grille, v1490 saisie) : chacune corrigeait un défaut RÉEL, et Ben bute toujours. Cela
+// signifie que je cherche au mauvais endroit — pas qu'il faut un cinquième correctif à l'aveugle.
+//
+// Cet écran montre CE QUI EST RÉELLEMENT EN BASE pour le dernier devis : champs logo, marqueurs de
+// grille, montant figé, et le détail ligne par ligne. Une capture suffira à dire où la chaîne casse.
+// Il n'écrit RIEN.
+async function diagDevis(){
+  const docs = await db.documents.toArray().catch(() => []);
+  const devis = docs.filter(d => d && d.type === 'devis')
+                    .sort((a, b) => (+b.createdAt || 0) - (+a.createdAt || 0));
+  if(!devis.length){
+    openModal('<h3>🔎 Diagnostic devis</h3><p class="note">Aucun devis en base.</p>'
+      + '<div class="modal-actions"><button class="btn" onclick="closeModal()">Fermer</button></div>');
+    return;
+  }
+  const d = devis[0];
+  const oui = v => v ? '<b style="color:#3f7d52">oui</b>' : '<b style="color:#b3261e">NON</b>';
+  const val = v => (v === undefined) ? '<b style="color:#b3261e">absent</b>'
+                 : (v === null || v === '') ? '<i style="color:#b3261e">vide</i>'
+                 : '<b>' + esc(String(v)) + '</b>';
+
+  // Grille effectivement appliquée à ce document — c'est elle qui décide si le logo vaut 0.
+  let grilleNom = '?';
+  try{
+    const g = grillePourCommande(d);
+    grilleNom = (g && g.logoPaliers) ? 'COURANTE (logo actif)' : 'HISTORIQUE (logo inexistant → 0 €)';
+  }catch(e){ swallow(e, 'diagDevis grille'); }
+
+  let logoMt = 0, forfMt = 0;
+  try{
+    logoMt = logoMontantPour(d.persoLogoNb, d);
+    forfMt = forfaitCreationPour(d.forfaitCreationNb, d);
+  }catch(e){ swallow(e, 'diagDevis montants'); }
+
+  const lignes = Array.isArray(d.lignes) ? d.lignes : [];
+  const detLignes = lignes.map((ln, i) =>
+    '<div class="sum-box" style="font-size:.78rem"><span>#' + (i+1) + ' <b>' + esc(ln.type || '?') + '</b>'
+    + '<br>tarifRef ' + val(ln.tarifRef) + ' · ancienTarif ' + oui(ln.ancienTarif) + '</span></div>'
+  ).join('') || '<p class="note">Aucune ligne.</p>';
+
+  openModal('<h3>🔎 Diagnostic devis</h3>'
+    + '<p class="note">Dernier devis enregistré — <b>' + esc(d.numero || ('#' + d.id)) + '</b> du ' + fmtDate(d.date) + '. Version de l\'app : <b>' + esc(APP_VERSION) + '</b></p>'
+    + '<div class="sum-box" style="flex-direction:column;align-items:stretch;gap:3px;font-size:.82rem">'
+    +   '<div>Option logo cochée : ' + oui(d.logo) + '</div>'
+    +   '<div>Macarons logotés : ' + val(d.persoLogoNb) + '</div>'
+    +   '<div>Créations graphiques : ' + val(d.forfaitCreationNb) + '</div>'
+    +   '<div>Personnalisation couleurs : ' + val(d.persoMacarons) + '</div>'
+    + '</div>'
+    + '<div class="sum-box" style="flex-direction:column;align-items:stretch;gap:3px;font-size:.82rem">'
+    +   '<div>Marqueur de grille (tarifRef) : ' + val(d.tarifRef) + '</div>'
+    +   '<div>Anciens tarifs : ' + oui(d.ancienTarif) + '</div>'
+    +   '<div>Grille appliquée : <b>' + esc(grilleNom) + '</b></div>'
+    + '</div>'
+    + '<div class="sum-box" style="flex-direction:column;align-items:stretch;gap:3px;font-size:.82rem">'
+    +   '<div>Supplément logo calculé : <b>' + euro(logoMt) + '</b></div>'
+    +   '<div>Forfait création calculé : <b>' + euro(forfMt) + '</b></div>'
+    +   '<div>Montant figé du devis : <b>' + euro(+d.montant || 0) + '</b></div>'
+    + '</div>'
+    + '<p class="note" style="margin-top:8px"><b>Lignes (' + lignes.length + ')</b></p>'
+    + detLignes
+    + '<p class="note">Envoie une capture de cet écran : elle dit exactement où la chaîne casse.</p>'
+    + '<div class="modal-actions"><button class="btn" onclick="closeModal()">Fermer</button></div>');
+}
+
 async function migrerDevisTarifRef(){
   try{
     if(localStorage.getItem('sm_devisTarifRefMigre') === '1') return 0;
@@ -24690,7 +24756,13 @@ async function saveCmd(id){
   const _persoSupRG = money2((typeof cmdPersoCount==='function'?cmdPersoCount():0)*persoPrixUnitPour());
   const _persoRemRG = money2(Math.max(0, Math.min(_persoSupRG, +_cmdPersoRemiseEur||0)));
   const _persoRG = money2(Math.max(0, _persoSupRG - _persoRemRG));   // perso NETTE de sa remise
-  const _baseRG = money2(_sousTotalRG + _persoRG);
+  // [v1491] Le supplement logo et le forfait creation entrent dans la base de la remise globale.
+  // Sans eux, une remise en euros etait plafonnee TROP BAS et le pourcentage derive etait faux —
+  // ecart visible uniquement quand une remise globale est appliquee, ce qui explique qu'il soit
+  // passe inapercu jusqu'ici. `cmdRecalc` les inclut deja dans son propre total (baseAvantGlobal).
+  const _logoRG = money2(logoMontantPour(Math.max(0, Math.round(+val('f_logoNb')||0)))
+                       + forfaitCreationPour(Math.max(0, Math.round(+val('f_forfaitNb')||0))));
+  const _baseRG = money2(_sousTotalRG + _persoRG + _logoRG);
   const remiseGlobaleEur = money2(Math.max(0, Math.min(_baseRG, +_cmdRemiseGlobaleEur||0)));
   const remiseGlobale = _baseRG>0 ? Math.max(0, Math.min(100, money2(remiseGlobaleEur/_baseRG*100))) : 0;
   // Registre de paiements : chaque encaissement exige montant>0 + date + mode. AUCUNE date auto-générée.
@@ -58919,8 +58991,29 @@ async function genererDevisDoc(docId){
   // au-dessus ». Le devis n'avait jamais ete aligne dessus. Meme methode, meme ordre.
   const _logoMt = logoMontantPour(d.persoLogoNb, d) + forfaitCreationPour(d.forfaitCreationNb, d);
   const totalBrut = money2(lignes.reduce((s,ln)=>s+lineTotalStored(ln),0) + persoMt + _logoMt);
+  // [v1491] Ben : « quand je l'enregistre ca me cree de FAUSSES REDUCTIONS pour combler l'ecart
+  // entre le prix reel et le prix enregistre ».
+  // 🚨 CAUSE RACINE, ET C'EST LA PLUS IMPORTANTE DE CETTE SERIE : la reduction affichee etait
+  // DEDUITE DE L'ECART (`totalBrut - total`), jamais des remises reellement saisies. Tout
+  // desaccord entre le total recalcule et le montant enregistre se transformait donc en
+  // « reduction » — un ecart de donnees DEGUISE EN GESTE COMMERCIAL, sur un document que Ben
+  // envoie a ses clients. C'est ce mecanisme qui a masque les quatre defauts precedents : il les
+  // absorbait au lieu de les montrer.
+  // REGLE POSEE : une reduction ne s'affiche que si elle a ete SAISIE. Un ecart residuel n'est pas
+  // une remise — il est signale.
   const total = (d.montant!=null) ? +d.montant : money2(totalBrut - money2(totalBrut*gpct/100));
-  const reductions = money2(Math.max(0, totalBrut - total));
+  const _remiseSaisie = (d.remiseGlobaleEur!=null && +d.remiseGlobaleEur>0)
+    ? money2(+d.remiseGlobaleEur)
+    : (gpct>0 ? money2(totalBrut*gpct/100) : 0);
+  const reductions = money2(Math.max(0, _remiseSaisie));
+  // Ecart NON explique par une remise saisie : c'est une incoherence, on la nomme.
+  const _ecartInexplique = money2(totalBrut - _remiseSaisie - total);
+  // Le TOTAL AFFICHE doit toujours egaler « somme des lignes − remises saisies ». Sinon le
+  // document se contredit lui-meme : le client additionne les lignes et ne retrouve pas le
+  // total. On prefere donc le total RECALCULE des qu'un ecart inexplique apparait, et on le
+  // signale a Ben — un montant fige errone ne doit pas survivre a une correction de tarif.
+  const totalCoherent = money2(totalBrut - _remiseSaisie);
+  const totalAffiche = (Math.abs(_ecartInexplique) > 0.01) ? totalCoherent : total;
   // Pourcentage de remise à afficher : le % global saisi si présent, sinon le % effectif.
   const reducPct = gpct>0 ? gpct : (totalBrut>0 ? Math.round(reductions/totalBrut*1000)/10 : 0);
 
@@ -58986,10 +59079,11 @@ async function genererDevisDoc(docId){
        ${section}
        <div class="grand">
          ${reductions>0?`<div class="lg brut"><span>Total avant réductions</span><span>${euro(totalBrut)}</span></div><div class="lg reduc"><span>Réductions accordées${reducPct>0?` (−${reducPct}%)`:''}</span><span>\u2212${euro(reductions)}</span></div>`:''}
-         <div class="lg total"><span>Total du devis</span><span>${euro(total)}</span></div>
-         ${(()=>{ const R=docRabaisTotal(lignes, d.persoMacarons, total, d, d.persoLogoNb, d.forfaitCreationNb); return R.rabais>0?`<div class="lg reduc" style="color:#3f7d52;font-size:.9rem"><span>Rabais total consenti${R.pct>0?` (−${R.pct}%)`:''}</span><span>\u2212${euro(R.rabais)}</span></div>`:''; })()}
+         <div class="lg total"><span>Total du devis</span><span>${euro(totalAffiche)}</span></div>
+         ${Math.abs(_ecartInexplique) > 0.01 ? `<div class="note" style="color:#8a6d3b;text-align:right;font-size:.72rem">⚠ Montant recalculé (l'ancien total enregistré différait de ${euro(Math.abs(_ecartInexplique))}) — réenregistre le devis pour le figer.</div>` : ''}
+         ${(()=>{ const R=docRabaisTotal(lignes, d.persoMacarons, totalAffiche, d, d.persoLogoNb, d.forfaitCreationNb); return R.rabais>0?`<div class="lg reduc" style="color:#3f7d52;font-size:.9rem"><span>Rabais totalAffiche consenti${R.pct>0?` (−${R.pct}%)`:''}</span><span>\u2212${euro(R.rabais)}</span></div>`:''; })()}
        </div>
-       ${d.acompteMention!==false?`<div class="acompte-mention">⚠ Le versement d'un acompte de 75% (soit ${euro(money2(total*0.75))}) est requis pour valider votre devis.</div>`:''}
+       ${d.acompteMention!==false?`<div class="acompte-mention">⚠ Le versement d'un acompte de 75% (soit ${euro(money2(totalAffiche*0.75))}) est requis pour valider votre devis.</div>`:''}
        <div class="bas-final">
          ${factRibAvisCol(e)}
          <div class="legal-bloc">
@@ -59008,8 +59102,8 @@ async function genererDevisDoc(docId){
   const emailCible = client && client.email ? client.email : '';
   const objet = `Devis ${d.numero||''} — ${e.nom||'Sensations Macarons'}`;
   const nomClient = client ? ((client.prenomMail&&client.prenomMail.trim()) ? client.prenomMail.trim() : ((client.politesse==='tu') ? (client.prenom||client.nom||'') : [client.prenom, client.nom].filter(Boolean).join(' '))) : '';
-  const montantFmt = money2(total).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2});
-  const acompteFmt = money2(total*0.75).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const montantFmt = money2(totalAffiche).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const acompteFmt = money2(totalAffiche*0.75).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2});
   const signature = [e.exploitant, e.nom].filter(Boolean).join(' — ') || (e.nom||'Sensations Macarons');
   const _tu = client && client.politesse === 'tu';
   const corps = [
@@ -59017,8 +59111,8 @@ async function genererDevisDoc(docId){
     '',
     `${_tu?'Tu trouveras':'Veuillez trouver'} ci-dessous ${_tu?'ton':'votre'} devis n° ${d.numero||''} d'un montant de ${montantFmt} €.`,
     ...(d.acompteMention!==false ? [ _tu
-        ? `Ta commande sera considérée comme validée une fois ton acompte de ${acompteFmt} € versé (75% du montant total).`
-        : `Votre commande sera considérée comme validée une fois votre acompte de ${acompteFmt} € versé (75% du montant total).` ] : []),
+        ? `Ta commande sera considérée comme validée une fois ton acompte de ${acompteFmt} € versé (75% du montant totalAffiche).`
+        : `Votre commande sera considérée comme validée une fois votre acompte de ${acompteFmt} € versé (75% du montant totalAffiche).` ] : []),
     '',
     _tu ? 'En te remerciant par avance.' : 'Vous remerciant par avance.',
     '',
@@ -59046,9 +59140,9 @@ async function genererDevisDoc(docId){
     emetteur:{ nom:e.nom||'Sensations Macarons', lignes:emetteurLignes },
     client: clientLignes,
     lignes: docLignes,
-    sousTotal: totalBrut, remisePct: reducPct, remise: reductions, total: total,
+    sousTotal: totalBrut, remisePct: reducPct, remise: reductions, totalAffiche: totalAffiche,
     mentions:[
-      ...(d.acompteMention!==false ? [`Le versement d'un acompte de 75% (soit ${euro(money2(total*0.75))}) est requis pour valider ce devis.`] : []),
+      ...(d.acompteMention!==false ? [`Le versement d'un acompte de 75% (soit ${euro(money2(totalAffiche*0.75))}) est requis pour valider ce devis.`] : []),
       'TVA non applicable, article 293 B du Code général des impôts.',
       `Devis valable ${d.validiteJours||30} jours à compter de la date d'émission. Bon pour accord — date et signature :`
     ],
@@ -59094,8 +59188,8 @@ function _prepDocPdfMail(html, libelle, client, montant, opts){
   const objet = `${estFacture?'Facture':'Devis'} ${numero} — ${e.nom||'Sensations Macarons'}`;
   // Phrases conjuguées selon tutoiement/vouvoiement.
   const phraseAcompte = tu
-    ? `Ta commande sera considérée comme validée une fois ton acompte de ${acompteFmt} € versé (75% du montant total).`
-    : `Votre commande sera considérée comme validée une fois votre acompte de ${acompteFmt} € versé (75% du montant total).`;
+    ? `Ta commande sera considérée comme validée une fois ton acompte de ${acompteFmt} € versé (75% du montant totalAffiche).`
+    : `Votre commande sera considérée comme validée une fois votre acompte de ${acompteFmt} € versé (75% du montant totalAffiche).`;
   const corps = [
     `Bonjour${nomClient ? ' '+nomClient : ''},`, '',
     estFacture

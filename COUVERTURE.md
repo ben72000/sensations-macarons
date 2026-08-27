@@ -5969,3 +5969,57 @@ enregistré, dont les 3 points d'affichage (C) ; **garde de motif** — aucun ch
 résolveur enregistré (D).
 
 **Sensibilité vérifiée par réintroduction du défaut de la v1485** : 4 assertions rougissent.
+
+---
+
+## 2026-08-27 — LES FAUSSES RÉDUCTIONS : LA CAUSE RACINE  (v1490 → **v1491**)
+
+**Ben** : « j'inscris toutes les lignes au devis et quand je l'enregistre ça me crée de **fausses
+réductions pour combler l'écart** entre le prix réel et le prix enregistré. » Précédé de : « ça ne
+va toujours pas ! Les données ne s'enregistrent pas dans le devis c'est infernal !!! »
+
+### 🚨 La cause racine — et l'explication de toute la série
+La réduction affichée sur le devis était **déduite de l'écart** (`totalBrut − total`), jamais des
+remises réellement saisies. Tout désaccord entre le total recalculé et le montant enregistré se
+transformait donc en « réduction » : un **écart de données déguisé en geste commercial**, sur un
+document envoyé aux clients.
+
+**C'est ce mécanisme qui a masqué les quatre défauts précédents** — v1487 (écriture), v1488
+(relecture), v1489 (grille), v1490 (saisie). Il les **absorbait** au lieu de les montrer : chaque
+correction rendait le calcul plus juste, et l'écart réapparaissait ailleurs sous forme de remise.
+D'où l'impression, légitime, que rien n'avançait.
+
+### La règle posée
+Une réduction ne s'affiche que si elle a été **saisie**. Un écart résiduel n'est pas une remise : il
+est **nommé** à l'écran, et le total est **recalculé** pour rester cohérent avec ses propres lignes
+— sinon le client additionne les lignes et ne retrouve pas le total. Un avertissement invite à
+réenregistrer le devis pour figer la valeur correcte.
+
+Le **total, l'acompte et le message au client** basculent ensemble sur la valeur cohérente, pour
+qu'aucun ne contredise les autres.
+
+### Corrigé aussi
+Le supplément logo et le forfait création entrent désormais dans la **base de la remise globale**.
+Sans eux, une remise en euros était plafonnée trop bas — 600 € demandés rabotés à 500 € sur une
+commande de 500 € de lignes + 120 € de logo. Écart visible uniquement quand une remise est
+appliquée, ce qui explique qu'il soit passé inaperçu.
+
+### Livré avec : un diagnostic
+Bouton « 🔎 Diagnostic » sur la page Devis. Il montre **ce qui est réellement en base** pour le
+dernier devis : champs logo, marqueurs de grille, grille effectivement appliquée, montant figé,
+version de l'app, et le détail **ligne par ligne**. Il n'écrit rien. Après quatre correctifs qui
+n'avaient pas résolu le symptôme, il fallait cesser de deviner et **regarder les données**.
+
+### Suite v1491 : 32 assertions (`tests/v1491-fausses-reductions.test.js`)
+Le cas de Ben — plus aucune réduction inventée, écart détecté, total recalculé, **réconciliation**
+total = lignes + logo − remises (A) ; une vraie remise, en euros et en pourcentage, reste affichée
+(B) ; devis sans écart inchangé (C) ; devis jamais enregistré (D) ; câblage complet, dont la classe
+CSS du total **non renommée par erreur** (E) ; base de remise incluant le logo (F) ; le diagnostic
+n'écrit rien (G).
+
+**Sensibilité vérifiée par réintroduction** : 2 assertions rougissent.
+
+⚠️ Un remplacement de variable a d'abord renommé une **classe CSS** (`lg total` → `lg totalAffiche`),
+ce qui aurait cassé le style du total. Détecté et réparé immédiatement ; une assertion le surveille
+désormais. Et une de mes assertions était **fausse** (600 € plafonnés à 620 au lieu de 600) : c'est
+le test qui a été corrigé, pas le code.
