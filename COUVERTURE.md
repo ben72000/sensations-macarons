@@ -5922,3 +5922,50 @@ l'ancienne grille (E).
 ⚠️ La première tentative de mutation a **échoué sans être appliquée** — et la suite est restée verte,
 ce qui ne prouvait rien. Reprise avec vérification explicite que la mutation était bien en place
 avant de conclure (règle du projet depuis la v1454).
+
+---
+
+## 2026-08-27 — TARIF ÉVÉNEMENT FIGÉ À 1,60 € PENDANT LA SAISIE  (v1489 → **v1490**)
+
+**Ben** : « j'ai supprimé la commande pour tout recommencer et le tarif de 1,90 € n'est plus
+disponible. Ça revient à 1,60 € peu importe que la case appliquer les anciens tarifs soit cochée ou
+non. »
+
+### 🚨 Défaut introduit par ma propre v1485
+En v1485, j'ai remplacé la constante figée par `tarifsDeLigne(ln)` — le résolveur des lignes
+**enregistrées**, où l'absence de marqueur signifie « ligne héritée » et renvoie l'**ancienne
+grille**. Or une ligne **en cours de saisie** n'a pas encore de `tarifRef` : elle retombait donc
+**toujours** sur 1,60 €, case cochée ou non.
+
+### ⚠️ Le piège était déjà documenté — et j'y suis retombé
+La v1469 avait établi la règle : **deux résolveurs distincts**, `tarifsDeLigne` pour les lignes
+enregistrées, `tarifsLigneSaisie` pour le modèle d'édition. Confondre les deux avait alors fait
+facturer 7,50 € en affichant 6,50 €. Six versions plus tard, j'ai reproduit exactement la même
+confusion sur un autre type de ligne.
+
+Grand format, vrac et sachet utilisaient déjà correctement le résolveur de saisie ; seul l'événement
+ne l'avait pas.
+
+### Le fix
+Une variante `eventUnitPriceSaisie` qui consulte la **case du formulaire** quand le marqueur manque.
+Elle est utilisée par le calcul de la ligne en édition **et par ses trois points d'affichage** — un
+calcul juste qui n'atteint pas l'écran n'est pas une correction.
+
+Les chemins de données **enregistrées** (`lineTotalStored`, `cmdView`, calcul de marge) gardent
+l'ancien résolveur : c'est lui qui **protège l'historique**, une ligne d'avant la v1463 devant rester
+sur l'ancienne grille quelle que soit la case cochée aujourd'hui.
+
+### Une assertion de la v1485 a dû suivre
+La suite v1485 exigeait `eventUnitPrice(ln)` sur ce chemin de saisie — assertion écrite avant que la
+distinction ne soit faite. Elle a été **alignée sur la nouvelle règle** : ici, c'est le test qui
+devait suivre le code, et non l'inverse. Décision prise après avoir vérifié que le chemin visé est
+bien un chemin d'édition.
+
+### Suite v1490 : 19 assertions (`tests/v1490-event-tarif-saisie.test.js`)
+Le cas de Ben — ligne neuve, case décochée → 1,90 €, cochée → 1,60 €, et **la case fait une
+différence** (A) ; non-régression — ligne héritée sur l'ancienne grille, ligne marquée sur la
+courante, **réconciliation** des deux résolveurs sur une ligne déjà marquée (B) ; câblage saisie vs
+enregistré, dont les 3 points d'affichage (C) ; **garde de motif** — aucun chemin d'édition sur le
+résolveur enregistré (D).
+
+**Sensibilité vérifiée par réintroduction du défaut de la v1485** : 4 assertions rougissent.

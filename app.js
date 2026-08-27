@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1489'; // suite : voir tests/v1489-devis-grille-tarifaire.test.js
-const APP_MAJ = 'LE DEVIS CHANGEAIT DE GRILLE EN CHANGEANT D ECRAN. Ben : « sur la page listant les devis le montant n est pas conforme. Quand je clique dessus pour voir le detail la j ai bien tout indique avec les prix. En revanche quand je fais visualiser devis la ca disparait de nouveau. Seule la quantite de macarons reste ». TROIS SYMPTOMES, UNE SEULE CAUSE : le devis n enregistrait NI `tarifRef` NI `ancienTarif`. Or le resolveur traite un contexte SANS marqueur comme une commande HERITEE et renvoie la grille HISTORIQUE — ou le logo n existe pas. Le supplement valait donc ZERO au rendu, et une ligne a zero ne s affiche pas. Le detail, lui, lit des montants deja calcules : d ou un ecran juste et l autre vide, sur le MEME document. C est la description precise de Ben (quel ecran montre quoi) qui a permis de trouver la cause — sans elle j aurais corrige le total, qui n etait pas en cause. FIX : le devis porte desormais les MEMES marqueurs que la commande, ecrits ET relus (sinon perte au premier aller-retour, lecon v1488). Son sous-total inclut enfin le logo et le forfait creation, alignes sur la methode que la FACTURE utilisait deja — son commentaire decrivait meme exactement ce symptome, mais le devis n avait jamais ete aligne dessus. RATTRAPAGE des devis existants, prudent parce qu il s agit d argent : seuls les DEVIS (jamais une facture emise), seulement ceux sans aucun marqueur, `tarifRef` prend LA DATE DU DEVIS et non celle du jour, et `ancienTarif` reste false — on ne devine pas un choix que Ben n a jamais exprime. Idempotente. Suite v1489 : 27 assertions, dont la reconciliation avant/apres (150 macarons logotes : 0 € avant, 120 € apres) ; sensibilite verifiee par reintroduction (6 rouges).';
+const APP_VERSION = 'v1490'; // suite : voir tests/v1490-event-tarif-saisie.test.js
+const APP_MAJ = 'LE TARIF EVENEMENT RETOMBAIT A 1,60 € PENDANT LA SAISIE — DEFAUT QUE J AVAIS MOI-MEME INTRODUIT EN v1485. Ben : « j ai supprime la commande pour tout recommencer et le tarif de 1,90 € n est plus disponible. Ca revient a 1,60 € peu importe que la case appliquer les anciens tarifs soit cochee ou non ». CAUSE : en v1485 j avais remplace la constante figee par le resolveur des lignes ENREGISTREES, ou l absence de marqueur signifie « ligne heritee » et renvoie l ancienne grille. Or une ligne EN COURS DE SAISIE n a pas encore de marqueur : elle retombait donc TOUJOURS sur 1,60 €, case cochee ou non. C est EXACTEMENT le piege documente en v1469 — DEUX RESOLVEURS DISTINCTS, l un pour les lignes enregistrees, l autre pour le modele d edition — et j y suis retombe. FIX : une variante de saisie qui consulte la CASE DU FORMULAIRE quand le marqueur manque, comme le font deja grand format, vrac et sachet. Elle est utilisee par le calcul de la ligne en edition ET par ses TROIS points d affichage — un calcul juste qui n atteint pas l ecran n est pas une correction. Les chemins de donnees ENREGISTREES gardent l ancien resolveur : c est lui qui protege l historique, une ligne d avant la v1463 devant rester sur l ancienne grille quelle que soit la case cochee aujourd hui. Une assertion de la suite v1485 exigeait l ancien appel sur ce chemin de saisie : elle a ete alignee sur la nouvelle regle, c est le test qui devait suivre. Suite v1490 : 19 assertions, dont la preuve que la case fait desormais une difference sur une ligne neuve ; sensibilite verifiee par reintroduction du defaut de v1485 (4 rouges).';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
 const _APP_MAJ_v1448_ARCHIVE_INUTILISEE = 'LE CHAMP « N° LOT DE PRODUCTION » MENTAIT EN MODE DUO. Ben, capture à l\u2019appui : lançant Chocolat passion + Pistache en meringue commune, le champ affichait « 030826RAF » — ni CHP ni PIS, mais RAF (Coco Rafaello, une tout autre recette). CAUSE : la branche duo de saveProd() ne lit JAMAIS ce champ — chaque parfum reçoit son propre lot, calculé indépendamment. Sa valeur affichée venait de prodRefreshLot(), qui lit TOUJOURS la recette unique (f_rec) — or f_rec reste dans la page (juste masquée) en duo, avec la valeur de la DERNIÈRE recette affichée avant le passage en duo. Un champ qui ment ET n\u2019a aucun effet réel est pire qu\u2019un champ absent. Même défaut, plus discret, sur la case « diviser en 2 lots » (v1445/v1446) : cochée, ce champ n\u2019est pas plus lu par le lancement réel. FIX : le champ est désormais masqué dans ces deux cas ; à la place, les VRAIS numéros de lot qui seront utilisés sont prévisualisés — en mode duo dans le récapitulatif de répartition, et pour la division bicolore dans son propre encart — calculés avec EXACTEMENT la même formule que la sauvegarde réelle, jamais un second calcul qui pourrait diverger. Suite v1448 : 12 assertions (tests/v1448-lot-duo-preview.test.js), dont une réconciliation qui rejoue la vraie formule de sauvegarde et vérifie que l\u2019aperçu affiche bien 030826CHP-CO et 030826PIS-CO — jamais RAF.';
@@ -4834,6 +4834,19 @@ function pyraPrixCourant(){
 // Prix unitaire du macaron en événement, SELON LA GRILLE de la ligne (v1463).
 // La règle « pyramide présente → tarif pyramide » est conservée telle quelle : elle décrit le
 // mode de prestation, pas la grille tarifaire. Seul le tarif événement standard suit la grille.
+// [v1490] Ben : « j'ai supprime la commande pour tout recommencer et le tarif de 1,90 € n'est plus
+// disponible. Ca revient a 1,60 € peu importe que la case soit cochee ou non ».
+// 🚨 C'EST MA CORRECTION DE LA v1485 QUI A INTRODUIT CA. J'ai remplace la constante figee par
+// `tarifsDeLigne(ln)` — le resolveur des lignes ENREGISTREES, ou l'absence de marqueur signifie
+// « ligne heritee » et renvoie l'ancienne grille. Or une ligne EN COURS DE SAISIE n'a pas encore
+// de `tarifRef` : elle retombait donc TOUJOURS sur 1,60 €, case cochee ou non.
+// C'est exactement le piege documente en v1469 — DEUX RESOLVEURS DISTINCTS — et j'y suis retombe.
+// `tarifsLigneSaisie` consulte la CASE DU FORMULAIRE quand le marqueur manque : c'est lui qu'il
+// faut pour une ligne en cours d'edition, comme le font deja grand format, vrac et sachet.
+function eventUnitPriceSaisie(ln){
+  const g = tarifsLigneSaisie(ln);
+  return (g && g.event!=null) ? +g.event : EVENT_PRICE;
+}
 function eventUnitPrice(ln){
   // [v1485] Ben : « le tarif de 1,90 € par macaron ne passe pas dans mes nouveaux tarifs, ça reste
   // bloqué à l'ancien », puis : « en cliquant sur ancien tarif je veux 1,60 € dans le cadre d'un
@@ -23155,6 +23168,9 @@ function fermerCompositionModale(){
   cmdForm(_cmdEditingId||0, {keepLines:true});
 }
 
+// [v1490] RENDU DE LA LIGNE EN SAISIE : resolveur de SAISIE, sinon l'ecran afficherait 1,60 €
+// pendant que la case dit « tarifs en vigueur ». Le calcul juste ne suffit pas — il doit atteindre
+// l'ecran (lecon repetee 5 fois sur ce projet).
 function drawEventLine(ln,i){
   const flavRows = FLAVORS.map((f,fi)=>{
     const q=ln.parfums[f]||0;
@@ -23179,11 +23195,11 @@ function drawEventLine(ln,i){
   </div>`;
   // --- Logique pyramide intégrée ---
   const hasPyra=(+ln.equip||0)>0;                 // une pyramide est présente
-  const prixMac = eventUnitPrice(ln);   // [v1485] suit la grille (case « anciens tarifs »), plus de prix fige
+  const prixMac = eventUnitPriceSaisie(ln);   // [v1485] suit la grille (case « anciens tarifs »), plus de prix fige
   const totalLigne = (+ln.evQte||0)*prixMac + pyraTotalLigne(ln) + accessoireDecoTotal(ln);
 
   return `<div class="cmd-line">
-    <div class="line-head"><span class="line-type">Événement <span class="line-sub">${euro(eventUnitPrice(ln))}/macaron${hasPyra?' (pyramide)':''} · min ${EVENT_MIN} · ≥1 pyramide</span></span><span class="line-del" onclick="removeLine(${i})">✕ retirer</span></div>
+    <div class="line-head"><span class="line-type">Événement <span class="line-sub">${euro(eventUnitPriceSaisie(ln))}/macaron${hasPyra?' (pyramide)':''} · min ${EVENT_MIN} · ≥1 pyramide</span></span><span class="line-del" onclick="removeLine(${i})">✕ retirer</span></div>
     <div class="row2">
       <div class="field"><label>Nombre de macarons</label><input type="number" min="${EVENT_MIN}" value="${ln.evQte}" oninput="setEventQte(${i},this.value)"></div>
       <div class="field"><label>Pyramides / présentoirs <span style="font-weight:400;color:#9a8a82;font-size:.74rem">(max)</span></label><input type="number" min="0" inputmode="numeric" value="${(()=>{const f=(ln.evFiltrePyr!=null?+ln.evFiltrePyr:+ln.equip||0);return f>0?f:'';})()}" placeholder="toutes les options" oninput="setEventEquip(${i},this.value)"></div>
@@ -23233,7 +23249,7 @@ function drawEventLine(ln,i){
         <span>${nbDiff} parfum(s) attribué(s)${evSansParfum?` + ${evSansParfum} sans parfum`:''}</span>
         <b style="color:${col};font-size:1.1rem">${txt}</b></div>`;
     })()}
-    <div class="sum-box"><span>${ln.evQte} macarons${hasPyra?` × ${euro(eventUnitPrice(ln))}`:''} · ${ln.equip} pyramide(s)</span><b>${euro(totalLigne)}</b></div>
+    <div class="sum-box"><span>${ln.evQte} macarons${hasPyra?` × ${euro(eventUnitPriceSaisie(ln))}`:''} · ${ln.equip} pyramide(s)</span><b>${euro(totalLigne)}</b></div>
     ${lineRemiseRow(ln,i)}
   </div>`;
 }
@@ -23753,7 +23769,7 @@ function lineTotalBase(ln){
     const over = Math.max(0, nbDiff-limit);
     return money2(base + over*FLAVOR_SURCHARGE);
   }
-  if(ln.type==='evenement') return addMoney(addMoney(mulMoney(ln.evQte||0,eventUnitPrice(ln)), pyraTotalLigne(ln)), accessoireDecoTotal(ln));
+  if(ln.type==='evenement') return addMoney(addMoney(mulMoney(ln.evQte||0,eventUnitPriceSaisie(ln)), pyraTotalLigne(ln)), accessoireDecoTotal(ln));
   if(ln.type==='grand'){ const pu=bigPrice(ln.tarif, {__grille:tarifsLigneSaisie(ln)}); const tot=Object.values(ln.items||{}).reduce((s,q)=>s+(+q||0),0); return mulMoney(tot,pu); }
   if(ln.type==='vrac'){ const pu=vracPrixMacaron(ln, tarifsLigneSaisie(ln)); const tot=Object.values(ln.parfums||{}).reduce((s,q)=>s+(+q||0),0) + (+ln.sansParfum||0); return mulMoney(tot,pu); }
   if(ln.type==='sachet'){ const tot=Object.values(ln.parfums||{}).reduce((s,q)=>s+(+q||0),0) + (+ln.sansParfum||0); return sachetPrixPour(tot, tarifsLigneSaisie(ln)); }

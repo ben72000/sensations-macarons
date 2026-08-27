@@ -57,7 +57,11 @@ function check(label, cond){ if(cond){ pass++; } else { fail++; failures.push(la
   const usages = [...code.matchAll(/euro\(PYRA_PRICE\)|\*\s*PYRA_PRICE|PYRA_PRICE\s*\*/g)];
   check(`C. plus aucun prix figé affiché ou multiplié (${usages.length})`, usages.length === 0);
   check('C. la ligne de commande affiche le prix de SA grille', /euro\(eventUnitPrice\(ln\)\)/.test(code));
-  check('C. …et le calcule avec la même fonction', /const prixMac = eventUnitPrice\(ln\)/.test(code));
+  // [v1490] Ce chemin est en SAISIE : il doit utiliser le resolveur de saisie, qui consulte la case
+  //    du formulaire quand la ligne n'a pas encore de marqueur. `eventUnitPrice` y renvoyait
+  //    toujours l'ancienne grille — le defaut corrige en v1490. L'assertion suit la nouvelle regle.
+  check('C. …et le calcule avec le résolveur de SAISIE (la case décide)',
+    /const prixMac = eventUnitPriceSaisie\(ln\)/.test(code));
   // L'optimiseur (écran de planification, sans ligne) utilise la grille EN VIGUEUR.
   const srcOpt = extractFunction('pyraPrixCourant');
   check('C. l\'optimiseur suit la grille en vigueur', /grilleCourante\(\)/.test(srcOpt));
