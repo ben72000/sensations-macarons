@@ -5831,3 +5831,47 @@ correction (E) ; **garde de motif** sur les trois constructeurs (F).
 
 **Sensibilité vérifiée par réintroduction** : 4 assertions rougissent, la garde nommant les deux
 constructeurs fautifs.
+
+---
+
+## 2026-08-27 — LA VRAIE CAUSE : LE DEVIS NE SE RELISAIT PAS  (v1487 → **v1488**)
+
+**Ben, après la v1487** : « à l'enregistrement le problème reste entier. Pas de sauvegarde. Tout se
+passe bien au moment de remplir mais rien ne s'enregistre à la fin. »
+
+### 🚨 La v1487 corrigeait l'écriture — le symptôme venait de la relecture
+Les champs manquaient **vraiment** dans les constructeurs de documents ; ce correctif était juste et
+reste nécessaire. Mais quand `cmdForm` rouvre un devis, il reconstruit son modèle **champ par
+champ** depuis le document — et les champs logo n'y figuraient pas.
+
+Conséquence : à la réouverture, les champs paraissaient **vides**. Et en réenregistrant, ces vides
+**écrasaient** les bonnes valeurs. D'où l'impression que rien ne se sauvegarde jamais, alors que
+l'écriture, elle, fonctionnait.
+
+### ⚠️ Même leçon qu'en v1481
+J'ai de nouveau corrigé un mécanisme fautif **sans suivre la boucle complète** :
+écriture → relecture → réécriture. Un aller simple vérifié ne prouve pas qu'un **aller-retour**
+tient. C'est la deuxième fois sur ce projet ; la parade est désormais outillée.
+
+### La garde qui aurait évité ce bug
+Une assertion générique compare ce que le devis **écrit** (`docObj`) à ce qu'il **relit** (`cmdForm`)
+et signale tout champ de saisie oublié. Les champs **régénérés** à l'enregistrement (montant,
+numéro, validité, statut, type, acompte, lien de commande) sont exclus : leur absence est correcte.
+
+Vérification faite sur l'ensemble : **plus aucun champ de saisie n'est perdu**.
+
+### Le parcours de diagnostic
+Cinq hypothèses écartées avant la bonne, chacune testée plutôt que supposée : identifiants des
+champs (corrects), `val()` (correct), équilibre des `<div>` du bloc (équilibré, profondeur 0), garde
+de « date de paiement manquante » (ne se déclenche pas sur un devis), et `docObj` (contenait bien
+les champs depuis la v1487). C'est en remontant jusqu'au **chargement** du formulaire que la cause
+est apparue.
+
+### Suite v1488 : 18 assertions (`tests/v1488-devis-relecture-logo.test.js`)
+La relecture restitue quantité, forfait et drapeau (A) ; **garde générique** écriture vs relecture
+(B) ; **réconciliation** sur le cycle complet écriture → relecture → réécriture, 150 macarons
+logotés toujours à 150 (C) ; non-régression de l'écriture v1487 (D) ; le formulaire pré-remplit bien
+les champs (E).
+
+**Sensibilité vérifiée par réintroduction** : 4 assertions rougissent, la garde **nommant** les
+champs perdus.
