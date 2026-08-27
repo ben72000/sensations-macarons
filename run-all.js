@@ -186,7 +186,8 @@ const SUITES = [
   'v1482-bicolore-lot-unique.test.js',          // v1482 · assemblage bloqué sur coques bicolores migrées (le lot courant était proposé comme 2e lot) + nom affiché « #[object Object] »
   'v1483-indisponibilites.test.js',             // v1483 · croix d'indisponibilité au calendrier (jour + période) et alerte non bloquante à la prise de commande
   'v1485-tarif-pyramide-et-modele.test.js',     // v1485 · le tarif événement avec pyramide suit la grille (1,60 € / 1,90 €) + modèle 15 étages 285 macarons et sa migration
-  'v1486-logo-accessible.test.js'               // v1486 · personnalisation logo insaisissable : le bloc n'apparaissait que s'il était déjà rempli (case à cocher manquante)
+  'v1486-logo-accessible.test.js',              // v1486 · personnalisation logo insaisissable : le bloc n'apparaissait que s'il était déjà rempli (case à cocher manquante)
+  'v1487-devis-logo-persiste.test.js'           // v1487 · le devis perdait la personnalisation logo : champs jamais copiés dans 3 constructeurs de documents, aller ET retour
 ];
 
 let allOk = true;

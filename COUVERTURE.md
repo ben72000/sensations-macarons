@@ -5786,3 +5786,48 @@ sans crédit (A) ; **les paliers réels de l'app** et le forfait à 40 € (A bi
 deux personnalisations, forfait par modèle (B) ; grille historique sans supplément (C) ; la case,
 le vidage des **deux** champs, la persistance du drapeau (D) ; la ligne sur devis et facture, avec
 **réconciliation** 150 × 0,80 = 120,00 € (E).
+
+---
+
+## 2026-08-27 — LE DEVIS PERDAIT LA PERSONNALISATION LOGO  (v1486 → **v1487**)
+
+**Ben** : « quand j'enregistre le devis la personnalisation logo ne se sauvegarde pas. »
+
+### 🚨 La cause
+Les champs logo n'ont **jamais** été copiés dans le document. Ajoutés en v1463, ils ont été oubliés
+dans les constructeurs — le commentaire voisin dit d'ailleurs « personnalisation des **couleurs** »,
+la ligne n'a jamais été étendue au logo. Le devis figeait donc un supplément à **zéro** alors que la
+commande le portait.
+
+### Trois constructeurs corrigés
+1. **Enregistrer un devis depuis la commande** — le geste exact de Ben ;
+2. **Repasser une commande en devis** ;
+3. **Le chemin retour** : un devis accepté qui redevient commande perdait lui aussi le supplément.
+
+Le troisième n'avait **pas** été signalé. Il a été trouvé en vérifiant l'aller-retour complet, et
+c'était le plus coûteux : le client aurait signé un devis à 120 € de logo, et la commande serait
+repartie à zéro.
+
+La **facture multi-commandes** n'avait rien à corriger : elle mémorise son HTML complet
+(`html:factureHtml`), donc la ligne logo y est déjà figée dans le rendu. Vérifié plutôt que supposé —
+ajouter les champs n'aurait servi à rien.
+
+### ⚠️ C'est la garde de motif qui a trouvé le constructeur principal
+Mon inspection manuelle avait ciblé une ancre **voisine** du bon constructeur : j'avais corrigé deux
+chemins secondaires en croyant traiter celui de Ben. L'assertion générique — *tout constructeur qui
+copie la personnalisation couleurs doit copier le logo* — est restée rouge et a pointé la ligne
+exacte.
+
+Elle avait d'abord produit un **faux positif** : retirer les commentaires décalait les numéros de
+ligne et la faisait pointer un `await` sans rapport. Corrigée pour travailler sur le fichier réel,
+elle a immédiatement désigné le vrai coupable. Troisième fois sur ce projet qu'une garde générique
+bat l'inspection manuelle.
+
+### Suite v1487 : 19 assertions (`tests/v1487-devis-logo-persiste.test.js`)
+Les trois constructeurs copient quantité, forfait et drapeau (A, B, C) ; **réconciliation** — une
+commande à 120 € de logo + 40 € de création reste à 160 € après un aller-retour complet
+commande → devis → commande, drapeau compris (D) ; la facture multi-commandes vérifiée sans
+correction (E) ; **garde de motif** sur les trois constructeurs (F).
+
+**Sensibilité vérifiée par réintroduction** : 4 assertions rougissent, la garde nommant les deux
+constructeurs fautifs.
