@@ -5,8 +5,8 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1491'; // suite : voir tests/v1491-fausses-reductions.test.js
-const APP_MAJ = 'LES FAUSSES REDUCTIONS — LA CAUSE RACINE QUI MASQUAIT TOUT LE RESTE. Ben : « j inscris toutes les lignes au devis et quand je l enregistre ca me cree de fausses reductions pour combler l ecart entre le prix reel et le prix enregistre ». C ETAIT LA VRAIE EXPLICATION DE TOUTE LA SERIE : la reduction affichee sur le devis etait DEDUITE DE L ECART entre le total recalcule et le montant enregistre, jamais des remises reellement saisies. Tout desaccord se transformait donc en « reduction » — un ecart de donnees DEGUISE EN GESTE COMMERCIAL, sur un document envoye aux clients. C est ce mecanisme qui a MASQUE les quatre defauts precedents (ecriture, relecture, grille, saisie) : il les absorbait au lieu de les montrer, et chaque correction faisait reapparaitre l ecart ailleurs sous forme de remise. REGLE POSEE : une reduction ne s affiche que si elle a ete SAISIE. Un ecart residuel n est pas une remise — il est NOMME, et le total est recalcule pour rester coherent avec ses propres lignes, avec un avertissement invitant a reenregistrer le devis. Le total, l acompte et le message au client basculent ensemble, pour qu aucun ne contredise les autres. CORRIGE AUSSI : le supplement logo et le forfait creation entrent desormais dans la base de la remise globale — sans eux une remise en euros etait plafonnee trop bas (600 € demandes rabotes a 500 €), ecart visible seulement quand une remise etait appliquee. LIVRE AVEC : un ecran « 🔎 Diagnostic » sur la page Devis, qui montre CE QUI EST REELLEMENT EN BASE — champs logo, marqueurs de grille, grille appliquee, montant fige, et le detail ligne par ligne. Il n ecrit rien. Suite v1491 : 32 assertions ; sensibilite verifiee par reintroduction (2 rouges).';
+const APP_VERSION = 'v1493'; // suite : voir tests/v1493-empreinte-bancaire.test.js
+const APP_MAJ = '« CHEQUE DE CAUTION » DEVIENT « EMPREINTE BANCAIRE ». Ben : « le cheque de caution doit se transformer en empreinte bancaire. Peux-tu changer la mention partout ou apparait cheque de caution ? » ⚠️ CE N ETAIT PAS UN SIMPLE RENOMMAGE : le texte associe decrivait des gestes propres a un CHEQUE — il est « remis », il « n est pas encaisse », il est « restitue ». Une empreinte bancaire se PREND, se DEBITE et s ANNULE. Renommer sans adapter les verbes aurait laisse des clauses incoherentes dans les CGV, un document juridique transmis aux clients. Les VERBES ONT DONC ETE ADAPTES partout : sur la ligne du devis et de la facture (« empreinte prise le jour de la livraison, non debitee, annulee apres retour du materiel »), et dans les trois clauses concernees des CGV — 7.1 (prise a la mise a disposition, non debitee, annulee), 7.2 (aucune empreinte exigee du particulier) et 7.4 (l empreinte pourra etre DEBITEE, et non encaissee). La logique juridique est inchangee : montants dus, complement exigible, surplus restitue, engagement sur l honneur du particulier. LES IDENTIFIANTS DE CODE SONT CONSERVES (CAUTION_CHEQUE, cautionRowHtml, cautionMention) : les renommer toucherait des dizaines de references et des donnees DEJA ENREGISTREES, pour zero gain visible. Seul le texte vu par le client change. Les documents deja emis gardent leur redaction d origine, puisqu ils memorisent leur rendu. Suite v1493 : 27 assertions, dont la verification que le vocabulaire du cheque a bien disparu ; un renommage NAIF (terme change mais verbes conserves) fait rougir 5 assertions. La suite v1492 a suivi le nouveau libelle, son mecanisme etant inchange.';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
 const _APP_MAJ_v1448_ARCHIVE_INUTILISEE = 'LE CHAMP « N° LOT DE PRODUCTION » MENTAIT EN MODE DUO. Ben, capture à l\u2019appui : lançant Chocolat passion + Pistache en meringue commune, le champ affichait « 030826RAF » — ni CHP ni PIS, mais RAF (Coco Rafaello, une tout autre recette). CAUSE : la branche duo de saveProd() ne lit JAMAIS ce champ — chaque parfum reçoit son propre lot, calculé indépendamment. Sa valeur affichée venait de prodRefreshLot(), qui lit TOUJOURS la recette unique (f_rec) — or f_rec reste dans la page (juste masquée) en duo, avec la valeur de la DERNIÈRE recette affichée avant le passage en duo. Un champ qui ment ET n\u2019a aucun effet réel est pire qu\u2019un champ absent. Même défaut, plus discret, sur la case « diviser en 2 lots » (v1445/v1446) : cochée, ce champ n\u2019est pas plus lu par le lancement réel. FIX : le champ est désormais masqué dans ces deux cas ; à la place, les VRAIS numéros de lot qui seront utilisés sont prévisualisés — en mode duo dans le récapitulatif de répartition, et pour la division bicolore dans son propre encart — calculés avec EXACTEMENT la même formule que la sauvegarde réelle, jamais un second calcul qui pourrait diverger. Suite v1448 : 12 assertions (tests/v1448-lot-duo-preview.test.js), dont une réconciliation qui rejoue la vraie formule de sauvegarde et vérifie que l\u2019aperçu affiche bien 030826CHP-CO et 030826PIS-CO — jamais RAF.';
@@ -4899,10 +4899,13 @@ const ACCESS_DECO_PRICE = 17;   // location accessoire décoratif (ruban + déco
 function accessoireDecoActif(ln){ return !!(ln && ln.accessoireDeco) && (+(ln&&ln.equip)||0)>0; }
 // Montant TOTAL de l'accessoire sur la ligne (nb pyramides × prix unitaire), 0 si inactif.
 function accessoireDecoTotal(ln){ return accessoireDecoActif(ln) ? money2((+(ln&&ln.equip)||0) * ACCESS_DECO_PRICE) : 0; }
-// [v1247] CAUTION : un chèque de caution est demandé dès qu'une LOCATION figure sur la commande
+// [v1247] CAUTION : une empreinte bancaire est prise des qu'une LOCATION figure sur la commande
+// [v1493] Ben : « le cheque de caution doit se transformer en empreinte bancaire ». Le NOM des
+// identifiants (CAUTION_CHEQUE, cautionRowHtml, cautionMention) est CONSERVE : les renommer
+// toucherait des dizaines de references et des donnees deja enregistrees, pour zero gain visible.
 //  (pyramide louée OU accessoire décoratif). Montant fixe par commande, NON encaissé (rendu après
 //  retour du matériel) → n'affecte JAMAIS le total à payer. Simple mention sur la facture/devis.
-const CAUTION_CHEQUE = 80;      // montant du chèque de caution (fixe, par commande)
+const CAUTION_CHEQUE = 80;      // montant de l'empreinte bancaire (fixe, par commande)
 // Une ligne comporte-t-elle une location (pyramide louée ou accessoire) ?
 function ligneALocation(ln){
   if(!ln || ln.type!=='evenement') return false;
@@ -4912,11 +4915,17 @@ function ligneALocation(ln){
 }
 // La commande (tableau de lignes) comporte-t-elle au moins une location ?
 function cmdALocation(lignes){ return Array.isArray(lignes) && lignes.some(ligneALocation); }
-// Ligne <tr> « chèque de caution » à insérer dans la facture/devis quand il y a une location.
-function cautionRowHtml(lignes){
+// Ligne <tr> « empreinte bancaire » à insérer dans la facture/devis quand il y a une location.
+// [v1492] Ben : « peut-on rendre optionnelle la mention (empreinte bancaire), au même titre que la
+// mention 75 % d'acompte ». Le drapeau `cautionMention` suit EXACTEMENT le motif de
+// `acompteMention` : absent ou true = affichée (comportement d'avant, donc AUCUN document existant
+// ne change), false = masquée. Le 2e argument est OPTIONNEL : les appels qui ne le passent pas
+// gardent le comportement d'origine, ce qui protège tout chemin que j'aurais pu manquer.
+function cautionRowHtml(lignes, ctx){
+  if(ctx && ctx.cautionMention === false) return '';
   if(!cmdALocation(lignes)) return '';
-  return `<tr><td class="desc"><span class="ln-main">Chèque de caution</span>`+
-         `<span class="ln-loc">${euro(CAUTION_CHEQUE)} à remettre le jour de votre livraison — non encaissé, restitué après retour du matériel</span></td>`+
+  return `<tr><td class="desc"><span class="ln-main">Empreinte bancaire</span>`+
+         `<span class="ln-loc">${euro(CAUTION_CHEQUE)} — empreinte prise le jour de la livraison, non débitée, annulée après retour du matériel</span></td>`+
          `<td class="mt" style="color:#8a7a72">pour mémoire</td></tr>`;
 }
 
@@ -6946,10 +6955,10 @@ function cgvArticles(){
 
     {t:'Article 7 — Mise à disposition de matériel', h:
       `Lorsque la prestation inclut la mise à disposition de matériel (pyramides, présentoirs, supports et accessoires décoratifs), celui-ci demeure la propriété exclusive du Prestataire et est confié au Client à titre de prêt pour la durée de l’événement. Le Client est responsable du matériel pendant toute la durée du prêt, y compris du fait de ses invités ou prestataires.<br><br>`+
-      `<b>7.1 Client professionnel (B2B) — chèque de caution.</b> Pour le Client professionnel, un chèque de caution, d’un montant correspondant à la valeur de remplacement du matériel confié, est remis au moment de la mise à disposition. Ce chèque n’est pas encaissé et est restitué au Client après retour du matériel en bon état.<br><br>`+
-      `<b>7.2 Client particulier (B2C) — sans caution ni dépôt de garantie.</b> Pour le Client consommateur, aucun chèque de caution, dépôt de garantie ou somme d’argent n’est exigé au titre de la mise à disposition du matériel. Le Client reconnaît, par la signature du devis, avoir reçu le matériel en bon état et s’engage sur l’honneur à en assurer la garde et à le restituer dans les conditions du présent article. En cas de casse, détérioration, perte ou non-restitution, le matériel est facturé au prix de remplacement dans les conditions de l’article 7.4.<br><br>`+
+      `<b>7.1 Client professionnel (B2B) — empreinte bancaire.</b> Pour le Client professionnel, une empreinte bancaire, d’un montant correspondant à la valeur de remplacement du matériel confié, est prise au moment de la mise à disposition. Cette empreinte n’est pas débitée et est annulée après retour du matériel en bon état.<br><br>`+
+      `<b>7.2 Client particulier (B2C) — sans empreinte ni dépôt de garantie.</b> Pour le Client consommateur, aucune empreinte bancaire, dépôt de garantie ou somme d’argent n’est exigé au titre de la mise à disposition du matériel. Le Client reconnaît, par la signature du devis, avoir reçu le matériel en bon état et s’engage sur l’honneur à en assurer la garde et à le restituer dans les conditions du présent article. En cas de casse, détérioration, perte ou non-restitution, le matériel est facturé au prix de remplacement dans les conditions de l’article 7.4.<br><br>`+
       `<b>7.3 Restitution.</b> Le matériel doit être restitué dans un délai de quarante-huit (48) heures suivant l’événement, dans l’état où il a été confié.<br><br>`+
-      `<b>7.4 Casse, perte ou non-restitution.</b> En cas de casse, détérioration, perte ou non-restitution dans le délai imparti, le matériel est facturé au Client à son prix de remplacement. Pour le Client professionnel, le chèque de caution pourra être encaissé à ce titre, à hauteur des sommes dues ; tout complément reste exigible, tout surplus est restitué. Pour le Client consommateur, le prix de remplacement fait l’objet d’une facturation distincte, payable dans les conditions de droit commun.`},
+      `<b>7.4 Casse, perte ou non-restitution.</b> En cas de casse, détérioration, perte ou non-restitution dans le délai imparti, le matériel est facturé au Client à son prix de remplacement. Pour le Client professionnel, l’empreinte bancaire pourra être débitée à ce titre, à hauteur des sommes dues ; tout complément reste exigible, tout surplus est restitué. Pour le Client consommateur, le prix de remplacement fait l’objet d’une facturation distincte, payable dans les conditions de droit commun.`},
 
     {t:'Article 8 — Conservation, denrées et allergènes', h:
       `<b>Conservation des produits.</b> Les macarons sont des denrées fraîches, à consommer dans un délai de six (6) jours après la livraison. Ils doivent être conservés au frais et ne doivent pas être congelés. Sortir les macarons du réfrigérateur quelques minutes avant dégustation.<br><br>`+
@@ -11607,7 +11616,7 @@ async function docConvertToOrder(id){
     tempsLivraisonMin:d.tempsLivraisonMin||0, consoVehicule:(d.consoVehicule!=null?d.consoVehicule:null),
     fraisLivraison:d.fraisLivraison||0, sacMatId:d.sacMatId||0, sacNb:d.sacNb||0,
     lignes:d.lignes||[], remiseGlobale:d.remiseGlobale||0, remiseGlobaleEur:(d.remiseGlobaleEur!=null?+d.remiseGlobaleEur:null),
-    perso:!!(d.perso||+d.persoMacarons>0), persoMacarons:+d.persoMacarons||0, persoCouleurs:Array.isArray(d.persoCouleurs)?d.persoCouleurs:[], persoRemiseEur:+d.persoRemiseEur||0, acompteMention:(d.acompteMention!==false), montant:d.montant||0,
+    perso:!!(d.perso||+d.persoMacarons>0), persoMacarons:+d.persoMacarons||0, persoCouleurs:Array.isArray(d.persoCouleurs)?d.persoCouleurs:[], persoRemiseEur:+d.persoRemiseEur||0, acompteMention:(d.acompteMention!==false), cautionMention:(d.cautionMention!==false), montant:d.montant||0,
     // [v1487] CHEMIN RETOUR : un devis accepte redevient une commande. Sans ces lignes, le
     // supplement logo disparaissait a la conversion — le client aurait signe un devis a 120 €
     // de logo, et la commande serait repartie a zero.
@@ -11729,7 +11738,7 @@ async function cmdToDevisConfirm(id){
       tempsLivraisonMin:o.tempsLivraisonMin||0, consoVehicule:(o.consoVehicule!=null?o.consoVehicule:null),
       fraisLivraison:o.fraisLivraison||0, sacMatId:o.sacMatId||0, sacNb:o.sacNb||0,
       lignes:o.lignes||[], remiseGlobale:o.remiseGlobale||0, remiseGlobaleEur:(o.remiseGlobaleEur!=null?+o.remiseGlobaleEur:null),
-      perso:!!(o.perso||+o.persoMacarons>0), persoMacarons:+o.persoMacarons||0, persoCouleurs:Array.isArray(o.persoCouleurs)?o.persoCouleurs:[], persoRemiseEur:+o.persoRemiseEur||0, acompteMention:(o.acompteMention!==false),
+      perso:!!(o.perso||+o.persoMacarons>0), persoMacarons:+o.persoMacarons||0, persoCouleurs:Array.isArray(o.persoCouleurs)?o.persoCouleurs:[], persoRemiseEur:+o.persoRemiseEur||0, acompteMention:(o.acompteMention!==false), cautionMention:(o.cautionMention!==false),
       // [v1487] Champs LOGO, oublies dans ce constructeur comme dans les autres.
       logo:!!(o.logo||+o.persoLogoNb>0||+o.forfaitCreationNb>0),
       persoLogoNb:+o.persoLogoNb||0, forfaitCreationNb:+o.forfaitCreationNb||0,
@@ -11782,7 +11791,7 @@ async function docApercu(id){
   const client = d.clientId ? await db.clients.get(d.clientId).catch(()=>null) : null;
   if(d.html){
     // On prépare le mail (objet + message + signature) pour que l'aperçu propose l'envoi.
-    if(typeof _prepDocPdfMail==='function') _prepDocPdfMail(d.html, libelle, client, d.montant, {acompteMention:d.acompteMention});
+    if(typeof _prepDocPdfMail==='function') _prepDocPdfMail(d.html, libelle, client, d.montant, {acompteMention:d.acompteMention, cautionMention:(d.cautionMention!==false)});
     openPrintView(d.html, {title:libelle, extraButtons:(typeof _docMailBtns==='function'?_docMailBtns():'')});
   }
   else if(d.orderIds&&d.orderIds.length){ genererFactureMultiple(d.orderIds); }
@@ -11826,7 +11835,7 @@ async function docRegenFactureFigee(id){
   toast('Présentation régénérée ✓ — montants inchangés');
   const libelle = `Facture ${d.numero||''}`.trim();
   const client = d.clientId ? await db.clients.get(d.clientId).catch(()=>null) : null;
-  if(typeof _prepDocPdfMail==='function') _prepDocPdfMail(ctx.html, libelle, client, d.montant, {acompteMention:d.acompteMention});
+  if(typeof _prepDocPdfMail==='function') _prepDocPdfMail(ctx.html, libelle, client, d.montant, {acompteMention:d.acompteMention, cautionMention:(d.cautionMention!==false)});
   openPrintView(ctx.html, {title:libelle, extraButtons:(typeof _docMailBtns==='function'?_docMailBtns():'')});
 }
 // [RACCOURCI MAIL] Envoie directement le document (facture/devis) par mail avec PDF joint,
@@ -11836,7 +11845,7 @@ async function docEnvoyerMail(id){
   const libelle = `${d.type==='devis'?'Devis':'Facture'} ${d.numero||d.refInterne||''}`.trim();
   const client = d.clientId ? await db.clients.get(d.clientId).catch(()=>null) : null;
   // Prépare l'objet + le message + la signature (renseigne window._lastDocMeta.mailto).
-  if(typeof _prepDocPdfMail==='function') _prepDocPdfMail(d.html||'', libelle, client, d.montant, {acompteMention:d.acompteMention});
+  if(typeof _prepDocPdfMail==='function') _prepDocPdfMail(d.html||'', libelle, client, d.montant, {acompteMention:d.acompteMention, cautionMention:(d.cautionMention!==false)});
   const meta = window._lastDocMeta||{};
   // On ouvre directement l'appli mail (destinataire + objet + message + signature déjà remplis).
   // La génération PDF automatique n'est pas fiable sur iOS/Safari (canvas « tainted » par le
@@ -21750,7 +21759,7 @@ async function cmdView(id){
     </div>` : ''}
     ${o.lieuLivraison?`<div class="sum-box"><span>📍 Livraison</span><b>${esc(o.lieuLivraison)}</b></div>`:''}
     ${blocks||'<p class="note">Aucun produit.</p>'}
-    ${cmdALocation(lignes)?`<div class="sum-box" style="margin-top:8px;background:#faf7f2;color:#8a7a72;font-size:.82rem"><span>🔖 Chèque de caution <span style="font-size:.74rem">(location)</span></span><b>${euro(CAUTION_CHEQUE)} — le jour de la livraison</b></div>`:''}
+    ${cmdALocation(lignes)?`<div class="sum-box" style="margin-top:8px;background:#faf7f2;color:#8a7a72;font-size:.82rem"><span>🔖 Empreinte bancaire <span style="font-size:.74rem">(location)</span></span><b>${euro(CAUTION_CHEQUE)} — le jour de la livraison</b></div>`:''}
     <div class="sum-box"><span>Personnalisation couleurs</span><b>${+o.persoMacarons>0?`${o.persoMacarons} macaron(s) · +${euro(money2(o.persoMacarons*0.25))}${+o.persoRemiseEur>0?` · remise −${euro(money2(+o.persoRemiseEur))}`:''}`:(o.perso?'Oui':'Non')}</b></div>
     ${+o.remiseGlobale>0?`<div class="sum-box"><span>Remise globale</span><b>−${o.remiseGlobale}%</b></div>`:''}
     <div class="sum-box"><span>Montant total${+o.remiseGlobale>0||lignes.some(l=>+l.remisePct>0)?' (TTC, remises incluses)':''}</span><b>${euro(o.montant)}</b></div>
@@ -21981,7 +21990,7 @@ async function cmdForm(id, opts){
               distanceKm:dv.distanceKm||0, prixCarburant:dv.prixCarburant||0,
               tempsLivraisonMin:dv.tempsLivraisonMin||0, consoVehicule:(dv.consoVehicule!=null?dv.consoVehicule:null),
               fraisLivraison:dv.fraisLivraison||0, sacMatId:dv.sacMatId||0, sacNb:dv.sacNb||0,
-              perso:!!(dv.perso||+dv.persoMacarons>0), persoMacarons:+dv.persoMacarons||0, persoCouleurs:Array.isArray(dv.persoCouleurs)?dv.persoCouleurs:[], persoRemiseEur:+dv.persoRemiseEur||0, acompteMention:(dv.acompteMention!==false),
+              perso:!!(dv.perso||+dv.persoMacarons>0), persoMacarons:+dv.persoMacarons||0, persoCouleurs:Array.isArray(dv.persoCouleurs)?dv.persoCouleurs:[], persoRemiseEur:+dv.persoRemiseEur||0, acompteMention:(dv.acompteMention!==false), cautionMention:(dv.cautionMention!==false),
               // [v1488] LA VRAIE CAUSE du « rien ne s'enregistre » de Ben. Le devis ECRIVAIT bien
               // les champs logo (corrige en v1487), mais CETTE RELECTURE les ignorait : rouvrir un
               // devis affichait des champs vides. Et en reenregistrant, ces vides ECRASAIENT les
@@ -22168,6 +22177,10 @@ async function cmdForm(id, opts){
    </div>
 
    <label class="switch-row" style="margin-top:10px"><input type="checkbox" id="f_acompteMention" ${o.acompteMention!==false?'checked':''}> Afficher la mention « acompte de 75 % requis » sur le devis <span style="color:#9a8a82;font-weight:400">— décoche pour la masquer sur cette commande</span></label>
+     <!-- [v1492] Case CAUTION, calquee sur celle de l'acompte. N'apparait que s'il y a une
+          location : sans location, la mention ne s'affiche de toute facon jamais, et une case
+          sans effet visible serait deroutante. -->
+     ${cmdALocation(cmdLines)?`<label class="switch-row"><input type="checkbox" id="f_cautionMention" ${o.cautionMention!==false?'checked':''}> Afficher la mention « empreinte bancaire » sur le devis et la facture</label>`:''}
 
    <div class="field" style="margin-top:14px" id="cmdMereBlock"></div>
 
@@ -24808,6 +24821,9 @@ async function saveCmd(id){
     persoCouleurs: cmdPersoCoulCollect(),
     persoRemiseEur: _persoRemRG,
     acompteMention: !document.getElementById('f_acompteMention') || document.getElementById('f_acompteMention').checked,
+    // [v1492] Meme forme que l'acompte : champ absent (pas de location) = mention affichee,
+    // ce qui preserve exactement le comportement d'avant.
+    cautionMention: !document.getElementById('f_cautionMention') || document.getElementById('f_cautionMention').checked,
     sacMatId: +val('f_sacMat')||0,                    // modèle de sac choisi (matière emballage usage:'sac'), 0 = aucun
     sacNb: Math.max(0, Math.round(+val('f_sacNb')||0)),// nombre de sacs saisi à la main
     montant,
@@ -24902,7 +24918,7 @@ async function saveCmd(id){
       // Sacs / emballages choisis sur la commande.
       sacMatId:o.sacMatId||0, sacNb:o.sacNb||0,
       // Personnalisation des couleurs : conservée pour l'encadré du devis/facture.
-      perso:!!(o.perso||+o.persoMacarons>0), persoMacarons:+o.persoMacarons||0, persoCouleurs:Array.isArray(o.persoCouleurs)?o.persoCouleurs:[], persoRemiseEur:+o.persoRemiseEur||0, acompteMention:(o.acompteMention!==false),
+      perso:!!(o.perso||+o.persoMacarons>0), persoMacarons:+o.persoMacarons||0, persoCouleurs:Array.isArray(o.persoCouleurs)?o.persoCouleurs:[], persoRemiseEur:+o.persoRemiseEur||0, acompteMention:(o.acompteMention!==false), cautionMention:(o.cautionMention!==false),
       // [v1487] Ben : « quand j'enregistre le devis la personnalisation logo ne se sauvegarde pas ».
       // CE constructeur est celui du geste de Ben (enregistrer un devis depuis la commande). Les
       // champs LOGO, ajoutes en v1463, n'y ont jamais ete copies — le commentaire juste au-dessus
@@ -59017,7 +59033,7 @@ async function genererDevisDoc(docId){
   // Pourcentage de remise à afficher : le % global saisi si présent, sinon le % effectif.
   const reducPct = gpct>0 ? gpct : (totalBrut>0 ? Math.round(reductions/totalBrut*1000)/10 : 0);
 
-  const rows = lignes.map(ln=>factLineRows(ln, false)).join('') + cautionRowHtml(lignes);   // false = prix NET par ligne (remise de ligne montrée sous la ligne)
+  const rows = lignes.map(ln=>factLineRows(ln, false)).join('') + cautionRowHtml(lignes, d);   // false = prix NET par ligne (remise de ligne montrée sous la ligne)
   const section = `
       <div class="cmd-section">
         <div class="cmd-head">
@@ -59351,7 +59367,7 @@ async function devisGroupeGenerate(){
     const lignes = d.lignes||[];
     const total = (d.montant!=null) ? +d.montant : money2(lignes.reduce((s,ln)=>s+lineTotalStored(ln),0));
     grandTotal += total;
-    const rows = lignes.map(ln=>factLineRows(ln, false)).join('') + cautionRowHtml(lignes);
+    const rows = lignes.map(ln=>factLineRows(ln, false)).join('') + cautionRowHtml(lignes, o);
     return `<div class="cmd-section">
       <div class="cmd-head"><span class="cmd-ref">Devis ${esc(d.numero||'brouillon')}${cmdEventBadge(d)}</span><span class="cmd-date">${fmtDate(d.date)||''}</span></div>
       <div class="cmd-body"><table class="cmd-table"><tbody>
@@ -59374,7 +59390,7 @@ async function devisGroupeGenerate(){
     const totalCmd = (o.montant!=null) ? +o.montant : money2(brutCmd - money2(brutCmd*gpct/100) + frais);
     grandTotal += totalCmd;
     const R = docRabaisTotal(lignes, o.persoMacarons, money2(totalCmd - frais), o, o.persoLogoNb, o.forfaitCreationNb);
-    const rows = lignes.map(ln=>factLineRows(ln, true)).join('') + cautionRowHtml(lignes);
+    const rows = lignes.map(ln=>factLineRows(ln, true)).join('') + cautionRowHtml(lignes, o);
     return `<div class="cmd-section">
       <div class="cmd-head"><span class="cmd-ref">Commande ${esc(orderNumber(o))}${cmdEventBadge(o)}</span><span class="cmd-date">${fmtDate(o.date)||''}</span></div>
       <div class="cmd-body"><table class="cmd-table"><tbody>
@@ -59488,7 +59504,7 @@ async function genererFactureMultiple(ids){
     grandNetHorsLiv += money2(totalCmd - frais);
     const R = docRabaisTotal(lignes, o.persoMacarons, money2(totalCmd - frais), o, o.persoLogoNb, o.forfaitCreationNb);   // rabais TOTAL (ligne+perso+global)
     grandBrutAbsolu += R.brutAbsolu; grandRabais += R.rabais; grandFrais += frais;
-    const rows = lignes.map(ln=>factLineRows(ln, true)).join('') + cautionRowHtml(lignes);   // true = prix BRUT par ligne ; les réductions sont récapitulées sous le total (plus clair)
+    const rows = lignes.map(ln=>factLineRows(ln, true)).join('') + cautionRowHtml(lignes, o);   // true = prix BRUT par ligne ; les réductions sont récapitulées sous le total (plus clair)
     return `
       <div class="cmd-section">
         <div class="cmd-head">

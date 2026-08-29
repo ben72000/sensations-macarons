@@ -191,7 +191,9 @@ const SUITES = [
   'v1488-devis-relecture-logo.test.js',         // v1488 · LA vraie cause : la relecture d'un devis ignorait les champs logo, et les vides écrasaient les bonnes valeurs
   'v1489-devis-grille-tarifaire.test.js',       // v1489 · le devis sans tarifRef retombait sur la grille historique : supplément à zéro et ligne invisible au rendu
   'v1490-event-tarif-saisie.test.js',           // v1490 · tarif événement figé à 1,60 € pendant la saisie : mauvais résolveur de grille (piège des DEUX résolveurs, v1469)
-  'v1491-fausses-reductions.test.js'            // v1491 · CAUSE RACINE : la réduction du devis était déduite de l'écart, déguisant toute incohérence en geste commercial
+  'v1491-fausses-reductions.test.js',           // v1491 · CAUSE RACINE : la réduction du devis était déduite de l'écart, déguisant toute incohérence en geste commercial
+  'v1492-caution-optionnelle.test.js',          // v1492 · mention « chèque de caution » optionnelle, calquée sur celle de l'acompte, avec garde de motif sur les 7 chemins
+  'v1493-empreinte-bancaire.test.js'            // v1493 · « chèque de caution » → « empreinte bancaire » : verbes adaptés (prise/débitée/annulée) sur les documents ET les 3 clauses CGV
 ];
 
 let allOk = true;

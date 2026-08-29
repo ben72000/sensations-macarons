@@ -6023,3 +6023,92 @@ n'écrit rien (G).
 ce qui aurait cassé le style du total. Détecté et réparé immédiatement ; une assertion le surveille
 désormais. Et une de mes assertions était **fausse** (600 € plafonnés à 620 au lieu de 600) : c'est
 le test qui a été corrigé, pas le code.
+
+---
+
+## 2026-08-28 — MENTION « CHÈQUE DE CAUTION » OPTIONNELLE  (v1491 → **v1492**)
+
+**Ben** : « peut-on rendre optionnelle la mention "chèque de caution" avec le texte qui y est
+associé ? On coche la case ou non, au même titre que la mention 75 % d'acompte. **Attention de ne
+rien casser des autres fonctionnalités.** »
+
+### La méthode : calquer, ne pas inventer
+Le drapeau `acompteMention` fait déjà exactement ce travail et circule à **sept endroits**.
+`cautionMention` reprend la même convention, la même valeur par défaut et les mêmes chemins — aucune
+mécanique nouvelle à valider.
+
+### Ce qui garantit qu'on ne casse rien
+- **Défaut par absence** : drapeau absent ou `true` = mention **affichée**. Tous les devis, factures
+  et commandes déjà enregistrés n'ont pas ce champ : ils se comportent **exactement comme avant**.
+- **Second argument optionnel** dans `cautionRowHtml(lignes, ctx)` : un appel qui ne passerait pas
+  de contexte garde le comportement d'origine. Cela protège tout chemin que j'aurais pu manquer.
+- **Règle d'origine conservée** : pas de location → pas de mention, quelle que soit la case.
+- La **case n'apparaît que s'il y a une location** — sans location la mention ne s'affiche jamais,
+  et une case sans effet visible serait déroutante.
+
+### Le drapeau suit l'acompte partout
+Écriture à l'enregistrement, relecture du devis dans le formulaire, conversion devis → commande,
+commande repassée en devis, et les **trois** envois par courriel. Une **garde de motif** vérifie
+qu'aucun de ces chemins n'est oublié : *partout où `acompteMention` circule, `cautionMention` doit
+suivre*.
+
+C'est **exactement le contrôle qui manquait à la personnalisation logo**, où le champ s'était perdu
+sur trois constructeurs et avait coûté quatre versions. Ici, la garde a d'ailleurs servi tout de
+suite : mes trois premières ancres de remplacement ont échoué (indentation différente), et c'est
+elle qui a listé les **sept lignes exactes** à traiter.
+
+### Suite v1492 : 23 assertions (`tests/v1492-caution-optionnelle.test.js`)
+Le comportement demandé, texte associé compris (A) ; **non-régression** — champ absent, contexte
+absent, contexte nul, règle « pas de location », montant du chèque (B, C) ; câblage des 4 documents
+et argument optionnel (D) ; la case, sa persistance, et la **garde de motif** sur les 7 chemins (E) ;
+**réconciliation** — le choix survit à l'aller-retour, un document ancien garde la mention (F).
+
+**Sensibilité vérifiée par réintroduction** : inverser le défaut et oublier un chemin fait rougir
+5 assertions, la garde **nommant la ligne fautive**.
+
+---
+
+## 2026-08-29 — « CHÈQUE DE CAUTION » DEVIENT « EMPREINTE BANCAIRE »  (v1492 → **v1493**)
+
+**Ben** : « le chèque de caution doit se transformer en empreinte bancaire. Peux-tu changer la
+mention partout où apparaît chèque de caution ? »
+
+### ⚠️ Ce n'était pas un simple renommage
+Le texte associé décrivait des gestes **propres à un chèque** : il est « remis », il « n'est pas
+encaissé », il est « restitué ». Une empreinte bancaire se **prend**, se **débite** et s'**annule**.
+Se contenter de remplacer le terme aurait laissé des clauses **incohérentes** dans les CGV — un
+document juridique que Ben transmet à ses clients.
+
+### Ce qui a été adapté
+- **Ligne du devis et de la facture** : « empreinte prise le jour de la livraison, non débitée,
+  annulée après retour du matériel ».
+- **CGV 7.1** (B2B) : l'empreinte est **prise** à la mise à disposition, **non débitée**, **annulée**
+  après retour en bon état.
+- **CGV 7.2** (B2C) : « aucune empreinte bancaire, dépôt de garantie ou somme d'argent n'est exigé ».
+- **CGV 7.4** : l'empreinte pourra être **débitée** (et non « encaissée ») à hauteur des sommes dues.
+
+La **logique juridique est inchangée** : montants dus, complément exigible, surplus restitué,
+engagement sur l'honneur du particulier — vérifié par assertions dédiées.
+
+Le récapitulatif du formulaire et le libellé de la case suivent aussi.
+
+### Ce qui n'a PAS été renommé, et pourquoi
+Les **identifiants de code** (`CAUTION_CHEQUE`, `cautionRowHtml`, `cautionMention`) sont conservés.
+Les renommer toucherait des dizaines de références **et des données déjà enregistrées** —
+`cautionMention` est persisté sur les commandes et les documents — pour zéro gain visible. Le choix
+est expliqué dans le code, à l'endroit qui compte.
+
+Les **documents déjà émis** gardent leur rédaction d'origine, puisqu'ils mémorisent leur rendu :
+c'est correct, un devis signé ne doit pas se réécrire tout seul.
+
+### Suite v1493 : 27 assertions (`tests/v1493-empreinte-bancaire.test.js`)
+Plus aucune occurrence de l'ancien terme dans `app.js` ni `index.html` (A) ; la ligne du document —
+terme **et** verbes, avec la garde « aucun vocabulaire de chèque ne subsiste » (B) ; les trois
+clauses CGV adaptées, logique juridique préservée (C) ; **non-régression** du mécanisme optionnel
+livré en v1492 (D) ; identifiants conservés et garde de motif sur les 7 chemins toujours verte (E).
+
+**Sensibilité** : un renommage **naïf** — terme changé mais verbes du chèque conservés — fait rougir
+5 assertions. C'est précisément le piège que cette suite existe pour attraper.
+
+La suite v1492 a suivi le nouveau libellé : son mécanisme est inchangé, seules les chaînes attendues
+ont été alignées.
