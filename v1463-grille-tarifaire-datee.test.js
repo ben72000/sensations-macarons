@@ -138,15 +138,17 @@ const NEUF = '2026-09-15', VIEUX = '2026-01-20', VEILLE = '2026-08-31', JOUR_J =
 // ---- F. Câblage : les fonctions de prix consultent bien la grille ----
 {
   const srcCoffret = extractFunction('coffretUnitPrice');
-  // ⚠️ Ces deux assertions exigent la PRÉSENCE avant de comparer l'ordre : `indexOf` renvoie -1
-  // quand le texte a disparu, et -1 est inférieur à tout — une comparaison nue serait donc
-  // faussement verte précisément quand la protection est retirée (constaté par mutation).
-  const iScelle = srcCoffret.indexOf('prixUnitaireApplique');
-  const iGrille = srcCoffret.indexOf('tarifsDeLigne');
+  // [v1494] coffretUnitPrice n'est appelée QUE pendant la saisie (jamais pour relire un document
+  // déjà émis, qui lit son prixUnitaireApplique directement via lineTotalStored, sans passer par
+  // ici) — elle ne doit donc plus consulter ni le scellé ni tarifsDeLigne : voir
+  // tests/v1494-tarif-saisie-reactif.test.js pour le défaut que ça corrige.
+  check('F. [v1494] ne consulte plus le prix scellé de la ligne (systématiquement recalculé en saisie)',
+    !/prixUnitaireApplique/.test(srcCoffret));
+  check('F. [v1494] ne consulte plus tarifsDeLigne (la case décide seule, jamais le tarifRef/ancienTarif d\'une ligne rouverte)',
+    !/tarifsDeLigne/.test(srcCoffret));
+  const iGrille = srcCoffret.indexOf('tarifsSaisie');
   const iCatal  = srcCoffret.indexOf('cmdProductsCache');
-  check('F. le prix scellé sur la ligne reste PRIORITAIRE (commandes déjà enregistrées)',
-    iScelle >= 0 && iGrille >= 0 && iScelle < iGrille);
-  check('F. la grille datée prime sur le catalogue (sinon une commande antidatée prendrait les prix du jour)',
+  check('F. la grille de saisie prime sur le catalogue (sinon une commande antidatée prendrait les prix du jour)',
     iGrille >= 0 && iCatal >= 0 && iGrille < iCatal);
 
   const srcVrac = extractFunction('vracPrixMacaron');
@@ -239,13 +241,10 @@ const NEUF = '2026-09-15', VIEUX = '2026-01-20', VEILLE = '2026-08-31', JOUR_J =
 // SCELLÉ à l'enregistrement. La grille prime désormais, même sans tarifRef. ----
 {
   const src = extractFunction('coffretUnitPrice');
-  const iScelle = src.indexOf('prixUnitaireApplique');
   const iGrille = src.indexOf('g.box[taille]');
   const iCatal  = src.indexOf('cmdProductsCache');
-  check('J. le prix scellé reste prioritaire (commandes déjà enregistrées intactes)',
-    iScelle >= 0 && iGrille >= 0 && iScelle < iGrille);
   check('J. la grille prime sur le catalogue', iGrille >= 0 && iCatal >= 0 && iGrille < iCatal);
-  check('J. une ligne SANS tarifRef consulte quand même la grille (cas de la saisie en cours)',
+  check('J. la ligne consulte la grille via la case (cas de la saisie en cours)',
     /tarifsSaisie\(\)/.test(src));
   check('J. le catalogue ne sert plus que de repli', iCatal > iGrille);
 
@@ -266,9 +265,14 @@ const NEUF = '2026-09-15', VIEUX = '2026-01-20', VEILLE = '2026-08-31', JOUR_J =
   check('J. saisie datée de septembre, ligne sans tarifRef → 14 € (et non les 12 € du catalogue)',
     M2({type:'coffret', taille:6}) === 14);
   check('J. …idem pour le 25 : 50 € et non 42 €', M2({type:'coffret', taille:25}) === 50);
-  check('J. un prix déjà scellé reste intouché', M2({type:'coffret', taille:6, prixUnitaireApplique:12}) === 12);
-  check('J. une ligne marquée « ancien tarif » garde 12 € malgré la date de saisie',
-    M2({type:'coffret', taille:6, ancienTarif:true}) === 12);
+  // [v1494] Ben : décocher la case doit retarifer EN DIRECT une ligne déjà présente dans le
+  // formulaire, y compris rouverte depuis une commande enregistrée avec l'ancienne grille. Le
+  // scellé et le drapeau ancienTarif d'une ligne rouverte ne doivent donc plus rien geler ICI —
+  // seule la case (donc tarifsSaisie(), figée à septembre par ce harnais) décide.
+  check('J. [v1494] un ancien prix scellé sur la ligne ne bloque plus le recalcul (14 €, pas 12 €)',
+    M2({type:'coffret', taille:6, prixUnitaireApplique:12}) === 14);
+  check('J. [v1494] une ligne rouverte marquée « ancien tarif » suit quand même la case (14 €, pas 12 €)',
+    M2({type:'coffret', taille:6, ancienTarif:true}) === 14);
 }
 
 // ---- K. [v1467] LE SÉLECTEUR AFFICHAIT LE PRIX DU CATALOGUE, PAS CELUI APPLIQUÉ. Capture de Ben :
@@ -280,7 +284,12 @@ const NEUF = '2026-09-15', VIEUX = '2026-01-20', VEILLE = '2026-08-31', JOUR_J =
   const src = APP.slice(i, APP.indexOf('.join(\'\');', i));
   check('K. le libellé du sélecteur passe par coffretUnitPrice', /coffretUnitPrice\(/.test(src));
   check('K. il n\'affiche plus le prix brut du catalogue', !/euro\(p\.prix\)/.test(src));
-  check('K. le prix affiché tient compte de la case « anciens tarifs »', /ancienTarif:ln\.ancienTarif/.test(src));
+  // [v1494] avant, le menu déroulant transmettait le tarifRef/ancienTarif DE LA LIGNE (gelés à
+  // son dernier enregistrement) à coffretUnitPrice, qui s'en servait pour ignorer la case en
+  // direct sur une commande rouverte — exactement le gel signalé par Ben. Il ne doit plus rien
+  // transmettre de tel : la case seule décide.
+  check('K. [v1494] ne transmet plus le tarifRef/ancienTarif d\'une ligne rouverte (la case seule décide)',
+    !/ancienTarif:\s*ln\.ancienTarif/.test(src) && !/tarifRef:\s*ln\.tarifRef/.test(src));
   check('K. data-prix porte aussi le prix appliqué (cohérence affichage/valeur)', /data-prix="\$\{pu\}"/.test(src));
 }
 
@@ -338,8 +347,15 @@ const NEUF = '2026-09-15', VIEUX = '2026-01-20', VEILLE = '2026-08-31', JOUR_J =
 {
   const src = extractFunction('tarifsLigneSaisie');
   check('N. un résolveur distinct existe pour les lignes en cours de saisie', src.length > 0);
-  check('N. le drapeau reste prioritaire', /ancienTarif/.test(src));
-  check('N. une ligne neuve (sans marqueur) suit le FORMULAIRE, pas la grille historique',
+  // [v1494] Ben : décocher la case ne retarifait pas une ligne déjà présente dans le formulaire.
+  // CAUSE : ce résolveur donnait justement la priorité au drapeau ancienTarif/tarifRef DE LA
+  // LIGNE — juste pour une ligne ENREGISTRÉE (lue en dehors de toute édition), mais faux pour une
+  // ligne ROUVERTE et activement éditée, qui porte encore le marqueur de son dernier
+  // enregistrement. En saisie, plus aucune priorité au drapeau : voir
+  // tests/v1494-tarif-saisie-reactif.test.js.
+  check('N. [v1494] ne donne plus la priorité au drapeau d\'une ligne (en saisie, la case seule décide)',
+    !/ancienTarif/.test(src));
+  check('N. toute ligne, neuve ou rouverte, suit le FORMULAIRE, jamais la grille historique par défaut',
     /tarifsSaisie\(\)/.test(src));
 
   // Le calcul du modèle d'édition doit passer par ce résolveur, pas par celui des lignes stockées.

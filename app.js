@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1493'; // suite : voir tests/v1493-empreinte-bancaire.test.js
+const APP_VERSION = 'v1494'; // suite : voir tests/v1494-tarif-saisie-reactif.test.js
 const APP_MAJ = '« CHEQUE DE CAUTION » DEVIENT « EMPREINTE BANCAIRE ». Ben : « le cheque de caution doit se transformer en empreinte bancaire. Peux-tu changer la mention partout ou apparait cheque de caution ? » ⚠️ CE N ETAIT PAS UN SIMPLE RENOMMAGE : le texte associe decrivait des gestes propres a un CHEQUE — il est « remis », il « n est pas encaisse », il est « restitue ». Une empreinte bancaire se PREND, se DEBITE et s ANNULE. Renommer sans adapter les verbes aurait laisse des clauses incoherentes dans les CGV, un document juridique transmis aux clients. Les VERBES ONT DONC ETE ADAPTES partout : sur la ligne du devis et de la facture (« empreinte prise le jour de la livraison, non debitee, annulee apres retour du materiel »), et dans les trois clauses concernees des CGV — 7.1 (prise a la mise a disposition, non debitee, annulee), 7.2 (aucune empreinte exigee du particulier) et 7.4 (l empreinte pourra etre DEBITEE, et non encaissee). La logique juridique est inchangee : montants dus, complement exigible, surplus restitue, engagement sur l honneur du particulier. LES IDENTIFIANTS DE CODE SONT CONSERVES (CAUTION_CHEQUE, cautionRowHtml, cautionMention) : les renommer toucherait des dizaines de references et des donnees DEJA ENREGISTREES, pour zero gain visible. Seul le texte vu par le client change. Les documents deja emis gardent leur redaction d origine, puisqu ils memorisent leur rendu. Suite v1493 : 27 assertions, dont la verification que le vocabulaire du cheque a bien disparu ; un renommage NAIF (terme change mais verbes conserves) fait rougir 5 assertions. La suite v1492 a suivi le nouveau libelle, son mecanisme etant inchange.';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
@@ -4335,9 +4335,13 @@ function grilleHistorique(){ return TARIF_GRILLES[TARIF_GRILLES.length-1]; }
 // qu'une ligne qu'on est en train de saisir n'a simplement pas encore reçu son marqueur (→ la case
 // du formulaire décide). Les confondre facturait un sachet 7,50 € pendant que l'écran annonçait
 // 6,50 € — divergence constatée par Ben sur capture.
+// [v1494] Ben : « décocher la case n'a pas dynamiquement modifié le tarif des macarons
+// préenregistrés ni le menu déroulant » — CAUSE : cette fonction lisait ln.ancienTarif/tarifRef,
+// or une ligne ROUVERTE porte encore le drapeau de son DERNIER enregistrement. Elle se croyait
+// donc "déjà enregistrée" pendant qu'elle était activement éditée, et ignorait la case en direct.
+// Tant qu'on est EN SAISIE (formulaire ouvert), seule la case compte, sans exception — le
+// figeage légitime n'intervient qu'à l'enregistrement réel (cmdLinesToStored), pas avant.
 function tarifsLigneSaisie(ln){
-  if(ln && ln.ancienTarif) return grilleHistorique();
-  if(ln && ln.tarifRef)    return grilleCourante();
   return (typeof tarifsSaisie==='function') ? tarifsSaisie() : grilleHistorique();
 }
 function tarifsDeLigne(ln){
@@ -22660,7 +22664,7 @@ function drawCoffretLine(ln,i){
   // Le prix FACTURÉ était pourtant correct : c'est l'affichage qui mentait, ce qui est pire —
   // Ben choisit sur ce qu'il lit.
   const boxOpts = cmdProductsCache.map(p=>{
-    const pu = coffretUnitPrice({ taille:+p.taille, tarifRef:ln.tarifRef, ancienTarif:ln.ancienTarif });
+    const pu = coffretUnitPrice({ taille:+p.taille });
     return `<option value="${p.taille}" data-prix="${pu}" ${(+ln.taille===+p.taille)?'selected':''}>${esc(p.nom)} — ${euro(pu)}</option>`;
   }).join('');
   const limit = BOX_FLAVOR_LIMIT[ln.taille]||0;
@@ -23792,25 +23796,22 @@ function lineTotalBase(ln){
   return 0;
 }
 // Prix unitaire d'un coffret, par ordre de priorité :
-//  1) prix SCELLÉ sur la ligne (prixUnitaireApplique) — protège les commandes déjà enregistrées
-//  2) [v1463] GRILLE DATÉE de la ligne, dès qu'elle porte un tarifRef — c'est ce qui empêche
-//     qu'une commande antidatée reprenne les prix du catalogue d'aujourd'hui. Le catalogue est
-//     éditable par Ben et reflète le tarif COURANT : le laisser primer sur une ligne de janvier
-//     rouvrirait exactement le trou qu'il demande de verrouiller
-//  3) catalogue dynamique (db.products) — pour une ligne EN COURS de saisie sans tarifRef :
-//     un prix que Ben a saisi lui-même doit primer sur la grille livrée
-//  4) constante BOX_PRICES — repli historique uniquement
+//  1) [v1463] GRILLE DATÉE — la grille prime sur le catalogue, même sans tarifRef
+//  2) catalogue dynamique (db.products) — pour une taille absente de la grille
+//  3) constante BOX_PRICES — repli historique uniquement
+// [v1494] Ben, capture à l'appui : décocher « anciens tarifs » sur une commande rouverte ne
+// mettait à jour NI le prix du coffret NI le menu déroulant des tailles. CAUSE : cette fonction
+// n'est appelée QUE pendant la SAISIE (menu déroulant de drawCoffretLine, aperçu de composition,
+// calcul de la ligne en édition, et le gel de prixUnitaireApplique au moment même de
+// l'enregistrement) — jamais pour relire un document déjà émis, qui lit son prixUnitaireApplique
+// scellé directement via lineTotalStored, sans passer par ici. Consulter ici le scellé ou le
+// tarifRef/ancienTarif d'une ligne ROUVERTE revenait donc à la croire "déjà enregistrée" pendant
+// qu'elle était activement éditée, et à figer son prix — insensible à la case. Supprimés : les deux
+// se ne servaient qu'à ça, jamais à protéger un prix tapé à la main (aucune saisie manuelle
+// n'écrit prixUnitaireApplique — seul un changement de taille le remet à null).
 function coffretUnitPrice(ln){
-  if(ln && ln.prixUnitaireApplique!=null && +ln.prixUnitaireApplique>=0) return +ln.prixUnitaireApplique;
   const taille = +(ln&&ln.taille);
-  // [v1465] LA GRILLE PRIME SUR LE CATALOGUE, y compris pour une ligne EN COURS DE SAISIE.
-  // Défaut corrigé : une ligne en saisie n'a pas encore de tarifRef, l'ancien ordre la faisait
-  // donc retomber sur le catalogue produits — qui contient les prix d'installation (12/16/22/
-  // 28/42 €). Une commande datée de septembre affichait 12 € pour un coffret de 6 au lieu de
-  // 14 €, et ce prix faux était SCELLÉ à l'enregistrement. Le catalogue ne sert plus que pour
-  // les tailles absentes de la grille (formats sur mesure).
-  const g = (ln && (ln.tarifRef || ln.ancienTarif)) ? tarifsDeLigne(ln)
-          : ((typeof tarifsSaisie==='function') ? tarifsSaisie() : null);
+  const g = (typeof tarifsSaisie==='function') ? tarifsSaisie() : null;
   if(g && g.box && g.box[taille]!=null) return money2(g.box[taille]);
   const cat = (typeof cmdProductsCache!=='undefined' ? cmdProductsCache : []).find(p=>+p.taille===taille);
   if(cat && cat.prix!=null) return +cat.prix;
@@ -23898,7 +23899,12 @@ function cmdLinesToStored(){
     const tarifRef = _ref(ln);
     // Le choix explicite est copié sur CHAQUE ligne : une ligne doit pouvoir se tarifer seule,
     // sans dépendre d'un champ de la commande que les calculs aval ne reçoivent pas.
-    const ancienTarif = _ancien || !!ln.ancienTarif;
+    // [v1494] PLUS DE RATCHET : avant, `_ancien || !!ln.ancienTarif` rendait le drapeau collant —
+    // une ligne enregistrée une fois avec la case cochée restait bloquée sur l'ancienne grille
+    // pour toujours, même en décochant la case et en ré-enregistrant. La case doit décider à
+    // CHAQUE enregistrement, sans mémoire d'un choix précédent (c'est déjà elle, et seulement
+    // elle, qui a fixé le prix affiché pendant toute la saisie qui vient de se terminer).
+    const ancienTarif = _ancien;
     if(ln.type==='coffret') return {type:'coffret', taille:ln.taille, remisePct:rp, tarifRef, ancienTarif:ancienTarif||undefined, prixUnitaireApplique: coffretUnitPrice(ln), embMode:ln.embMode||'standard', embMatId:ln.embMatId||null, sansParfum:(+ln.sansParfum||0)||undefined, spMode:((+ln.sansParfum||0)>0?(ln.spMode||'assortiment'):undefined), spNbParfums:((+ln.sansParfum||0)>0&&ln.spMode!=='adeterminer'&&+ln.spNbParfums>0?+ln.spNbParfums:undefined), parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
     if(ln.type==='evenement') return {type:'evenement', evQte:ln.evQte, equip:ln.equip, remisePct:rp, tarifRef, ancienTarif:ancienTarif||undefined, sansParfum:(+ln.sansParfum||0)||undefined, spMode:((+ln.sansParfum||0)>0?(ln.spMode||'assortiment'):undefined), spNbParfums:((+ln.sansParfum||0)>0&&ln.spMode!=='adeterminer'&&+ln.spNbParfums>0?+ln.spNbParfums:undefined), pyraVendue:!!ln.pyraVendue, pyraPrixVente:(ln.pyraPrixVente!=null?+ln.pyraPrixVente:null), pyraCoutAchat:(ln.pyraCoutAchat!=null?+ln.pyraCoutAchat:null), accessoireDeco:(ln.accessoireDeco?true:undefined), parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
     if(ln.type==='grand') return {type:'grand', tarif:ln.tarif, remisePct:rp, tarifRef, ancienTarif:ancienTarif||undefined, embMode:ln.embMode||'reutilisable', embMatId:ln.embMatId||null, items:Object.keys(ln.items).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};

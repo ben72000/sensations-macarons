@@ -193,7 +193,8 @@ const SUITES = [
   'v1490-event-tarif-saisie.test.js',           // v1490 · tarif événement figé à 1,60 € pendant la saisie : mauvais résolveur de grille (piège des DEUX résolveurs, v1469)
   'v1491-fausses-reductions.test.js',           // v1491 · CAUSE RACINE : la réduction du devis était déduite de l'écart, déguisant toute incohérence en geste commercial
   'v1492-caution-optionnelle.test.js',          // v1492 · mention « chèque de caution » optionnelle, calquée sur celle de l'acompte, avec garde de motif sur les 7 chemins
-  'v1493-empreinte-bancaire.test.js'            // v1493 · « chèque de caution » → « empreinte bancaire » : verbes adaptés (prise/débitée/annulée) sur les documents ET les 3 clauses CGV
+  'v1493-empreinte-bancaire.test.js',           // v1493 · « chèque de caution » → « empreinte bancaire » : verbes adaptés (prise/débitée/annulée) sur les documents ET les 3 clauses CGV
+  'v1494-tarif-saisie-reactif.test.js'          // v1494 · décocher « anciens tarifs » ne retarifait pas les lignes déjà présentes (coffret + menu déroulant) ; le drapeau ancienTarif restait collé pour toujours à l'enregistrement
 ];
 
 let allOk = true;

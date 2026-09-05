@@ -6112,3 +6112,72 @@ livré en v1492 (D) ; identifiants conservés et garde de motif sur les 7 chemin
 
 La suite v1492 a suivi le nouveau libellé : son mécanisme est inchangé, seules les chaînes attendues
 ont été alignées.
+
+---
+
+## 2026-09-05 — DÉCOCHER LA CASE NE RETARIFAIT PAS LES LIGNES DÉJÀ PRÉSENTES  (v1493 → **v1494**)
+
+**Signalé par Benjamin**, sur une commande réenregistrée :
+> « J'avais coché appliquer ancien tarif. J'ai enregistré mon document puis rouvert. Puis
+> constatant le défaut de personnalisation à 0€ j'ai décoché la case. Le calcul s'est donc fait
+> correctement à partir de là. En revanche le fait de décocher la case n'a pas dynamiquement
+> modifié le tarif des macarons préenregistrés ni modifié le menu déroulant indiquant le tarif des
+> macarons par format de coffret. »
+
+### Deux défauts distincts, dans le même mécanisme
+
+**① Deux fonctions lisaient le marqueur d'une ligne AVANT de consulter la case.**
+`coffretUnitPrice(ln)` et `tarifsLigneSaisie(ln)` (cette dernière utilisée par l'événement, le
+grand format, le vrac et le sachet) commençaient par regarder `ln.tarifRef`/`ln.ancienTarif`. Or
+une ligne **ROUVERTE** porte encore le marqueur de son DERNIER enregistrement — `_lineToEdit` le
+recopie tel quel, par construction (voir v1463 section H, « le drapeau survit à la réouverture »).
+Ces deux fonctions ne sont pourtant appelées QUE pendant la SAISIE : jamais pour relire un document
+déjà émis, qui lit son `prixUnitaireApplique` scellé directement via `lineTotalStored`, sans passer
+par elles. Les lire ici revenait donc à traiter une ligne activement éditée comme si elle était
+déjà figée — insensible à la case, aussi bien sur le prix affiché que sur le menu déroulant des
+tailles (qui transmettait le tarifRef/ancienTarif DE LA LIGNE à `coffretUnitPrice`).
+
+**② `cmdLinesToStored()` posait un drapeau COLLANT.** `const ancienTarif = _ancien ||
+!!ln.ancienTarif;` — un OU avec la valeur précédente de la ligne. Une ligne marquée « ancien
+tarif » une fois restait donc marquée **pour toujours**, même en décochant la case et en
+ré-enregistrant. Ça contredisait la règle posée en v1466 (« la case décide, décochée → tarifs en
+vigueur »), qui ne prévoyait aucune exception.
+
+### Le fix
+
+`coffretUnitPrice` et `tarifsLigneSaisie` ne consultent plus AUCUN marqueur de ligne ni le prix
+scellé : seule `tarifsSaisie()` (la case) décide pendant toute la saisie. Le menu déroulant de
+`drawCoffretLine` ne transmet plus le tarifRef/ancienTarif de la ligne. `cmdLinesToStored()` pose
+désormais `const ancienTarif = _ancien;` — la case décide À CHAQUE enregistrement, sans mémoire
+d'un choix antérieur.
+
+**Ce qui reste protégé, sans rien changer** : `tarifsDeLigne` (résolveur des lignes déjà
+ENREGISTRÉES — `lineTotalStored`, `cmdView`, factures) et `grillePourCommande` (options de niveau
+commande sur un document déjà émis) continuent de lire le marqueur scellé. Rouvrir un document
+pour le CONSULTER (sans passer par le formulaire d'édition) ne bouge toujours rien ; c'est
+uniquement pendant l'ÉDITION active que la case reprend la main.
+
+### Suite v1494 : 19 assertions (`tests/v1494-tarif-saisie-reactif.test.js`)
+
+Scénario exact de Ben reconstitué (A) : ligne rouverte portant tarifRef + `ancienTarif:true` +
+`prixUnitaireApplique:12` scellé — case décochée → 14 € ; recochée → 12 € ; le catalogue produits
+(volontairement absurde à 99 €) ne l'emporte jamais. Menu déroulant (B) : ne transmet plus
+`ln.tarifRef`/`ln.ancienTarif`, continue de transmettre la taille. Câblage de `coffretUnitPrice`
+(C) et `tarifsLigneSaisie` (D, avec preuve comportementale sur une ligne ÉVÉNEMENT rouverte — le
+fix ne profite pas qu'au coffret). `cmdLinesToStored` (E) : ré-enregistrement case décochée →
+`ancienTarif` n'est plus collé à `true`, prix recalculé à 14 € ; non-régression case cochée → 12 €
+inchangés.
+
+**Sensibilité** : réintroduire l'ancien calcul collant (`_ancien || !!ln.ancienTarif`) sur
+exactement ce scénario fait rougir l'assertion E — preuve que le test mesure le bon mécanisme, pas
+un hasard de données.
+
+Suite existante mise à jour : `tests/v1463-grille-tarifaire-datee.test.js`, sections F/J/K/N, qui
+testaient explicitement l'ancien comportement (priorité au drapeau, prix scellé prioritaire) —
+désormais volontairement inversé. 111/111 assertions vertes après mise à jour.
+
+### Angle mort assumé
+Les options de niveau COMMANDE (logo, perso couleurs, forfait création) n'ont jamais eu ce défaut :
+elles passent par `_grilleOption(ctx)`, qui consulte déjà la case en direct dès que `ctx` est vide
+(cas de l'édition en cours) — c'est d'ailleurs ce qui a permis à Ben de repérer l'anomalie sur le
+logo avant de la repérer sur le coffret. Rien à changer de ce côté.
