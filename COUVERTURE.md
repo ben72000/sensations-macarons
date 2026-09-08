@@ -6181,3 +6181,63 @@ Les options de niveau COMMANDE (logo, perso couleurs, forfait création) n'ont j
 elles passent par `_grilleOption(ctx)`, qui consulte déjà la case en direct dès que `ctx` est vide
 (cas de l'édition en cours) — c'est d'ailleurs ce qui a permis à Ben de repérer l'anomalie sur le
 logo avant de la repérer sur le coffret. Rien à changer de ce côté.
+
+---
+
+## 2026-09-05 — LANCER LE CRÉMEUX CONSOMMAIT (ET AFFICHAIT) AUSSI LA GANACHE  (v1494 → **v1495**)
+
+**Signalé par Benjamin** :
+> « Quand je lance une recette de crémeux chocolat, c'est à dire une sous recette, je me retrouve
+> avec une recette lançant à la fois la ganache et le crémeux alors que ce n'est pas ce que je
+> veux. Peux-tu corriger ça ? »
+
+### Cause
+
+Le formulaire de lancement propose bien un sous-type de garniture précis (radio Ganache /
+Crémeux, sous-lot `-GA` ou `-CR`), et `prodFilterGarnTypes()` affiche même les DEUX options dès
+qu'une recette a des lignes des deux types — exactement le cas de Ben (une base ganache commune +
+une finition crémeux dans la même recette). Mais une fois le choix fait, **deux endroits
+ignoraient lequel avait été sélectionné** et regroupaient systématiquement `partie==='ganache' OU
+partie==='cremeux'` :
+
+1. **`enregistrerProduction`** — la consommation RÉELLE de matières. Pas seulement un affichage
+   trompeur : Ben perdait du stock de la ganache qu'il n'avait pourtant pas produite.
+2. **`ficheRecetteProduction`** — la fiche affichée juste après le lancement, qui listait les
+   ingrédients des deux sous-types mélangés.
+
+Le commentaire d'origine de ce regroupement expliquait pourquoi il avait été ajouté : « Une
+recette à crémeux (ex. mangue passion) doit afficher ses ingrédients ici, sans quoi la fiche
+restait vide » — un vrai problème (une recette taguée uniquement `cremeux` ne matchait jamais le
+filtre strict `partie==='ganache'`), mais réparé par un élargissement trop large : regrouper les
+deux au lieu de suivre le sous-type réellement choisi.
+
+### Fix
+
+Les deux fonctions lisent désormais le sous-type RÉELLEMENT sélectionné —
+`meta.garnitureType`/`garnitureType` — déjà porté par la production et déjà transmis par le
+formulaire (il suffisait de s'en servir, rien à ajouter au modèle de données). Le filtre devient
+`it.partie === garnType || !it.partie` (lignes communes non étiquetées toujours incluses, rétro-
+compat inchangée pour les anciennes recettes non taguées).
+
+**Propagation vérifiée aux 3 points d'appel** : `lancerBatchAvecFiche` (transmet le `garnType`
+choisi au lancement), `ficheRecetteProductionFromBatch` (transmet le `garnitureType` RÉEL stocké
+sur la production, pour rouvrir la fiche d'un lot existant sans se tromper de sous-type).
+
+### Suite v1495 : 13 assertions (`tests/v1495-garniture-sous-type.test.js`)
+
+Le filtre réel est extrait du code (jamais recopié à la main) et exécuté contre des données
+synthétiques reproduisant exactement le cas de Ben (une matière `ganache`, une matière `cremeux`,
+une ligne commune non étiquetée). Vérifié dans les deux sens : lancer le crémeux ne consomme/
+n'affiche plus la matière de la ganache, et réciproquement — la coque n'entre jamais dans une
+consommation de garniture. Non-régression explicite : une recette purement crémeux (le cas
+« mangue passion » qui avait motivé le regroupement fautif) continue de fonctionner normalement.
+
+**Sensibilité** : l'ancien filtre (union), rejoué sur les mêmes données synthétiques, consommerait
+bien les deux matières à la fois quel que soit le sous-type choisi — preuve que le test mesure le
+bon mécanisme, pas un hasard de données.
+
+### Angle mort assumé
+Aucun harnais Dexie complet (`tests/_memidb.js`/`_faux-idb.js`) n'est fourni dans ce zip — la
+suite teste le filtre réellement extrait du code plutôt que de rejouer toute la transaction
+`enregistrerProduction` (verif stock, décrément FIFO, écriture `db.productions`). Le filtre est la
+pièce qui portait le défaut ; le reste de la transaction n'a pas été touché par ce correctif.

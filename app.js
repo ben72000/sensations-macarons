@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1494'; // suite : voir tests/v1494-tarif-saisie-reactif.test.js
+const APP_VERSION = 'v1495'; // suite : voir tests/v1495-garniture-sous-type.test.js
 const APP_MAJ = '« CHEQUE DE CAUTION » DEVIENT « EMPREINTE BANCAIRE ». Ben : « le cheque de caution doit se transformer en empreinte bancaire. Peux-tu changer la mention partout ou apparait cheque de caution ? » ⚠️ CE N ETAIT PAS UN SIMPLE RENOMMAGE : le texte associe decrivait des gestes propres a un CHEQUE — il est « remis », il « n est pas encaisse », il est « restitue ». Une empreinte bancaire se PREND, se DEBITE et s ANNULE. Renommer sans adapter les verbes aurait laisse des clauses incoherentes dans les CGV, un document juridique transmis aux clients. Les VERBES ONT DONC ETE ADAPTES partout : sur la ligne du devis et de la facture (« empreinte prise le jour de la livraison, non debitee, annulee apres retour du materiel »), et dans les trois clauses concernees des CGV — 7.1 (prise a la mise a disposition, non debitee, annulee), 7.2 (aucune empreinte exigee du particulier) et 7.4 (l empreinte pourra etre DEBITEE, et non encaissee). La logique juridique est inchangee : montants dus, complement exigible, surplus restitue, engagement sur l honneur du particulier. LES IDENTIFIANTS DE CODE SONT CONSERVES (CAUTION_CHEQUE, cautionRowHtml, cautionMention) : les renommer toucherait des dizaines de references et des donnees DEJA ENREGISTREES, pour zero gain visible. Seul le texte vu par le client change. Les documents deja emis gardent leur redaction d origine, puisqu ils memorisent leur rendu. Suite v1493 : 27 assertions, dont la verification que le vocabulaire du cheque a bien disparu ; un renommage NAIF (terme change mais verbes conserves) fait rougir 5 assertions. La suite v1492 a suivi le nouveau libelle, son mecanisme etant inchange.';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
@@ -16414,7 +16414,7 @@ async function saveProd(){
 // Fiche recette recalculée aux quantités d'un batch (affichée juste après le lancement).
 // Met à l'échelle chaque ingrédient selon le nombre de macarons produits, en ne montrant
 // que les ingrédients du composant concerné (coque / ganache) si la recette est étiquetée.
-async function ficheRecetteProduction(recipeId, nbMacarons, composant, lot){
+async function ficheRecetteProduction(recipeId, nbMacarons, composant, lot, garnitureType){
   const rec = recipeId!=null ? await db.recipes.get(recipeId) : null;
   if(!rec){ closeModal(); return; }
   const allItems = await db.recipeItems.where('recipeId').equals(recipeId).toArray();
@@ -16430,13 +16430,16 @@ async function ficheRecetteProduction(recipeId, nbMacarons, composant, lot){
     if(composant==='coques'){
       items = allItems.filter(it=> it.partie==='coque' || !it.partie);
     } else {
-      // La GARNITURE (composant interne 'ganache') regroupe ganache ET crémeux. Une recette à
-      // crémeux (ex. mangue passion) doit donc afficher ses ingrédients ici, sans quoi la fiche
-      // restait vide. Le sous-type précis (ganache/crémeux) est porté par la production.
-      items = allItems.filter(it=> it.partie==='ganache' || it.partie==='cremeux' || !it.partie);
+      // [v1495] Ben : lancer le crémeux affichait AUSSI les ingrédients de la ganache — cette
+      // fiche regroupait `ganache OU cremeux` sans jamais regarder le sous-type RÉELLEMENT
+      // choisi au lancement. Ne montrer que celui-là (+ lignes communes non étiquetées) : une
+      // recette purement crémeux (ex. mangue passion) continue de s'afficher normalement dès
+      // que « Crémeux » est le sous-type demandé — plus besoin d'inclure la ganache pour ça.
+      const garnT = garnitureType || 'ganache';
+      items = allItems.filter(it=> it.partie===garnT || !it.partie);
     }
   }
-  const compLabel = composant==='coques'?'🟤 Coques':composant==='ganache'?'🍫 Ganache':'🍩 Complet';
+  const compLabel = composant==='coques'?'🟤 Coques':composant==='ganache'?(garnitureType==='cremeux'?'🟠 Crémeux':'🍫 Ganache'):'🍩 Complet';
   // [v1441] Rappel bicolore ICI aussi (pas seulement dans le formulaire de lancement) : cette
   // fiche s'affiche TOUJOURS après le lancement (voir lancerBatchAvecFiche, point 4) — c'est
   // l'endroit le plus sûr pour que Ben le voie, même s'il avait manqué la note du formulaire.
@@ -16504,7 +16507,7 @@ async function ficheRecetteProductionFromBatch(prodId){
   // qteTheorique des coques est en COQUES → on revient au nombre de macarons pour la fiche.
   let nbMac = +p.qteTheorique || +p.qteProduite || 0;
   if(comp==='coques') nbMac = nbMac / COQUES_PAR_MACARON;
-  await ficheRecetteProduction(p.recipeId, nbMac, comp, p.lotProduction||'');
+  await ficheRecetteProduction(p.recipeId, nbMac, comp, p.lotProduction||'', p.garnitureType);
 }
 // [DUO] Fiche de production d'une MERINGUE COMMUNE (2 parfums), affichée après le lancement.
 // Présentation alignée sur ficheRecetteProduction. La poudre d'amande et le sucre glace (tant
@@ -16825,19 +16828,26 @@ async function enregistrerProduction(recipeId, qteTheorique, qteReelle, dateProd
       if(!EMP_BY_KEY[emplacement] && emplacement!=='ambiant' && emplacement!=='') throw new Error('Emplacement de rangement invalide');
       const allItems = await db.recipeItems.where('recipeId').equals(recipeId).toArray();
       // CONSOMMATION PAR COMPOSANT : un batch « coques » ne puise que les ingrédients
-      // étiquetés coque ; un batch « ganache » que les ingrédients ganache ; un batch
-      // « complet » puise tout. Évite le double comptage quand on produit en 2 temps.
+      // étiquetés coque ; un batch « ganache »/« crémeux » que les ingrédients de SON sous-type
+      // précis ; un batch « complet » puise tout. Évite le double comptage quand on produit en
+      // 2 temps.
       // Rétro-compat : si AUCUN ingrédient n'est étiqueté (anciennes recettes), on consomme
       // tout quel que soit le composant (comportement d'avant l'étiquetage).
       const comp = meta.composant || 'complet';
+      // [v1495] Ben, capture à l'appui : lancer une sous-recette de crémeux consommait AUSSI les
+      // ingrédients de la ganache. CAUSE : ce filtre regroupait `ganache OU cremeux` sans jamais
+      // regarder LEQUEL des deux avait été choisi au lancement (meta.garnitureType) — une recette
+      // qui a des lignes des deux types (ex. base ganache commune + finition crémeux) consommait
+      // systématiquement l'ensemble, quel que soit le sous-type sélectionné.
+      const garnType = meta.garnitureType || 'ganache';   // sous-type précis choisi pour CE lancement
       const recetteEtiquetee = allItems.some(it=>it.partie==='coque'||it.partie==='ganache'||it.partie==='cremeux');
       let items = allItems;
       if(recetteEtiquetee && (comp==='coques' || comp==='ganache')){
         if(comp==='coques'){
           items = allItems.filter(it=> it.partie==='coque' || !it.partie);
         } else {
-          // garniture = ganache + crémeux (+ lignes communes non étiquetées)
-          items = allItems.filter(it=> it.partie==='ganache' || it.partie==='cremeux' || !it.partie);
+          // garniture : uniquement le sous-type sélectionné (+ lignes communes non étiquetées)
+          items = allItems.filter(it=> it.partie===garnType || !it.partie);
         }
       }
       // CONSOMMATION MATIÈRES : basée sur la quantité de MACARONS-équivalent.
@@ -61281,7 +61291,7 @@ async function lancerBatchAvecFiche(opts){
   // toast optionnel AVANT la popup (la popup est modale et masquerait un toast tardif)
   if(opts.toastLabel){ try{ toast(opts.toastLabel); }catch(e){swallow(e,'lancerBatchAvecFiche')} }
   // 4) POPUP RECETTE garantie (grammages recalculés au batch)
-  try{ await ficheRecetteProduction(recipeId, facteurQte, composant, lot); }catch(e){ console.error('lancerBatchAvecFiche fiche', e); }
+  try{ await ficheRecetteProduction(recipeId, facteurQte, composant, lot, garnType); }catch(e){ console.error('lancerBatchAvecFiche fiche', e); }
   return prodId;
 }
 
