@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1495'; // suite : voir tests/v1495-garniture-sous-type.test.js
+const APP_VERSION = 'v1497'; // suite : voir tests/v1496-materialid-type-safe.test.js
 const APP_MAJ = '« CHEQUE DE CAUTION » DEVIENT « EMPREINTE BANCAIRE ». Ben : « le cheque de caution doit se transformer en empreinte bancaire. Peux-tu changer la mention partout ou apparait cheque de caution ? » ⚠️ CE N ETAIT PAS UN SIMPLE RENOMMAGE : le texte associe decrivait des gestes propres a un CHEQUE — il est « remis », il « n est pas encaisse », il est « restitue ». Une empreinte bancaire se PREND, se DEBITE et s ANNULE. Renommer sans adapter les verbes aurait laisse des clauses incoherentes dans les CGV, un document juridique transmis aux clients. Les VERBES ONT DONC ETE ADAPTES partout : sur la ligne du devis et de la facture (« empreinte prise le jour de la livraison, non debitee, annulee apres retour du materiel »), et dans les trois clauses concernees des CGV — 7.1 (prise a la mise a disposition, non debitee, annulee), 7.2 (aucune empreinte exigee du particulier) et 7.4 (l empreinte pourra etre DEBITEE, et non encaissee). La logique juridique est inchangee : montants dus, complement exigible, surplus restitue, engagement sur l honneur du particulier. LES IDENTIFIANTS DE CODE SONT CONSERVES (CAUTION_CHEQUE, cautionRowHtml, cautionMention) : les renommer toucherait des dizaines de references et des donnees DEJA ENREGISTREES, pour zero gain visible. Seul le texte vu par le client change. Les documents deja emis gardent leur redaction d origine, puisqu ils memorisent leur rendu. Suite v1493 : 27 assertions, dont la verification que le vocabulaire du cheque a bien disparu ; un renommage NAIF (terme change mais verbes conserves) fait rougir 5 assertions. La suite v1492 a suivi le nouveau libelle, son mecanisme etant inchange.';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
@@ -5298,6 +5298,87 @@ function sortProdsRecent(prods){
 }
 // =============================================================================
 
+// [v1496] LOTS D'UNE MATIÈRE, INSENSIBLE AU TYPE DE materialId.
+// CONTRAT dexie_min (gravé depuis v1480/v1481) : `where(x).equals(v)` compare en `===` STRICT,
+// AUCUNE coercition. Un lot dont `materialId` a été enregistré en CHAÎNE (import, ancien chemin
+// de saisie, correction manuelle…) alors que le reste de l'app compare en NOMBRE devient alors
+// INVISIBLE à toute requête `.where('materialId').equals(+id)` — silencieusement, sans erreur.
+// Ben, capture à l'appui (crème fraîche : 152,57 g + 1 140 g = 1 292,57 g bien affichés sur la
+// fiche matière — qui somme en JS, où les clés d'objet sont insensibles au type — mais lancer une
+// recette de plus de 153 g annonçait « stock insuffisant » : SEULE la requête stricte utilisée
+// par la consommation matières manquait le second lot). Ce helper ne passe plus par l'index :
+// il relit TOUTE la table puis compare en `+a===+b` (même contrat que la correction v1480 sur les
+// événements calendrier) — un lot est retrouvé quel que soit le type sous lequel son materialId a
+// été écrit, exactement comme l'affichage du stock l'a toujours fait.
+async function lotsDeMatiere(materialId, opts){
+  opts = opts || {};
+  const mid = +materialId;
+  const all = await db.materialLots.toArray();
+  let lots = all.filter(l => +l.materialId === mid);
+  if(opts.actifs!==false) lots = lots.filter(l => round3(+l.qteRestante) > 0);
+  return lots;
+}
+// [v1496] Même défaut, même correctif, côté recipeItems : les garde-fous de suppression/
+// verrouillage d'unité d'une matière (delMat, saveMat) doivent la retrouver dans les recettes
+// quel que soit le type sous lequel son id a été enregistré sur la ligne d'ingrédient.
+async function recipeItemsDeMatiere(materialId){
+  const mid = +materialId;
+  const all = await db.recipeItems.toArray();
+  return all.filter(it => +it.materialId === mid);
+}
+// [v1496] DIAGNOSTIC — repère les lots et lignes de recette dont le `materialId` n'est PAS
+// stocké en nombre. Depuis ce correctif, l'app les retrouve quand même (comparaison tolérante
+// partout), donc ce diagnostic n'est plus un correctif nécessaire : il sert à CONSTATER
+// l'étendue réelle du problème dans les données de Ben, et à confirmer qu'une matière donnée
+// était bien concernée. Purement informatif : ne modifie rien.
+async function diagnosticReferencesMatieres(){
+  try{
+    const [mats, lots, items] = await Promise.all([
+      db.materials.toArray(), db.materialLots.toArray(), db.recipeItems.toArray()
+    ]);
+    const nomDe = id => (mats.find(m=>+m.id===+id)||{}).nom || '(référence inconnue)';
+    const malType = v => v!=null && typeof v !== 'number';
+    const lotsKo  = lots.filter(l => malType(l.materialId));
+    const itemsKo = items.filter(it => malType(it.materialId));
+    // Orphelins : un materialId qui ne correspond à AUCUNE fiche matière (autre cause possible
+    // de stock « invisible », indépendante du type).
+    const idsConnus = new Set(mats.map(m=>+m.id));
+    const lotsOrph  = lots.filter(l => l.materialId!=null && !idsConnus.has(+l.materialId));
+
+    if(!lotsKo.length && !itemsKo.length && !lotsOrph.length){
+      openModal(`<h3>🔎 Diagnostic des références</h3>
+        <p class="note">Tout est cohérent : chaque lot et chaque ligne de recette pointe vers une fiche matière existante, au bon format.</p>
+        <p class="note">Si un stock te semble encore faux, l'écart vient d'ailleurs — dis-moi quelle matière et à quel moment.</p>
+        <div class="modal-actions"><button class="btn" onclick="closeModal()">Fermer</button></div>`);
+      return;
+    }
+    const bloc = (titre, arr, ligne) => arr.length
+      ? `<p class="note" style="margin-top:8px"><b>${titre}</b></p>` + arr.slice(0,25).map(ligne).join('')
+        + (arr.length>25?`<p class="note">… et ${arr.length-25} autre(s).</p>`:'')
+      : '';
+    openModal(`<h3>🔎 Diagnostic des références</h3>
+      <p class="note">Ces entrées ont un identifiant de matière enregistré dans un format inattendu.
+      Depuis la v1496 l'app les retrouve quand même — le stock et les recettes fonctionnent normalement.
+      Cette liste sert juste à savoir quelles matières étaient concernées.</p>
+      ${bloc(`${lotsKo.length} lot(s) concerné(s)`, lotsKo, l=>
+        `<div class="sum-box"><span><b>${esc(nomDe(l.materialId))}</b><br>
+          <span style="font-size:.76rem;color:#8a6d3b">lot ${esc(l.lotFournisseur||'—')}${l.dlc?` · DLC ${fmtDate(l.dlc)}`:''}</span></span>
+          <b>${qty(+l.qteRestante||0)}</b></div>`)}
+      ${bloc(`${itemsKo.length} ligne(s) de recette concernée(s)`, itemsKo, it=>
+        `<div class="sum-box"><span><b>${esc(nomDe(it.materialId))}</b></span>
+          <b>${qty(+it.qteParBatch||0)}/batch</b></div>`)}
+      ${bloc(`${lotsOrph.length} lot(s) sans fiche matière`, lotsOrph, l=>
+        `<div class="sum-box" style="background:#fdf3e7"><span><b>référence n°${esc(String(l.materialId))}</b> — supprimée ?<br>
+          <span style="font-size:.76rem;color:#b3261e">ce stock n'est rattaché à aucune matière : il reste invisible partout</span></span>
+          <b>${qty(+l.qteRestante||0)}</b></div>`)}
+      <div class="modal-actions"><button class="btn" onclick="closeModal()">Fermer</button></div>`);
+  }catch(e){
+    console.error('diagnosticReferencesMatieres', e);
+    openModal(`<h3>🔎 Diagnostic des références</h3>
+      <p class="note" style="color:#b3261e">Erreur pendant l'analyse.</p>
+      <div class="modal-actions"><button class="btn" onclick="closeModal()">Fermer</button></div>`);
+  }
+}
 function lotFifoCompare(a, b){
   const ra = a.repriseStock?0:1, rb = b.repriseStock?0:1;
   if(ra!==rb) return ra-rb;                       // les lots de reprise en tête
@@ -5314,10 +5395,10 @@ function lotFifoCompare(a, b){
 // Le materialId doit être résolu EN AMONT (hors transaction) via db.materials.
 async function decrementLotsByMaterial(materialId, nb){
   if(!materialId) return {consomme:0, manque:round3(+nb||0), materialId:null, absent:true};
-  const lots = (await db.materialLots.where('materialId').equals(+materialId).toArray())
-    .filter(l=>round3(+l.qteRestante)>0)
+  const lots = (await lotsDeMatiere(materialId))
     .sort(lotFifoCompare);
   let reste = round3(+nb||0); let consomme=0;
+
   for(const l of lots){
     if(reste<=0) break;
     const dispo = round3(+l.qteRestante);
@@ -5336,9 +5417,8 @@ async function decrementLotsByMaterial(materialId, nb){
 async function restockLotsByMaterial(materialId, nb){
   const n = round3(+nb||0);
   if(!materialId || n<=0) return {credite:0};
-  const lots = await db.materialLots.where('materialId').equals(+materialId).toArray();
+  const lots = await lotsDeMatiere(materialId, {actifs:false});
   if(!lots.length) return {credite:0, absent:true};   // plus aucun lot : rien où recréditer
-  // lot le plus récent (réception la plus récente, sinon le dernier id)
   lots.sort((a,b)=> (b.dateReception||'').localeCompare(a.dateReception||'') || (+b.id - +a.id));
   const cible = lots[0];
   await db.materialLots.update(cible.id, {qteRestante: addQty(cible.qteRestante, n)});
@@ -5389,7 +5469,7 @@ async function applyMarketPackagingStock(mk, opts){
 
 // Macarons grand format (vente à l'unité), double tarif. Le tarif PRO est évolutif
 // (réglable dans les paramètres) ; le tarif particulier reste la référence par défaut.
-const BIG_FORMATS = ['Chocolat', 'Myrtille framboise', 'Mangue passion', 'Madeleine'];
+const BIG_FORMATS = ['Chocolat', 'Myrtille framboise', 'Mangue passion', 'Pistache framboise', 'Madeleine'];
 const BIG_PRICE = { pro: 3.20, particulier: 6.00 };   // défauts/repli
 // 1 macaron assemblé = 2 coques + 1 dose de ganache. Les sous-lots COQUES sont comptés
 // en coques ; les sous-lots GANACHE en nombre de macarons garnissables.
@@ -7984,9 +8064,8 @@ function initHistoryNav(){
 
 // --------- Stock courant calculé depuis les lots ---------
 async function stockParMatiere(materialId){
-  const lots = await db.materialLots.where('materialId').equals(materialId).toArray();
+  const lots = await lotsDeMatiere(materialId, {actifs:false});
   const total = lots.reduce((s,l)=>s+(+l.qteRestante||0),0);
-  const actifs = lots.filter(l=>+l.qteRestante>0);
   const dlcMin = actifs.length ? actifs.map(l=>l.dlc).filter(Boolean).sort()[0] : null;
   return { total, dlcMin, nbLots:actifs.length };
 }
@@ -9012,7 +9091,7 @@ async function renderMaterials(){
 
   document.getElementById('main').innerHTML=`
    <div class="topbar"><div><h1>Matières & emballages</h1><p id="matCount">${mats.length} référence(s)</p></div>
-     <div class="flex" style="flex-wrap:wrap;gap:8px"><button class="btn gold" onclick="lotForm()">↘ Réception lot</button><button class="btn" onclick="matForm()">+ Référence</button><button class="btn ghost" onclick="genShoppingList()">🛒 Liste de courses</button><button class="btn ghost" onclick="genShoppingListPrev()">🔮 Courses prévisionnelles</button><button class="btn ghost" onclick="inventaireForm()">📋 Inventaire</button></div></div>
+     <div class="flex" style="flex-wrap:wrap;gap:8px"><button class="btn gold" onclick="lotForm()">↘ Réception lot</button><button class="btn" onclick="matForm()">+ Référence</button><button class="btn ghost" onclick="genShoppingList()">🛒 Liste de courses</button><button class="btn ghost" onclick="genShoppingListPrev()">🔮 Courses prévisionnelles</button><button class="btn ghost" onclick="inventaireForm()">📋 Inventaire</button><button class="btn ghost" onclick="diagnosticReferencesMatieres()" title="Détecte les lots ou lignes de recette dont la référence matière ne serait pas du bon type (invisibles au calcul de stock malgré une fiche correcte)">🔎 Diagnostic</button></div></div>
    <div class="panel"><h2>Inventaire (stock = somme des lots actifs)</h2>
      <input class="search" id="matSearch" style="width:100%;margin-bottom:12px" placeholder="Nom de référence, unité, état…" value="${esc(matSearch)}" oninput="matFilter(this.value)" autocomplete="off" autocapitalize="off" autocorrect="off">
    ${mats.length?`
@@ -9389,7 +9468,7 @@ async function inventaireConfirm(list){
         } else {
           // manque → décrément FIFO sur les lots actifs (au plus proche de la DLC d'abord)
           let reste = -delta;
-          const lots = (await db.materialLots.where('materialId').equals(+c.id).and(l=>+l.qteRestante>0).toArray())
+          const lots = (await lotsDeMatiere(+c.id))
             .sort((a,b)=>(a.dlc||'9999').localeCompare(b.dlc||'9999'));
           for(const l of lots){
             if(reste<=1e-9) break;
@@ -9613,8 +9692,8 @@ async function saveMat(id){
     // S3 : interdire le changement d'unité si la matière est déjà utilisée (lots ou recettes)
     const prev = await db.materials.get(id);
     if(prev && prev.unite && prev.unite!==o.unite){
-      const nbLots = (await db.materialLots.where('materialId').equals(id).toArray()).length;
-      const nbItems = (await db.recipeItems.where('materialId').equals(id).toArray()).length;
+      const nbLots = (await lotsDeMatiere(id, {actifs:false})).length;
+      const nbItems = (await recipeItemsDeMatiere(id)).length;
       if(nbLots || nbItems){
         toast(`Unité verrouillée : ${nbLots} lot(s) et ${nbItems} recette(s) utilisent « ${prev.unite} »`);
         return;
@@ -9630,7 +9709,7 @@ async function delMat(id){
   const mat = await db.materials.get(id);
   if(!mat){ toast('Matière introuvable'); return; }
   // Garde-fou : une matière utilisée dans une ou plusieurs recettes ne peut pas être supprimée.
-  const usedItems = await db.recipeItems.where('materialId').equals(id).toArray().catch(()=>[]);
+  const usedItems = await recipeItemsDeMatiere(id).catch(()=>[]);
   if(usedItems.length){
     const recIds = [...new Set(usedItems.map(it=>it.recipeId))];
     const recs = await db.recipes.toArray();
@@ -9640,7 +9719,7 @@ async function delMat(id){
       <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
     return;
   }
-  const nbLots = await db.materialLots.where('materialId').equals(id).count();
+  const nbLots = await lotsDeMatiere(id, {actifs:false}).then(l=>l.length);
   openModal(`<h3>🗑 Supprimer la matière</h3>
     <p style="margin-bottom:10px"><b>${esc(mat.nom)}</b>${nbLots?` — ${nbLots} lot(s) seront aussi supprimés.`:''}</p>
     <p class="note">Cette action est définitive.</p>
@@ -9651,10 +9730,10 @@ async function delMat(id){
 }
 async function doDelMat(id){
   // Re-vérification anti-concurrence : la matière a-t-elle été ajoutée à une recette entre-temps ?
-  const stillUsed = await db.recipeItems.where('materialId').equals(id).count().catch(()=>0);
+  const stillUsed = await recipeItemsDeMatiere(id).then(l=>l.length).catch(()=>0);
   if(stillUsed){ closeModal(); toast('Matière désormais utilisée dans une recette — suppression annulée'); renderMaterials(); return; }
   await db.transaction('rw',db.materials,db.materialLots,async()=>{
-    await db.materialLots.where('materialId').equals(id).delete();
+    await db.materialLots.bulkDelete((await lotsDeMatiere(id, {actifs:false})).map(l=>l.id));
     await db.materials.delete(id);
   });
   closeModal();
@@ -16802,7 +16881,7 @@ async function prodLinkSave(id){
       for(const it of items){
         let besoin=round3((+it.qteParBatch||0)*facteur);
         if(besoin<=0) continue;
-        const lots=(await db.materialLots.where('materialId').equals(it.materialId).and(l=>+l.qteRestante>0).toArray()).sort(lotFifoCompare);
+        const lots=(await lotsDeMatiere(it.materialId)).sort(lotFifoCompare);
         for(const lot of lots){
           if(besoin<=1e-9) break;
           const pris=round3(Math.min(besoin,+lot.qteRestante));
@@ -16857,7 +16936,7 @@ async function enregistrerProduction(recipeId, qteTheorique, qteReelle, dateProd
 
       // Vérif préalable : tout le stock nécessaire est-il disponible ?
       for(const item of items){
-        const lots = await db.materialLots.where('materialId').equals(item.materialId).and(l=>+l.qteRestante>0).toArray();
+        const lots = await lotsDeMatiere(item.materialId);
         const dispo = lots.reduce((s,l)=>s+(+l.qteRestante),0);
         const besoin = item.qteParBatch * facteur;
         if(dispo + 1e-9 < besoin){
@@ -16902,9 +16981,7 @@ async function enregistrerProduction(recipeId, qteTheorique, qteReelle, dateProd
         const mat = await db.materials.get(item.materialId);
         const peri = mat && mat.perissableOuvert;
         const nbJoursOuv = peri ? (Math.max(1,+mat.joursApresOuverture||7)) : 0;
-        const lots = await db.materialLots
-          .where('materialId').equals(item.materialId)
-          .and(l=>+l.qteRestante>0).toArray();
+        const lots = await lotsDeMatiere(item.materialId);
         lots.sort(lotFifoCompare); // FIFO : lots de reprise d'abord, puis DLC la plus proche
         for(const lot of lots){
           if(besoin<=1e-9) break;
@@ -16954,7 +17031,7 @@ async function produireComposant(componentId, nbDosesTh, nbDosesReel, dateProd, 
       const facteur = (rendement>0) ? (nbDosesTh / rendement) : 0;
       // Vérif préalable : stock suffisant pour toutes les matières ?
       for(const item of items){
-        const lots = await db.materialLots.where('materialId').equals(item.materialId).and(l=>+l.qteRestante>0).toArray();
+        const lots = await lotsDeMatiere(item.materialId);
         const dispo = lots.reduce((s,l)=>s+(+l.qteRestante),0);
         const besoin = (+item.qteParBatch||0) * facteur;
         if(dispo + 1e-9 < besoin){
@@ -16989,7 +17066,7 @@ async function produireComposant(componentId, nbDosesTh, nbDosesReel, dateProd, 
         const mat = await db.materials.get(item.materialId);
         const peri = mat && mat.perissableOuvert;
         const nbJoursOuv = peri ? (Math.max(1,+mat.joursApresOuverture||7)) : 0;
-        const lots = await db.materialLots.where('materialId').equals(item.materialId).and(l=>+l.qteRestante>0).toArray();
+        const lots = await lotsDeMatiere(item.materialId);
         lots.sort(lotFifoCompare);
         for(const lot of lots){
           if(besoin<=1e-9) break;
@@ -47948,12 +48025,12 @@ async function aiQueryStock(params){
   if(!params.material){
     // liste tout le stock
     const rows=[];
-    for(const m of materials){ const lots=await db.materialLots.where('materialId').equals(m.id).toArray();
+    for(const m of materials){ const lots=await lotsDeMatiere(m.id, {actifs:false});
       const tot=lots.reduce((s,l)=>s+(+l.qteRestante||0),0); rows.push(`<div class="sum-box"><span>${esc(m.nom)}</span><b>${qty(tot)} ${esc(m.unite||'')}</b></div>`); }
     return aiSay(`<h3 style="font-size:1rem;margin-bottom:8px">Stock de toutes les matières</h3>${rows.join('')||'<p class="note">Aucune matière.</p>'}
       <p class="note" style="margin-top:8px"><button class="btn ghost sm" onclick="goView('matieres')">⬛ Gérer les matières</button> <button class="btn ghost sm" onclick="goView('stockparfums')">🍬 Stock par parfum</button></p>`);
   }
-  const lots=await db.materialLots.where('materialId').equals(params.material.id).and(l=>+l.qteRestante>0).toArray();
+  const lots=await lotsDeMatiere(params.material.id);
   const tot=lots.reduce((s,l)=>s+(+l.qteRestante||0),0);
   const proche=lots.slice().sort((a,b)=>(a.dlc||'9999').localeCompare(b.dlc||'9999'))[0];
   const unite=esc(params.material.unite||'');
@@ -51305,7 +51382,7 @@ async function aiExecute(){
     toast('Choisissez la commande à supprimer dans la liste');
   } else if(type==='adjust_stock'){
     // ajustement = création d'un lot de correction (traçable), jamais d'écrasement
-    const m=params.material; const lots=await db.materialLots.where('materialId').equals(m.id).toArray();
+    const m=params.material; const lots=await lotsDeMatiere(m.id, {actifs:false});
     const actuel=lots.reduce((s,l)=>s+(+l.qteRestante||0),0);
     const delta=params.value-actuel;
     if(Math.abs(delta)<1e-9){ aiSay(`<p>Le stock de <b>${esc(m.nom)}</b> est déjà à ${qty(params.value)} ${esc(m.unite||'')}.</p>`); return; }
@@ -55958,8 +56035,8 @@ async function convertirDenreeKgVersG(matId){
   const mat=await db.materials.get(matId);
   if(!mat){ toast('Matière introuvable'); return; }
   if((mat.unite||'kg')!=='kg'){ toast('Cette matière n\'est pas en kg'); return; }
-  const lots=await db.materialLots.where('materialId').equals(matId).toArray();
-  const items=await db.recipeItems.where('materialId').equals(matId).toArray();
+  const lots=await lotsDeMatiere(matId, {actifs:false});
+  const items=await recipeItemsDeMatiere(matId);
   const lotsAvApr=lots.map(l=>{
     const qi=+l.qteInitiale||0, qr=+l.qteRestante||0, prix=+l.prix||0;
     const puAv=lotPU(l);
@@ -55993,7 +56070,7 @@ async function convertirDenreeKgVersGConfirm(matId){
   try{
     const mat=await db.materials.get(matId);
     if(!mat || (mat.unite||'kg')!=='kg'){ toast('Conversion impossible'); return; }
-    const lots=await db.materialLots.where('materialId').equals(matId).toArray();
+    const lots=await lotsDeMatiere(matId, {actifs:false});
     // Snapshot avant écriture (pour annuler)
     const snap={ unite:mat.unite, lots:lots.map(l=>({id:l.id, qteInitiale:l.qteInitiale, qteRestante:l.qteRestante, prixUnitaire:l.prixUnitaire})) };
     await db.transaction('rw', db.materials, db.materialLots, async()=>{
@@ -57856,7 +57933,7 @@ async function consoFixApply(prodId, materialId, qte, lotImposeId){
   await db.transaction('rw', db.productions, db.materialLots, db.prodConsumption, async()=>{
     let besoin = round3(qte);
     // ordre des lots : lot imposé d'abord, puis FIFO sur le reste
-    let lots = (await db.materialLots.where('materialId').equals(materialId).and(l=>+l.qteRestante>0).toArray());
+    let lots = (await lotsDeMatiere(materialId));
     lots = lots.sort(lotFifoCompare);
     if(lotImposeId){
       const idx = lots.findIndex(l=>+l.id===+lotImposeId);
@@ -57960,7 +58037,7 @@ async function consoFixPreview(){
   const u = mat && mat.unite ? mat.unite : 'g';
 
   // lots dispo (FIFO)
-  const lots = (await db.materialLots.where('materialId').equals(materialId).and(l=>+l.qteRestante>0).toArray().catch(()=>[])).sort(lotFifoCompare);
+  const lots = (await lotsDeMatiere(materialId).catch(()=>[])).sort(lotFifoCompare);
   const dispoTotal = round3(lots.reduce((s,l)=>s+(+l.qteRestante||0),0));
   const lotOpts = lots.map(l=>`<option value="${l.id}">${esc(l.lotFournisseur||('lot #'+l.id))} · ${qty(l.qteRestante)} ${esc(u)}${l.dlc?' · DLC '+fmtDate(l.dlc):''}</option>`).join('');
 
@@ -58235,7 +58312,7 @@ function _prelevMat(materialId){ return (window._prelevCtx.matById||{})[+materia
 
 async function _prelevLotsOptions(materialId, exclureLotId){
   const u = _prelevMat(materialId).unite || 'g';
-  const lots = (await db.materialLots.where('materialId').equals(+materialId).and(l=>+l.qteRestante>0).toArray().catch(()=>[])).sort(lotFifoCompare);
+  const lots = (await lotsDeMatiere(+materialId).catch(()=>[])).sort(lotFifoCompare);
   return lots.filter(l=>+l.id!==+exclureLotId).map(l=>`<option value="${l.id}">${esc(l.lotFournisseur||('lot #'+l.id))} · ${qty(l.qteRestante)} ${esc(u)}${l.dlc?' · DLC '+fmtDate(l.dlc):''}</option>`).join('');
 }
 
@@ -58320,7 +58397,7 @@ async function prelevActionRemplacer(prodId, materialId){
 async function prelevActionReaffecter(prodId, materialId){
   const consoLots = new Set((window._prelevCtx.liste.find(x=>+x.materialId===+materialId)||{}).lots
     ? Object.keys((window._prelevCtx.liste.find(x=>+x.materialId===+materialId)||{}).lots).map(Number) : []);
-  const lots = (await db.materialLots.where('materialId').equals(+materialId).toArray().catch(()=>[]));
+  const lots = (await lotsDeMatiere(+materialId, {actifs:false}).catch(()=>[]));
   const u = _prelevMat(materialId).unite||'g';
   const srcOpts = [...consoLots].map(id=>{ const l=lots.find(x=>+x.id===id);
     return `<option value="${id}">${esc(l?l.lotFournisseur||('lot #'+id):('lot #'+id))}</option>`; }).join('');
@@ -58349,7 +58426,7 @@ async function prelevReaffRefresh(prodId, materialId){
   const couvert = (sim.couvert!=null) ? sim.couvert : (sim.ok?sim.total:0);
   const reste = (sim.reste!=null) ? sim.reste : 0;
   const rep = sim.repartition||[];
-  const lots = (await db.materialLots.where('materialId').equals(+materialId).toArray().catch(()=>[]));
+  const lots = (await lotsDeMatiere(+materialId, {actifs:false}).catch(()=>[]));
   const nomLot = id => { const l=lots.find(x=>+x.id===+id); return l?(l.lotFournisseur||('lot #'+id)):('lot #'+id); };
   const dispoLot = id => { const l=lots.find(x=>+x.id===+id); return l?round3(+l.qteRestante||0):0; };
   const chips = st.to.map((id,i)=>{
@@ -58403,7 +58480,7 @@ async function prelevReaffValider(prodId, materialId){
   const st=(window._prelevReaff||{})[materialId]; if(!st) return;
   const sim = await prelevReaffecter(prodId, materialId, st.from, st.to, {simuler:true});
   if(!sim.ok){ toast(sim.raison||'Répartition incomplète'); return; }
-  const lots = (await db.materialLots.where('materialId').equals(+materialId).toArray().catch(()=>[]));
+  const lots = (await lotsDeMatiere(+materialId, {actifs:false}).catch(()=>[]));
   const nomLot = id => { const l=lots.find(x=>+x.id===+id); return l?(l.lotFournisseur||('lot #'+id)):('lot #'+id); };
   const detail = sim.repartition.map(r=>`• ${nomLot(r.lotId)} : ${qty(r.prend)}`).join('\n');
   if(!confirm(`Réaffecter ${qty(sim.total)} depuis « ${nomLot(st.from)} » ?\n\n${detail}\n\n• Snapshot HACCP réécrit par lot\n• Le stock du lot source remonte de ${qty(sim.total)} (à régulariser en inventaire)`)) return;

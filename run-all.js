@@ -195,7 +195,8 @@ const SUITES = [
   'v1492-caution-optionnelle.test.js',          // v1492 · mention « chèque de caution » optionnelle, calquée sur celle de l'acompte, avec garde de motif sur les 7 chemins
   'v1493-empreinte-bancaire.test.js',           // v1493 · « chèque de caution » → « empreinte bancaire » : verbes adaptés (prise/débitée/annulée) sur les documents ET les 3 clauses CGV
   'v1494-tarif-saisie-reactif.test.js',         // v1494 · décocher « anciens tarifs » ne retarifait pas les lignes déjà présentes (coffret + menu déroulant) ; le drapeau ancienTarif restait collé pour toujours à l'enregistrement
-  'v1495-garniture-sous-type.test.js'           // v1495 · lancer une sous-recette de crémeux consommait ET affichait aussi les ingrédients de la ganache, faute de filtrer sur le sous-type précisément sélectionné
+  'v1495-garniture-sous-type.test.js',          // v1495 · lancer une sous-recette de crémeux consommait ET affichait aussi les ingrédients de la ganache, faute de filtrer sur le sous-type précisément sélectionné
+  'v1496-materialid-type-safe.test.js'          // v1496/v1497 · stock invisible au lancement d'une recette (materialId comparé en type strict par dexie_min) + ajout du grand format Pistache framboise
 ];
 
 let allOk = true;

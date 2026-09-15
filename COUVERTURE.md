@@ -6241,3 +6241,75 @@ Aucun harnais Dexie complet (`tests/_memidb.js`/`_faux-idb.js`) n'est fourni dan
 suite teste le filtre réellement extrait du code plutôt que de rejouer toute la transaction
 `enregistrerProduction` (verif stock, décrément FIFO, écriture `db.productions`). Le filtre est la
 pièce qui portait le défaut ; le reste de la transaction n'a pas été touché par ce correctif.
+
+---
+
+## 2026-09-15 — STOCK INVISIBLE AU LANCEMENT D'UNE RECETTE + GRAND FORMAT PISTACHE FRAMBOISE  (v1495 → **v1497**)
+
+### ① v1496 — « Stock insuffisant » alors que la fiche affiche le bon total
+
+**Signalé par Benjamin**, chiffres réels à l'appui (crème fraîche) :
+> Lot entré 09/08, DLC 26/08, restant **152,57 g** · Lot entré 08/08, DLC 26/08, restant **1 140 g**.
+> « Au moment de lancer une recette nécessitant plus de 153 g ça indique que le stock est
+> insuffisant. » Capture de la fiche matière à l'appui : **un seul bloc** « Crème fraiche »,
+> **Stock : 1 292,57 g**, **Lots : 2**. Donc pas un doublon de référence.
+
+Deux symptômes secondaires signalés en amont, longtemps restés inexpliqués : **deux lots entamés
+en parallèle** et un **FIFO qui semblait ne pas s'appliquer**.
+
+**CAUSE** — contrat gravé de `dexie_min` (déjà documenté en v1480/v1481) : `where(x).equals(v)`
+compare en `===` **STRICT**, sans aucune coercition. Un lot dont le `materialId` a été enregistré
+en **chaîne** (import, ancien chemin de saisie, ajustement d'inventaire…) devient **invisible** à
+toute requête `.where('materialId').equals(+id)` — silencieusement, sans erreur. L'affichage de la
+fiche matière, lui, somme en JS sans se soucier du type : d'où un **total juste à l'écran** et un
+**« stock insuffisant » au lancement**, sur exactement les mêmes données. Les deux symptômes
+secondaires en découlent : selon le chemin de code emprunté, un lot est vu ou non — d'où des lots
+entamés en parallèle et un FIFO qui ne parcourt pas la file qu'on croit.
+
+C'est la **même racine** que la correction v1480 sur les événements calendrier. Le contrat de
+`dexie_min` était connu et écrit ; il n'avait simplement jamais été appliqué à `materialId`.
+
+**FIX** — deux helpers, `lotsDeMatiere(materialId, {actifs})` et `recipeItemsDeMatiere(materialId)`,
+qui relisent la table et comparent en `+a === +b`. Substitués aux **19 requêtes strictes** sur
+`materialId` (15 sur `materialLots`, 4 sur `recipeItems`) : lancement de recette (vérification ET
+consommation), production de composant, rattachement rétroactif, inventaire, ajustement, recrédit,
+suppression de matière, verrouillage d'unité, écrans de stock. Vérifié : plus aucune requête
+stricte sur `materialId` ne subsiste dans `app.js`.
+
+**Bouton 🔎 Diagnostic** ajouté sur l'écran Matières (`diagnosticReferencesMatieres`) : liste les
+lots et lignes de recette au type inattendu, **plus** les lots orphelins (un `materialId` qui ne
+correspond à aucune fiche — autre cause possible de stock invisible, indépendante du type).
+Purement informatif, aucune écriture en base : sert à constater l'étendue réelle dans les données
+de Ben, le correctif rendant déjà ces entrées visibles partout.
+
+### ② v1497 — Grand format « Pistache framboise »
+
+Demandé **commandable avant que sa recette n'existe** (BOM à venir). Ajouté à `BIG_FORMATS`, ce
+qui suffit : la grille de la ligne Grand format itère sur cette liste. Le diagnostic « grands
+formats » le signalera comme *sans recette* tant que le BOM n'est pas créé — comportement voulu
+ici, et rappel utile.
+
+### Suite v1496 : 18 assertions (`tests/v1496-materialid-type-safe.test.js`)
+
+Le helper réel est extrait du code et exécuté contre les **deux lots exacts de Ben** (152,57 g en
+nombre, 1 140 g en chaîne) : les deux sont retrouvés, le total vaut 1 292,57 g, une recette de
+153 g passe. Lots épuisés toujours exclus par défaut, `{actifs:false}` les rend, aucun lot d'une
+autre matière aspiré au passage. Vérifié aussi : plus aucune requête stricte dans `app.js`, FIFO
+toujours appliqué, bouton Diagnostic effectivement câblé à une fonction existante et sans écriture
+en base, et « Pistache framboise » présent sans perte des grands formats existants.
+
+**Sensibilité** : la comparaison stricte d'origine, rejouée sur ces mêmes deux lots, n'en voit
+qu'un seul et totalise 152,57 g — reproduisant exactement le blocage constaté.
+
+### Piège de méthode découvert (à retenir)
+`extractFunction` compte les accolades **sans comprendre les template literals**. Sur une fonction
+qui en contient (HTML avec `${…}`), il déborde massivement — ici **102 203 caractères** ramenés au
+lieu de la fonction seule, ce qui faisait échouer une assertion sur du code sans aucun rapport.
+Pour ces fonctions, borner l'extraction à la main jusqu'à la déclaration suivante, **et garder une
+assertion sur la longueur du slice** comme garde-fou du test lui-même.
+
+### Reste ouvert
+L'alerte « risque de rupture » (fenêtre annoncée à 8 jours, quantité « manque » calculée sur
+l'ensemble du carnet) — cause identifiée et confirmée par Ben, correctif **non encore appliqué** :
+question en attente sur la portée à retenir (popup + écran prévisionnel seuls, ou aussi la liste
+des matières à acheter et le calcul des coques à pocher qui consomment ce même total).
