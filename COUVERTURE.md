@@ -6520,3 +6520,66 @@ corriger un mécanisme sans auditer tous ses points d'entrée laisse le correcti
 - L'alerte « risque de rupture » (fenêtre à 8 jours, quantité calculée sur tout le carnet) : cause
   confirmée, correctif toujours non appliqué.
 - Le BOM de « Pistache framboise » reste à saisir par Ben.
+
+---
+
+## 2026-09-18 — L'ÉMISSION D'UN AVOIR NE SE VOYAIT NULLE PART  (v1500 → **v1501**)
+
+**Signalé par Benjamin**, juste après avoir cliqué « Annuler la facture » :
+> « Ça semble fonctionner mais apparemment rien ne change. Puis quand je clique à nouveau sur
+> annuler ça met la facture a déjà été intégralement annulée. Que faire maintenant ? »
+
+### Diagnostic
+
+L'avoir avait bel et bien été émis — le second clic en est la **preuve indirecte** : `avoirForm`
+refuse un montant déjà couvert et répond « déjà intégralement annulée ». Mais **rien sur la fiche
+de la facture elle-même** ne le reflétait : ni bandeau, ni badge, ni total, ni lien vers l'avoir.
+Rouvrir la facture montrait exactement le même **« 🔒 Validée »** qu'avant, comme si de rien
+n'était. Une façon indirecte et déroutante de découvrir que ça avait marché.
+
+Le statut légal de la facture (`emise`/`payee`) n'est **délibérément jamais modifié** par un avoir
+— une facture validée reste ce qu'elle est, inaltérable. Mais personne ne calculait ni n'affichait
+l'état **dérivé** (annulée / avoir partiel) à côté de ce statut légal intact.
+
+### Fix
+
+- **Badge dérivé** dans l'en-tête : « ↩︎ Annulée par avoir » (couverture totale) ou « ↩︎ Avoir
+  partiel Xâ‚¬ » (couverture partielle) — à côté du badge légal « 🔒 Validée », jamais à sa place.
+- **Bandeau récapitulatif** avec accès direct à chaque avoir lié, et rappel explicite que le
+  montant original de la facture reste inchangé.
+- Le bouton d'émission d'un nouvel avoir **disparaît** une fois la facture entièrement couverte
+  (plus besoin d'un clic de trop pour l'apprendre).
+- **Même lien ajouté côté fiche commande** (« Documents liés ») : Ben peut avoir émis l'avoir
+  depuis la commande plutôt que la facture, et devait pouvoir y revenir vérifier ce qu'il a fait.
+
+Recherche des avoirs liés par **`factureId` OU commande liée** (les deux chemins d'émission
+possibles, cf. v1499/v1500), seuil d'égalité toléré à ±0,009 € (arrondi centime).
+
+### Suite v1501 : 16 assertions (`tests/v1501-avoir-retour-visuel.test.js`)
+
+Vérifie l'existence et l'ordre du calcul (orderIds déclaré avant d'être consulté — l'edit précédent
+avait justement failli l'effacer par erreur, cf. section méthode ci-dessous), la présence des deux
+badges, du bandeau, de l'accès direct à chaque avoir, la disparition du bouton une fois couvert, et
+le même ajout côté commande. **Sensibilité** : sans le correctif, le total d'avoirs valait toujours
+0 quel que soit l'avoir réellement émis — aucune distinction possible entre une facture intacte et
+une facture annulée.
+
+### Incident de méthode (pendant ce correctif, pas dans le livré)
+En insérant le calcul des avoirs, `orderIds` a été supprimé par erreur de son point de déclaration
+d'origine (`str_replace` dont le `old_str` couvrait aussi la ligne à conserver). Détecté par
+`node --check` négatif… non : `node --check` ne détecte PAS un `ReferenceError` à l'exécution, seule
+une erreur de syntaxe. C'est la relecture manuelle du diff qui a repéré le trou avant tout test.
+**Leçon reconfirmée** : une syntaxe valide n'est pas un programme correct — remonter le fichier
+patché à l'œil après un `str_replace` sur du code qui redéclare des variables utilisées plus loin,
+pas seulement lancer `node --check` et le tenir pour une preuve suffisante.
+
+### Troisième reformulation de la même leçon générale
+Après « un aller corrigé ne corrige pas le retour » (v1499) et « débloquer une fonction ne débloque
+pas son accès » (v1500) : **une action réussie qui ne se voit nulle part est aussi peu utilisable
+qu'une action qui échoue.** Trois angles différents du même principe — auditer un mécanisme de bout
+en bout inclut sa trace visible, pas seulement sa capacité et son accès.
+
+### Reste ouvert
+- L'alerte « risque de rupture » (fenêtre à 8 jours, quantité calculée sur tout le carnet) : cause
+  confirmée, correctif toujours non appliqué.
+- Le BOM de « Pistache framboise » reste à saisir par Ben.
