@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1497'; // suite : voir tests/v1496-materialid-type-safe.test.js
+const APP_VERSION = 'v1499'; // suite : voir tests/v1499-devis-commande-grille.test.js
 const APP_MAJ = '« CHEQUE DE CAUTION » DEVIENT « EMPREINTE BANCAIRE ». Ben : « le cheque de caution doit se transformer en empreinte bancaire. Peux-tu changer la mention partout ou apparait cheque de caution ? » ⚠️ CE N ETAIT PAS UN SIMPLE RENOMMAGE : le texte associe decrivait des gestes propres a un CHEQUE — il est « remis », il « n est pas encaisse », il est « restitue ». Une empreinte bancaire se PREND, se DEBITE et s ANNULE. Renommer sans adapter les verbes aurait laisse des clauses incoherentes dans les CGV, un document juridique transmis aux clients. Les VERBES ONT DONC ETE ADAPTES partout : sur la ligne du devis et de la facture (« empreinte prise le jour de la livraison, non debitee, annulee apres retour du materiel »), et dans les trois clauses concernees des CGV — 7.1 (prise a la mise a disposition, non debitee, annulee), 7.2 (aucune empreinte exigee du particulier) et 7.4 (l empreinte pourra etre DEBITEE, et non encaissee). La logique juridique est inchangee : montants dus, complement exigible, surplus restitue, engagement sur l honneur du particulier. LES IDENTIFIANTS DE CODE SONT CONSERVES (CAUTION_CHEQUE, cautionRowHtml, cautionMention) : les renommer toucherait des dizaines de references et des donnees DEJA ENREGISTREES, pour zero gain visible. Seul le texte vu par le client change. Les documents deja emis gardent leur redaction d origine, puisqu ils memorisent leur rendu. Suite v1493 : 27 assertions, dont la verification que le vocabulaire du cheque a bien disparu ; un renommage NAIF (terme change mais verbes conserves) fait rougir 5 assertions. La suite v1492 a suivi le nouveau libelle, son mecanisme etant inchange.';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
@@ -1317,9 +1317,15 @@ const VALIDE_SCHEMAS = {
     champs: { materialId:'idRef', supplierId:'idRef', lotFournisseur:'chaine', qte:'nombreFini',
               qteRestante:'nombreFini', prix:'nombreFini', dlc:'chaine', date:'dateJ', ajustInventaire:'nombreFini' }
   },
+  // [v1498] Ben, capture à l'appui : « champ requis absent : « nom » (recipes) — écriture refusée »
+  // en créant une recette dûment nommée. CAUSE : ce schéma exigeait un champ `nom`, alors qu'une
+  // recette porte son libellé dans `produitNom` (c'est ce qu'écrit saveRec, et ce que lisent
+  // recForm, renderRecipes, BIG_FORMATS, la reprise…). Le champ `nom` n'existant sur AUCUNE
+  // recette, la règle refusait toute création, quel que soit le nom saisi — un garde-fou qui
+  // bloquait à 100 % au lieu de protéger. Le bon champ est `produitNom`.
   recipes: {
-    requisCreation: ['nom'],
-    champs: { nom:'chaineNonVide' }
+    requisCreation: ['produitNom'],
+    champs: { produitNom:'chaineNonVide' }
   },
   recipeItems: {
     requisCreation: ['recipeId','materialId'],
@@ -11276,22 +11282,41 @@ function peekAvoirNumero(){
 async function avoirForm(orderId){
   const o = await db.orders.get(orderId); if(!o){ toast('Commande introuvable'); return; }
   const dejaEncaisse = orderPaid(o);
-  if(dejaEncaisse<=0){ toast('Rien n\'a été encaissé sur cette commande'); return; }
   const docs = await db.documents.toArray().catch(()=>[]);
   const facture = docs.find(x=>x.type==='facture' && Array.isArray(x.orderIds) && x.orderIds.includes(orderId) && docEstDefinitif(x));
-  // Déjà remboursé sur cette commande (avoirs émis existants) : borne le nouveau montant possible.
+  // [v1499] AVOIR D'ANNULATION : Ben a validé une facture erronée AVANT tout encaissement, et se
+  // retrouvait sans issue — facture verrouillée (inaltérabilité légale), avoir refusé par le
+  // garde-fou « Rien n'a été encaissé sur cette commande », aucun chemin d'annulation ailleurs.
+  // CAUSE : l'avoir n'était pensé QUE comme un remboursement d'argent reçu. Or il en existe deux,
+  // qui ne touchent PAS les mêmes totaux :
+  //   • REMBOURSEMENT (argent déjà reçu)  → déduit du CA encaissé ET du CA facturé ;
+  //   • ANNULATION     (rien encaissé)    → déduit du CA FACTURÉ SEULEMENT. Retirer de l'encaissé
+  //     ce qui n'y est jamais entré ferait plonger le CA encaissé en négatif et sous-estimerait
+  //     la base URSSAF — une erreur symétrique de celle que l'avoir corrige.
+  // Le montant annulable est donc borné par la FACTURE (ce qui a été facturé), et non par
+  // l'encaissement. Sans facture définitive ET sans encaissement, il n'y a rien à annuler.
   const avoirsExistants = docs.filter(x=>x.type==='avoir' && x.orderId===orderId && x.statut==='emis');
   const dejaRembourse = money2(avoirsExistants.reduce((s,a)=>s+(+a.montant||0),0));
-  const maxRemboursable = money2(Math.max(0, dejaEncaisse - dejaRembourse));
-  if(maxRemboursable<=0){ toast('Cette commande a déjà été intégralement remboursée'); return; }
-  window._avoirCtx = { orderId, facture: facture?facture.id:null, maxRemboursable };
-  openModal(`<h3>↩︎ Créer un avoir</h3>
-    <p class="note">Encaissé sur cette commande : <b>${euro(dejaEncaisse)}</b>${dejaRembourse>0?` (dont ${euro(dejaRembourse)} déjà remboursé)`:''}. Montant remboursable restant : <b>${euro(maxRemboursable)}</b>.
-    ${facture?`<br>Facture définitive liée : <b>${esc(facture.numero||'—')}</b> → l'avoir portera son propre numéro légal (${esc(peekAvoirNumero())}).`:'<br>Aucune facture définitive liée — l\'avoir est enregistré comme remboursement simple.'}</p>
-    <div class="field"><label>Montant à rembourser (€)</label>
+  const estAnnulation = (dejaEncaisse<=0);
+  const baseMax = estAnnulation ? money2(+((facture&&facture.montant)||0)) : dejaEncaisse;
+  if(estAnnulation && !facture){
+    toast('Rien n\'a été encaissé et aucune facture définitive : il n\'y a rien à annuler');
+    return;
+  }
+  const maxRemboursable = money2(Math.max(0, baseMax - dejaRembourse));
+  if(maxRemboursable<=0){ toast(estAnnulation?'Cette facture a déjà été intégralement annulée':'Cette commande a déjà été intégralement remboursée'); return; }
+  window._avoirCtx = { orderId, facture: facture?facture.id:null, maxRemboursable, annulation: estAnnulation };
+  openModal(`<h3>↩︎ ${estAnnulation?'Annuler la facture':'Créer un avoir'}</h3>
+    <p class="note">${estAnnulation
+      ? `Facture <b>${esc(facture.numero||'—')}</b> de <b>${euro(+facture.montant||0)}</b>, <b>non encaissée</b>.${dejaRembourse>0?` (dont ${euro(dejaRembourse)} déjà annulé)`:''} Montant annulable : <b>${euro(maxRemboursable)}</b>.<br>L'avoir portera son propre numéro légal (${esc(peekAvoirNumero())}). La facture reste dans tes archives, neutralisée — c'est la procédure normale, et bien plus sûre qu'une facture manquante dans la numérotation.<br><span style="color:#3f7d52">Aucun argent n'ayant été reçu, seul le CA <b>facturé</b> est corrigé : ton CA encaissé et tes cotisations ne bougent pas.</span>`
+      : `Encaissé sur cette commande : <b>${euro(dejaEncaisse)}</b>${dejaRembourse>0?` (dont ${euro(dejaRembourse)} déjà remboursé)`:''}. Montant remboursable restant : <b>${euro(maxRemboursable)}</b>.
+    ${facture?`<br>Facture définitive liée : <b>${esc(facture.numero||'—')}</b> → l'avoir portera son propre numéro légal (${esc(peekAvoirNumero())}).`:'<br>Aucune facture définitive liée — l\'avoir est enregistré comme remboursement simple.'}`}</p>
+    <div class="field"><label>Montant à ${estAnnulation?'annuler':'rembourser'} (€)</label>
       <input type="number" step="0.01" min="0" max="${maxRemboursable}" id="avoirMt" value="${maxRemboursable}"></div>
     <div class="field"><label>Motif</label>
-      <select id="avoirMotif"><option>Annulation commande</option><option>Produit non conforme / casse</option><option>Erreur de facturation</option><option>Geste commercial</option><option>Autre</option></select></div>
+      <select id="avoirMotif">${estAnnulation
+        ? `<option>Erreur de facturation</option><option>Annulation commande</option><option>Produit non conforme / casse</option><option>Geste commercial</option><option>Autre</option>`
+        : `<option>Annulation commande</option><option>Produit non conforme / casse</option><option>Erreur de facturation</option><option>Geste commercial</option><option>Autre</option>`}</select></div>
     <div class="field"><label>Note (facultatif)</label><input id="avoirNote" placeholder="précision libre"></div>
     <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
       <button class="btn gold" onclick="avoirConfirm()">Émettre l'avoir</button></div>`);
@@ -11311,6 +11336,12 @@ async function avoirConfirm(){
   const doc = {
     type:'avoir', statut: ctx.facture?'emis':'enregistre',
     orderId: ctx.orderId, factureId: ctx.facture||null,
+    // [v1499] NATURE DE L'AVOIR — décide des totaux qu'il corrige (voir avoirForm et le calcul
+    // du CA). 'annulation' : facture émise jamais encaissée → CA facturé seulement.
+    // 'remboursement' : argent réellement rendu → CA encaissé ET facturé. Les avoirs antérieurs
+    // à la v1499 n'ont pas ce champ : ils sont TOUS des remboursements (seul cas alors possible),
+    // et le calcul les traite comme tels par défaut — aucun total ne bouge rétroactivement.
+    nature: ctx.annulation ? 'annulation' : 'remboursement',
     numero, montant: mt, motif, note,
     date: today(), clientId: o.clientId||null
   };
@@ -11705,6 +11736,24 @@ async function docConvertToOrder(id){
     // de logo, et la commande serait repartie a zero.
     logo:!!(d.logo||+d.persoLogoNb>0||+d.forfaitCreationNb>0),
     persoLogoNb:+d.persoLogoNb||0, forfaitCreationNb:+d.forfaitCreationNb||0,
+    // [v1499] LE DEVIS ET LA COMMANDE NE DISAIENT PAS LA MÊME CHOSE. Ben, après avoir facturé
+    // depuis la commande : « d'un côté le devis validé et de l'autre la commande […] pour une
+    // raison inconnue les 2 ne disaient pas la même chose […] le détail de la commande, les
+    // options, les lignes de service ». CAUSE : ce chemin recopiait TOUT (lignes, options, logo,
+    // livraison, remises…) SAUF `tarifRef` et `ancienTarif`. Or ce sont eux qui désignent la
+    // grille applicable : `grillePourCommande` traite une commande SANS marqueur comme une
+    // commande HÉRITÉE et renvoie la grille HISTORIQUE — celle où le supplément logo n'existe pas
+    // (`logoPaliers:null`). La commande nouvellement créée changeait donc de grille par rapport
+    // au devis que le client venait de signer, et affichait d'autres montants d'options, sans
+    // aucune modification de Ben.
+    // C'est le MIROIR EXACT du défaut corrigé en v1489 : à l'époque le DEVIS ne portait pas ces
+    // marqueurs et affichait zéro ; on les lui a ajoutés, mais le CHEMIN RETOUR (devis→commande)
+    // n'a jamais été mis à jour. Un aller corrigé ne corrige pas le retour : chaque constructeur
+    // se recopie séparément.
+    // La commande naît de l'offre signée : elle hérite des marqueurs DU DEVIS, jamais de la date
+    // du jour (un devis signé en août et converti en septembre resterait ainsi sur sa grille).
+    tarifRef: d.tarifRef || d.date || auj,
+    ancienTarif: !!d.ancienTarif,
     // ════════════════════════════════════════════════════════════════════
     // [v1362] « ACOMPTE » N'EST PAS UN MOYEN DE PAIEMENT.
     //
@@ -11823,15 +11872,22 @@ async function cmdToDevisConfirm(id){
       lignes:o.lignes||[], remiseGlobale:o.remiseGlobale||0, remiseGlobaleEur:(o.remiseGlobaleEur!=null?+o.remiseGlobaleEur:null),
       perso:!!(o.perso||+o.persoMacarons>0), persoMacarons:+o.persoMacarons||0, persoCouleurs:Array.isArray(o.persoCouleurs)?o.persoCouleurs:[], persoRemiseEur:+o.persoRemiseEur||0, acompteMention:(o.acompteMention!==false), cautionMention:(o.cautionMention!==false),
       // [v1487] Champs LOGO, oublies dans ce constructeur comme dans les autres.
-      logo:!!(o.logo||+o.persoLogoNb>0||+o.forfaitCreationNb>0),
-      persoLogoNb:+o.persoLogoNb||0, forfaitCreationNb:+o.forfaitCreationNb||0,
       // [v1487] Ben : « quand j'enregistre le devis la personnalisation logo ne se sauvegarde pas ».
       // CAUSE : les champs LOGO n'ont jamais ete copies dans le document. Ajoutes en v1463,
       // ils ont ete oublies dans les 3 constructeurs de documents — le commentaire voisin dit
       // d'ailleurs « personnalisation des COULEURS », la ligne n'a jamais ete etendue.
       // Sans eux, le devis figeait un supplement a zero alors que la commande le portait.
+      // [v1499] Ces deux lignes étaient écrites DEUX FOIS d'affilée ici (copier-coller lors du
+      // correctif v1487) : sans effet sur le résultat, mais trompeur à la relecture. Dédoublonné.
       logo:!!(o.logo||+o.persoLogoNb>0||+o.forfaitCreationNb>0),
       persoLogoNb:+o.persoLogoNb||0, forfaitCreationNb:+o.forfaitCreationNb||0,
+      // [v1499] MÊME DÉFAUT QUE LE CHEMIN ALLER (voir docConvertToOrder) : ce constructeur ne
+      // transmettait ni `tarifRef` ni `ancienTarif`. Une commande repassée en devis perdait donc
+      // sa grille et le devis repartait sur la grille HISTORIQUE — options à zéro. Corrigé dans
+      // les deux sens le même jour : les trois constructeurs de documents portent désormais ces
+      // marqueurs, comme les champs logo depuis la v1487.
+      tarifRef: o.tarifRef || o.date || auj,
+      ancienTarif: !!o.ancienTarif,
       montant:+o.montant||0, acompte:0, orderId:null,
       notes:(o.notes||'')+`\n(Repassé en devis depuis la commande ${orderNumber(o)})`
     };
@@ -24766,6 +24822,43 @@ async function migrerDevisTarifRef(){
   }catch(e){ swallow(e, 'migrerDevisTarifRef'); return 0; }
 }
 
+// [v1499] RÉPARE LES COMMANDES DÉJÀ NÉES AMPUTÉES. Le correctif de `docConvertToOrder` ne vaut
+// que pour les conversions À VENIR : les commandes déjà créées depuis un devis restent privées de
+// `tarifRef`/`ancienTarif`, donc toujours sur la grille HISTORIQUE, options à zéro — et une
+// facture refaite depuis le devis repartirait encore de la commande fausse. Sans cette migration,
+// corriger le code ne corrige pas les données de Ben.
+// PRINCIPE : on ne DEVINE jamais. Le marqueur est repris du DEVIS D'ORIGINE (la pièce que le
+// client a signée) ; à défaut de devis retrouvable, on ne touche à rien plutôt que d'inventer une
+// grille — une commande mal réalignée serait pire que non réalignée.
+async function migrerCommandesIssuesDevis(){
+  try{
+    if(localStorage.getItem('sm_cmdDevisTarifRefMigre') === '1') return 0;
+    const [orders, docs] = await Promise.all([
+      db.orders.toArray().catch(()=>[]),
+      db.documents.toArray().catch(()=>[])
+    ]);
+    const devis = docs.filter(d => d && d.type === 'devis');
+    let n = 0;
+    for(const o of orders){
+      if(!o) continue;
+      if(o.tarifRef || o.ancienTarif) continue;      // déjà marquée : on n'y touche pas
+      // Le devis d'origine : lié par orderId, ou à défaut par le numéro noté à la conversion.
+      const dv = devis.find(d => +d.orderId === +o.id)
+              || (o.issuDevis ? devis.find(d => d.numero === o.issuDevis) : null);
+      if(!dv) continue;                              // pas issue d'un devis (saisie directe) → intacte
+      if(!dv.tarifRef && !dv.ancienTarif) continue;  // le devis lui-même n'a pas de marqueur → rien à reprendre
+      await db.orders.update(o.id, {
+        tarifRef: dv.tarifRef || (dv.date || '').slice(0,10) || null,
+        ancienTarif: !!dv.ancienTarif
+      });
+      n++;
+    }
+    try{ localStorage.setItem('sm_cmdDevisTarifRefMigre', '1'); }catch(e){ swallow(e, 'migrerCommandesIssuesDevis flag'); }
+    if(n > 0 && typeof toast === 'function') toast(n + ' commande(s) realignee(s) sur la grille de leur devis ✓');
+    return n;
+  }catch(e){ swallow(e, 'migrerCommandesIssuesDevis'); return 0; }
+}
+
 async function migrerDateUnique(){
   try{
     if(localStorage.getItem('sm_dateUniqueMigree') === '1') return 0;
@@ -26994,9 +27087,17 @@ async function computeAccounting(opts){
   avoirsEmis.forEach(a=>{
     if((_periodeStart||_periodeEnd) && !_inRange(a.date)) return;
     const m=monthKey(a.date); const v=money2(+a.montant||0); if(!m || v<=0) return;
-    encByMonth[m]=money2((encByMonth[m]||0)-v);
+    // [v1499] Un avoir d'ANNULATION porte sur une facture jamais encaissée : il corrige le CA
+    // FACTURÉ, jamais l'encaissé — sinon on retirerait de l'encaissement un argent qui n'y est
+    // jamais entré (CA encaissé négatif, base URSSAF sous-estimée). Sans `nature`, l'avoir est
+    // antérieur à la v1499 : c'est forcément un remboursement, comportement d'origine conservé.
+    const _annulation = (a.nature === 'annulation');
+    if(!_annulation){
+      encByMonth[m]=money2((encByMonth[m]||0)-v);
+      totalEncaisse=money2(totalEncaisse-v);
+    }
     factByMonth[m]=money2((factByMonth[m]||0)-v);
-    totalEncaisse=money2(totalEncaisse-v); totalFacture=money2(totalFacture-v); totalAvoirs=money2(totalAvoirs+v);
+    totalFacture=money2(totalFacture-v); totalAvoirs=money2(totalAvoirs+v);
   });
 
   // 2) CHARGES par mois (date de la charge) + par catégorie
@@ -27442,6 +27543,12 @@ async function computeMonthlyBilan(ym){
   for(const a of allAvoirsBilan){
     if((a.statut!=='emis' && a.statut!=='enregistre') || monthKey(a.date)!==ym) continue;
     const v = money2(+a.montant||0); if(v<=0) continue;
+    // [v1499] Les cotisations micro-entreprise sont assises sur l'ENCAISSEMENT. Un avoir
+    // d'ANNULATION porte sur une facture jamais encaissée : son montant n'a jamais alimenté cette
+    // base, il n'y a donc rien à en retirer — le déduire sous-estimerait le CA déclaré et les
+    // cotisations dues. Seuls les REMBOURSEMENTS (argent réellement sorti) se déduisent ici.
+    // Sans `nature`, l'avoir précède la v1499 : c'est un remboursement, comportement inchangé.
+    if(a.nature === 'annulation') continue;
     const oOrig = a.orderId ? await db.orders.get(a.orderId).catch(()=>null) : null;
     let partSvcOrig = 0;
     if(oOrig && !estReprise(oOrig)){
@@ -59557,6 +59664,41 @@ async function devisGroupeGenerate(){
 async function genererFactureMultiple(ids){
   ids = (ids||[]).filter(Boolean);
   if(!ids.length){ toast('Sélectionne au moins une commande'); return; }
+  // [v1499] LE GARDE-FOU QUI MANQUAIT. Ben a facturé depuis l'écran Commandes une commande dont
+  // le devis signé disait autre chose, et a validé sans contrôler — une facture validée est
+  // inaltérable, donc l'erreur est définitive et se répare à l'avoir. L'app SAVAIT pourtant que
+  // les deux divergeaient (drapeau `perimeCommande`, posé à chaque enregistrement de commande),
+  // mais l'avertissement n'existait QUE sur la fiche du devis : un écran que ce chemin ne fait
+  // jamais ouvrir. Une alerte qui ne s'affiche pas là où se prend la décision ne protège personne.
+  // On avertit donc ICI, avant de générer, et on laisse le choix explicite plutôt que de bloquer :
+  // facturer la commande telle quelle reste légitime (elle peut avoir évolué d'un commun accord).
+  try{
+    const _docsChk = await db.documents.toArray().catch(()=>[]);
+    const _divergents = [];
+    for(const oid of ids){
+      const dv = _docsChk.find(x => x.type==='devis' && +x.orderId === +oid && x.perimeCommande);
+      if(dv){
+        const _o = await db.orders.get(oid).catch(()=>null);
+        _divergents.push({ devis: dv.numero || '—', cmd: _o ? orderNumber(_o) : ('#'+oid) });
+      }
+    }
+    if(_divergents.length){
+      const _lignes = _divergents.map(x =>
+        `<div class="sum-box"><span>Commande <b>${esc(x.cmd)}</b></span><b style="color:#b3261e">≠ devis ${esc(x.devis)}</b></div>`).join('');
+      const ok = await new Promise(res => {
+        window._factDivergeRes = res;
+        openModal(`<h3>⚠ Le devis signé dit autre chose</h3>
+          <p class="note" style="margin-top:8px">${_divergents.length===1?'Cette commande ne correspond plus':'Ces commandes ne correspondent plus'} au devis accepté par le client. La facture serait établie sur la <b>commande</b>, pas sur le devis signé.</p>
+          ${_lignes}
+          <p class="note" style="margin-top:8px">Une facture validée est <b>inaltérable</b> : vérifie avant de continuer. Tu peux ouvrir le devis pour comparer, ou facturer la commande telle quelle si elle a évolué d'un commun accord.</p>
+          <div class="modal-actions" style="flex-wrap:wrap">
+            <button class="btn ghost" onclick="window._factDivergeRes&&window._factDivergeRes(false);window._factDivergeRes=null;closeModal()">Annuler et vérifier</button>
+            <button class="btn" onclick="window._factDivergeRes&&window._factDivergeRes(true);window._factDivergeRes=null;closeModal()">Facturer la commande quand même</button>
+          </div>`);
+      });
+      if(!ok) return;
+    }
+  }catch(e){ swallow(e, 'controle divergence devis avant facture'); }   // jamais bloquer la facturation sur ce contrôle
   const e = factGetEmetteur();
   if(!e.nom || !e.siret || !e.adresse){
     toast('Renseigne d\'abord tes coordonnées de facturation');
@@ -74897,6 +75039,7 @@ function startClock(){
     try{ await migrerDateUnique(); }catch(e){ console.error('migrerDateUnique',e); }
     try{ pyraMigrer285(); }catch(e){ console.error('pyraMigrer285',e); }
     try{ await migrerDevisTarifRef(); }catch(e){ console.error('migrerDevisTarifRef',e); }
+    try{ await migrerCommandesIssuesDevis(); }catch(e){ console.error('migrerCommandesIssuesDevis',e); }
     try{ await seedPMS(); }catch(e){ console.error('seedPMS',e); }
     try{ await seedAllergenes(); }catch(e){ console.error('seedAllergenes',e); }
     try{ await seedEmballages(); }catch(e){ console.error('seedEmballages',e); }

@@ -6313,3 +6313,159 @@ L'alerte « risque de rupture » (fenêtre annoncée à 8 jours, quantité « ma
 l'ensemble du carnet) — cause identifiée et confirmée par Ben, correctif **non encore appliqué** :
 question en attente sur la portée à retenir (popup + écran prévisionnel seuls, ou aussi la liste
 des matières à acheter et le calcul des coques à pocher qui consomment ce même total).
+
+---
+
+## 2026-09-15 — AUCUNE RECETTE NE POUVAIT PLUS ÊTRE CRÉÉE  (v1497 → **v1498**)
+
+**Signalé par Benjamin**, capture à l'appui, en créant une recette dûment nommée et remplie
+(6 lignes de composition saisies) :
+> ⛔ **champ requis absent : « nom » (recipes) — écriture refusée**
+
+### Cause
+
+Le schéma de validation exigeait un champ **`nom`** sur la table `recipes` :
+
+```js
+recipes: { requisCreation: ['nom'], champs: { nom:'chaineNonVide' } }
+```
+
+Or une recette porte son libellé dans **`produitNom`** — c'est ce qu'écrit `saveRec`, et ce que
+lisent `recForm`, la liste des recettes, la reprise/migration, le diagnostic des grands formats,
+la résolution des parfums… Le champ `nom` n'existant sur **aucune** recette, la règle refusait
+**100 % des créations**, quel que soit le nom saisi. Un garde-fou qui ne protégeait rien et
+bloquait tout.
+
+**Gravité réelle** : ce n'est pas une gêne ponctuelle mais un blocage total d'une fonction
+centrale. Il passait inaperçu tant que le catalogue de recettes n'évoluait plus.
+
+### Cascade — ce que ça explique aussi
+
+C'est également ce qui empêchait « Pistache framboise » (ajouté à `BIG_FORMATS` en v1497)
+d'apparaître dans les sections **« stock de départ »** de la reprise : elles listent les
+**recettes**, pas `BIG_FORMATS`. Le contournement conseillé au tour précédent — « crée la recette
+à la main, ça prend 30 secondes » — était donc lui-même **impossible à exécuter**. La réponse
+était juste sur le mécanisme (ces sections lisent bien les recettes) mais inapplicable en
+pratique : vérifier qu'un contournement fonctionne vaut mieux que le déduire.
+
+### Fix
+
+`requisCreation: ['produitNom']` + `champs: { produitNom:'chaineNonVide' }`. Le garde-fou reste
+actif et refuse toujours une recette sans libellé — il vise simplement le champ qui existe.
+
+### Suite v1498 : 13 assertions (`tests/v1498-recette-champ-requis.test.js`)
+
+Le bloc `VALIDE_SCHEMAS` et la fonction `_valideObjet` sont extraits du code puis **exécutés** :
+la recette de Ben (`produitNom:'Pistache framboise'`, rendement, grand format) passe désormais la
+validation sans erreur, une recette sans libellé reste refusée, un libellé fait uniquement
+d'espaces reste refusé, et le motif d'erreur cite `produitNom` et non un champ fantôme.
+
+**Sensibilité** : l'ancien schéma, rejoué sur cette même recette, la refuse avec exactement le
+message de la capture de Ben (« champ requis absent : « nom » »).
+
+**Garde-fou générique ajouté** (section C) : aucune table du schéma ne doit exiger un champ requis
+absent de sa propre liste de champs typés — c'est la forme exacte du défaut corrigé ici, et le
+test la détecterait désormais sur n'importe quelle table. Vérifié au passage que `clients` et
+`materials` exigent bien `nom` (leurs formulaires écrivent réellement ce champ) : eux étaient
+corrects, seul `recipes` était en décalage.
+
+### Reste ouvert
+- L'alerte « risque de rupture » (fenêtre annoncée à 8 jours, quantité calculée sur tout le
+  carnet) : cause confirmée, correctif non appliqué — question de portée toujours en attente.
+- Le BOM de « Pistache framboise » reste à saisir par Ben, la recette pouvant enfin être créée.
+
+---
+
+## 2026-09-18 — LE DEVIS SIGNÉ ET LA COMMANDE NE DISAIENT PAS LA MÊME CHOSE  (v1498 → **v1499**)
+
+**Signalé par Benjamin**, après avoir validé une facture erronée :
+> « J'avais d'un côté le devis validé et de l'autre la commande. Pour une raison inconnue les 2 ne
+> disaient pas la même chose. Puis j'ai été dans commande et j'ai cliqué sur "facturer la
+> sélection" ce qui m'a édité une facture différente du devis initial. Et j'ai validé sans
+> contrôler. » Ce qui différait : « le détail de la commande, les options, les lignes de service ».
+
+### Cause racine
+
+`docConvertToOrder` recopiait **tout** du devis (lignes, options, logo, livraison, remises, sacs…)
+**sauf `tarifRef` et `ancienTarif`**. Or `grillePourCommande` traite une commande **sans marqueur**
+comme une commande HÉRITÉE et renvoie la grille **historique** — celle où le supplément logo
+n'existe pas (`logoPaliers:null`). La commande naissait donc sur une **autre grille** que le devis
+que le client venait de signer, et affichait d'autres montants d'options. **Sans aucune
+modification de Ben** : la divergence était là dès la conversion.
+
+C'est le **miroir exact du défaut v1489** : à l'époque, c'était le DEVIS qui ne portait pas ces
+marqueurs et affichait zéro. On les lui a ajoutés — sans jamais mettre à jour le **chemin retour**.
+
+> **Leçon de méthode (à graver)** : *un aller corrigé ne corrige pas le retour.* Chaque
+> constructeur de document se recopie séparément — exactement comme les champs logo, oubliés dans
+> les **trois** constructeurs et corrigés un par un en v1487. Quand un correctif ajoute un champ à
+> un document, auditer **tous** les chemins qui construisent ce type d'objet, dans les deux sens.
+
+### Les quatre volets
+
+**① La conversion devis→commande** transmet `tarifRef`/`ancienTarif`. Le repli part de la date **du
+devis**, jamais du jour de la conversion : un devis signé en août et converti en septembre reste
+ainsi sur sa grille.
+
+**② Le retour commande→devis** (`cmdToDevisConfirm`) avait le même trou, dans l'autre sens :
+corrigé le même jour. Les **trois** constructeurs de documents portent désormais ces marqueurs,
+comme les champs logo depuis la v1487. Au passage : les lignes logo y étaient écrites **deux fois
+d'affilée** (copier-coller du correctif v1487) — sans effet, mais trompeur à la relecture.
+Dédoublonné.
+
+**③ Migration `migrerCommandesIssuesDevis`.** Sans elle, corriger le code **ne corrige pas les
+données** : les commandes déjà créées depuis un devis restent sur la grille historique, et
+refacturer depuis le devis repartirait encore de la commande fausse. Principe : **on ne devine
+jamais** — le marqueur est repris du **devis d'origine** (la pièce signée), retrouvé par `orderId`
+ou, à défaut, par le numéro noté à la conversion (`issuDevis`). Sans devis retrouvable, la commande
+est **laissée intacte** : une commande mal réalignée serait pire que non réalignée.
+
+**④ Le garde-fou qui manquait.** L'app **savait** que les deux divergeaient : le drapeau
+`perimeCommande` est posé à chaque enregistrement de commande. Mais l'avertissement n'existait
+**que sur la fiche du devis** — un écran que le chemin « Facturer la sélection » ne fait jamais
+ouvrir. *Une alerte qui ne s'affiche pas là où se prend la décision ne protège personne.* Elle
+s'affiche désormais **avant de générer la facture**, avec choix explicite (facturer quand même
+reste légitime : la commande peut avoir évolué d'un commun accord), et n'est jamais bloquante en
+cas d'erreur du contrôle lui-même.
+
+### L'avoir d'ANNULATION — un angle mort comptable
+
+Ben était **sans issue** : facture verrouillée (inaltérabilité légale), avoir refusé par le
+garde-fou « Rien n'a été encaissé sur cette commande », aucun chemin d'annulation ailleurs.
+L'avoir n'était pensé **que** comme un remboursement d'argent reçu. Or il en existe deux, qui ne
+corrigent **pas les mêmes totaux** :
+
+| | CA encaissé | CA facturé | Base URSSAF |
+|---|---|---|---|
+| **Remboursement** (argent rendu) | déduit | déduit | déduite |
+| **Annulation** (rien encaissé) | **intact** | déduit | **intacte** |
+
+Retirer de l'encaissé un argent qui n'y est **jamais entré** ferait plonger le CA encaissé en
+négatif et sous-estimerait la base URSSAF — **une erreur symétrique de celle que l'avoir corrige**.
+Le montant annulable est donc borné par la **facture**, pas par l'encaissement.
+
+**Rétro-compatibilité** : les avoirs antérieurs n'ont pas de champ `nature` — ils sont tous des
+remboursements (seul cas alors possible) et gardent leur traitement d'origine. **Aucun total
+historique ne bouge.** Les **créances**, elles, déduisent les deux natures sans distinction : une
+facture annulée n'est plus due, exactement comme une remboursée — vérifié qu'elles n'ont pas été
+filtrées par erreur.
+
+**Ce qui n'a pas été codé, délibérément** : la suppression de la facture, demandée par Ben. Un
+numéro séquentiel manquant est bien plus compromettant en contrôle qu'une facture annulée par
+avoir — la seconde est la procédure normale, la première ressemble à de la dissimulation. Expliqué
+plutôt qu'implémenté.
+
+### Suite v1499 : 32 assertions (`tests/v1499-devis-commande-grille.test.js`)
+
+La grille **réellement appliquée** est calculée (pas seulement le texte du code) : la commande
+issue du devis retombe sur la même grille que lui, et — **assertion de sensibilité** — la commande
+amputée de ses marqueurs tombait bien sur une **autre** grille, celle sans paliers de logo.
+Couvre aussi : la dédup logo du chemin retour, les garde-fous de la migration (jamais de grille
+devinée, commande sans devis laissée intacte, drapeau d'exécution unique), le déclenchement de
+l'alerte **avant** construction de la facture, et les effets comptables des deux natures d'avoir,
+rétro-compatibilité comprise.
+
+### Reste ouvert
+- L'alerte « risque de rupture » (fenêtre annoncée à 8 jours, quantité calculée sur tout le
+  carnet) : cause confirmée, **correctif toujours non appliqué** — question de portée en attente.
+- Le BOM de « Pistache framboise » reste à saisir par Ben.
