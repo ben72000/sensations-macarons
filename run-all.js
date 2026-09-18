@@ -200,7 +200,8 @@ const SUITES = [
   'v1498-recette-champ-requis.test.js',         // v1498 · le schéma de validation exigeait un champ « nom » inexistant sur les recettes (elles portent produitNom) : AUCUNE recette ne pouvait être créée
   'v1499-devis-commande-grille.test.js',        // v1499 · la conversion devis→commande perdait tarifRef/ancienTarif → commande sur une autre grille que le devis signé ; + garde-fou de facturation et avoir d'annulation
   'v1500-bouton-avoir-visible.test.js',          // v1500 · le bouton ↩︎ Avoir restait conditionné à l'encaissement (reste d'avant la v1499) : invisible dans le cas exact que la v1499 venait de débloquer
-  'v1501-avoir-retour-visuel.test.js'            // v1501 · l'émission d'un avoir ne se reflétait NULLE PART sur la fiche facture (ni fiche commande) : aucune preuve visuelle que ça avait fonctionné
+  'v1501-avoir-retour-visuel.test.js',           // v1501 · l'émission d'un avoir ne se reflétait NULLE PART sur la fiche facture (ni fiche commande) : aucune preuve visuelle que ça avait fonctionné
+  'v1502-facture-annulee-debloque.test.js'       // v1502 · une facture annulée par avoir restait « définitive » : Facturer rouvrait l'ancienne en boucle, sans jamais créer de nouvelle facture
 ];
 
 let allOk = true;

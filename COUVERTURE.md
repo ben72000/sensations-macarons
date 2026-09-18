@@ -6583,3 +6583,67 @@ en bout inclut sa trace visible, pas seulement sa capacité et son accès.
 - L'alerte « risque de rupture » (fenêtre à 8 jours, quantité calculée sur tout le carnet) : cause
   confirmée, correctif toujours non appliqué.
 - Le BOM de « Pistache framboise » reste à saisir par Ben.
+
+---
+
+## 2026-09-18 — « FACTURER » BLOQUAIT APRÈS ANNULATION D'UNE FACTURE  (v1501 → **v1502**)
+
+**Signalé par Benjamin**, juste après avoir annulé sa facture erronée par avoir :
+> « Ma demande est extrêmement simple. Je veux pouvoir transformer une commande en facture et un
+> devis en facture. Ce n'est pas le cas aujourd'hui. Quand je suis dans commande et que je clique
+> sur facturer ça bloque. La facture n'apparaît pas dans mes factures. Est-ce que c'est à cause de
+> la facture annulée ? »
+
+**Sa question était la bonne réponse.**
+
+### Cause
+
+`genererFactureMultiple` recherche, pour le même jeu de commandes, un document facture déjà
+existant :
+- s'il est **définitif** (`docEstDefinitif` — statut `emise`/`payee`) → on le **rouvre**, pas de
+  doublon possible (garde-fou anti-doublon voulu) ;
+- s'il est encore **brouillon** → on le met à jour ;
+- sinon → on en crée un nouveau.
+
+Mais un avoir, **à dessein** (v1499/v1501), **ne modifie jamais** ce statut : c'est l'inaltérabilité
+légale elle-même. Une facture **annulée** reste donc « définitive » aux yeux de ce contrôle.
+Résultat : chaque clic sur « Facturer » retrouvait l'ancienne facture annulée, la rouvrait, et
+**retournait** — sans jamais créer le moindre nouveau document. Aucun brouillon, aucune facture
+neuve, quel que soit le nombre de clics. Ce que Ben percevait comme un blocage était en réalité une
+**boucle silencieuse sur un document mort**.
+
+### Fix
+
+Une facture définitive **entièrement couverte par un avoir** (même calcul qu'en v1501 : somme des
+avoirs liés par `factureId` ou par commande, comparée au montant à ±0,009 € près) ne bloque plus
+la création. Elle est traitée comme **absente** pour cette décision — sans jamais être modifiée ni
+supprimée : `existing` est remis à `null` avant la construction du nouveau document, qui part donc
+sur un `db.documents.add` (jamais un `update` de l'ancienne). L'inaltérabilité reste totale ; seule
+la logique anti-doublon apprend à distinguer « déjà facturé » de « facturé puis annulé ».
+
+Le besoin « devis → facture » de Ben passe par le même mécanisme (un devis se facture toujours via
+sa commande convertie) : ce correctif couvre donc les deux formulations de sa demande.
+
+### Suite v1502 : 13 assertions (`tests/v1502-facture-annulee-debloque.test.js`)
+
+Vérifie l'existence et l'ordre du calcul, la condition de réouverture corrigée, l'ordre
+reset→construction→décision (jamais un update sur l'annulée), la non-régression du garde-fou
+anti-doublon pour une facture saine, et **rejoue le cas exact de Ben** : une facture de 120 €
+couverte par un avoir de 120 € est bien détectée comme annulée. **Sensibilité** : le même calcul,
+réduit à sa seule première condition (`docEstDefinitif`, sans le reste du correctif), donne `true`
+— c'est exactement ce qui bloquait avant.
+
+### Quatrième reformulation de la même leçon générale
+« Un aller corrigé ne corrige pas le retour » (v1499) → « débloquer une fonction ne débloque pas
+son accès » (v1500) → « une action réussie qui ne se voit nulle part est aussi peu utilisable
+qu'un échec » (v1501) → ici : **un garde-fou anti-doublon qui ignore l'annulation transforme la
+protection en piège.** Quatre angles du même principe : une fonctionnalité ajoutée (l'avoir
+d'annulation) doit être auditée dans TOUT ce qui l'entoure — les chemins qui y mènent, ce qu'elle
+laisse voir, et tout mécanisme PRÉEXISTANT qui pourrait mal interpréter son résultat. Le dernier
+est le plus sournois : il ne touche pas au code neuf, mais à du code ancien qui devient faux par
+un nouvel état qu'il ne connaissait pas.
+
+### Reste ouvert
+- L'alerte « risque de rupture » (fenêtre à 8 jours, quantité calculée sur tout le carnet) : cause
+  confirmée, correctif toujours non appliqué.
+- Le BOM de « Pistache framboise » reste à saisir par Ben.

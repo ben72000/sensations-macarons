@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1501'; // suite : voir tests/v1501-avoir-retour-visuel.test.js
+const APP_VERSION = 'v1502'; // suite : voir tests/v1502-facture-annulee-debloque.test.js
 const APP_MAJ = '« CHEQUE DE CAUTION » DEVIENT « EMPREINTE BANCAIRE ». Ben : « le cheque de caution doit se transformer en empreinte bancaire. Peux-tu changer la mention partout ou apparait cheque de caution ? » ⚠️ CE N ETAIT PAS UN SIMPLE RENOMMAGE : le texte associe decrivait des gestes propres a un CHEQUE — il est « remis », il « n est pas encaisse », il est « restitue ». Une empreinte bancaire se PREND, se DEBITE et s ANNULE. Renommer sans adapter les verbes aurait laisse des clauses incoherentes dans les CGV, un document juridique transmis aux clients. Les VERBES ONT DONC ETE ADAPTES partout : sur la ligne du devis et de la facture (« empreinte prise le jour de la livraison, non debitee, annulee apres retour du materiel »), et dans les trois clauses concernees des CGV — 7.1 (prise a la mise a disposition, non debitee, annulee), 7.2 (aucune empreinte exigee du particulier) et 7.4 (l empreinte pourra etre DEBITEE, et non encaissee). La logique juridique est inchangee : montants dus, complement exigible, surplus restitue, engagement sur l honneur du particulier. LES IDENTIFIANTS DE CODE SONT CONSERVES (CAUTION_CHEQUE, cautionRowHtml, cautionMention) : les renommer toucherait des dizaines de references et des donnees DEJA ENREGISTREES, pour zero gain visible. Seul le texte vu par le client change. Les documents deja emis gardent leur redaction d origine, puisqu ils memorisent leur rendu. Suite v1493 : 27 assertions, dont la verification que le vocabulaire du cheque a bien disparu ; un renommage NAIF (terme change mais verbes conserves) fait rougir 5 assertions. La suite v1492 a suivi le nouveau libelle, son mecanisme etant inchange.';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
@@ -59878,9 +59878,9 @@ async function genererFactureMultiple(ids){
     const orderIds = orders.map(o=>o.id);
 
     // Recherche d'un document facture DÉJÀ associé exactement à ce lot de commandes :
-    //  - s'il est définitif → on le rouvre (pas de doublon possible) ;
+    //  - s'il est définitif ET PAS annulé → on le rouvre (pas de doublon possible) ;
     //  - s'il est encore brouillon → on le met à jour au lieu d'en empiler un second ;
-    //  - sinon → on crée un nouveau brouillon.
+    //  - s'il est définitif MAIS ANNULÉ PAR UN AVOIR, ou sinon → on crée un nouveau brouillon.
     // NB : cette variable n'était pas définie auparavant, ce qui levait une ReferenceError
     // avalée par le catch → aucun brouillon n'était enregistré.
     let existing = null;
@@ -59893,12 +59893,31 @@ async function genererFactureMultiple(ids){
       }) || null;
     }catch(_e){ existing = null; }
 
-    if(existing && docEstDefinitif(existing)){
+    // [v1502] Ben, après avoir annulé une facture erronée par avoir : « je clique sur facturer
+    // ça bloque. La facture n'apparaît pas dans mes factures. » CAUSE : cette recherche retrouve
+    // bien l'ancienne facture (même jeu de commandes), la voit « définitive » — un avoir ne
+    // touche JAMAIS ce statut, à dessein, inaltérabilité oblige (v1499/v1501) — et la ROUVRE
+    // en boucle au lieu d'en créer une nouvelle. Chaque clic sur « Facturer » renvoyait donc
+    // indéfiniment la facture annulée : aucune nouvelle facture n'était jamais créée, ce que Ben
+    // percevait comme un blocage silencieux. Une facture définitive ANNULÉE PAR UN AVOIR ne doit
+    // plus faire obstacle : on ignore ce cas comme s'il n'y avait pas de facture existante,
+    // SANS JAMAIS la modifier (elle reste, elle, intouchée — inaltérabilité toujours respectée).
+    const existingAnnulee = existing ? await (async()=>{
+      if(!docEstDefinitif(existing)) return false;
+      const _avoirsExisting = await db.documents.where('type').equals('avoir').toArray().catch(()=>[]);
+      const _tot = money2(_avoirsExisting
+        .filter(a=>(a.statut==='emis'||a.statut==='enregistre') && (a.factureId===existing.id || orderIds.includes(a.orderId)))
+        .reduce((s,a)=>s+(+a.montant||0),0));
+      return _tot>0 && _tot>=money2(+existing.montant||0)-0.009;
+    })() : false;
+
+    if(existing && docEstDefinitif(existing) && !existingAnnulee){
       if(view==="documents") renderDocuments();
       _prepDocPdfMail(factureHtml, `Facture ${existing.numero}`, client, grandTotal);
       openPrintView(factureHtml, {title:`Facture ${existing.numero}`, extraButtons:_docMailBtns()});
       return;
     }
+    if(existingAnnulee) existing = null;   // jamais la modifier : on repart comme si elle n'existait pas
     const docFact = {
       type:'facture', statut:'brouillon',
       numero:null,                       // pas de numéro légal tant que brouillon
