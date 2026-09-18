@@ -6469,3 +6469,54 @@ rétro-compatibilité comprise.
 - L'alerte « risque de rupture » (fenêtre annoncée à 8 jours, quantité calculée sur tout le
   carnet) : cause confirmée, **correctif toujours non appliqué** — question de portée en attente.
 - Le BOM de « Pistache framboise » reste à saisir par Ben.
+
+---
+
+## 2026-09-18 — LE BOUTON AVOIR N'EXISTAIT PAS À L'ÉCRAN  (v1499 → **v1500**)
+
+**Signalé par Benjamin**, juste après avoir reçu la marche à suivre pour créer un avoir :
+> « Je ne vois pas du tout où c'est. »
+
+### Cause
+
+Le bouton **↩︎ Créer un avoir**, sur la fiche commande, était conditionné à
+`orderPaid(o)>0` — un reste d'avant la v1499, où l'avoir n'existait QUE comme remboursement
+d'argent reçu. La v1499 a bien débloqué la **fonction** `avoirForm` pour le cas « rien
+encaissé » (avoir d'annulation), mais **le bouton qui y mène n'avait pas été mis à jour**. Dans le
+cas exact de Ben — celui que la v1499 venait justement de traiter — le bouton ne s'affichait
+**tout simplement jamais**. La fonction marchait ; l'accès n'existait pas.
+
+Même trou, et pire, sur la fiche de la **facture** elle-même (écran Documents, là où Ben a validé
+par erreur) : **aucun** bouton avoir, quel que soit le règlement — seul un lien vers la commande
+liée, à condition de penser à cliquer dessus puis à retrouver le bouton là-bas.
+
+### Fix
+
+Le bouton de la commande s'affiche désormais aussi dès qu'une **facture est liée**, même non
+encaissée (`orderPaid(o)>0 || _factOrig`), avec un libellé qui reflète le cas réel (« Créer un
+avoir » si réglé, « Annuler la facture » sinon). Un accès **identique et direct** est ajouté sur la
+fiche facture elle-même pour une facture mono-commande — plus besoin de naviguer vers la commande
+pour le trouver. Une facture groupée sur plusieurs commandes affiche une note plutôt que de pointer
+vers une commande au hasard.
+
+### Suite v1500 : 8 assertions (`tests/v1500-bouton-avoir-visible.test.js`)
+
+Vérifie que la nouvelle condition du bouton commande inclut bien le cas facture-sans-encaissement,
+que le libellé s'adapte, que le nouvel accès direct depuis la facture existe et suit son propre
+montant réglé, et que le cas multi-commandes reste sans redirection hasardeuse. Non-régression :
+le cas déjà couvert (encaissement partiel/total, sans cette v1500) continue d'afficher le bouton.
+
+**Sensibilité** : l'ancienne condition, rejouée seule sur un encaissement à 0 €, cache bien le
+bouton — reproduisant exactement ce que Ben a vécu.
+
+### Leçon de méthode (à graver, encore)
+Débloquer une **fonction** ne débloque pas son **accès**. Un correctif qui ajoute une capacité
+doit aussi auditer CHAQUE bouton, lien ou condition d'affichage qui y mène — pas seulement la
+fonction elle-même. C'est la seconde fois dans cette série (après « un aller corrigé ne corrige
+pas le retour » en v1499) qu'une même leçon générale se reformule sous un angle différent :
+corriger un mécanisme sans auditer tous ses points d'entrée laisse le correctif inatteignable.
+
+### Reste ouvert
+- L'alerte « risque de rupture » (fenêtre à 8 jours, quantité calculée sur tout le carnet) : cause
+  confirmée, correctif toujours non appliqué.
+- Le BOM de « Pistache framboise » reste à saisir par Ben.
