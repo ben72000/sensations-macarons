@@ -6647,3 +6647,83 @@ un nouvel état qu'il ne connaissait pas.
 - L'alerte « risque de rupture » (fenêtre à 8 jours, quantité calculée sur tout le carnet) : cause
   confirmée, correctif toujours non appliqué.
 - Le BOM de « Pistache framboise » reste à saisir par Ben.
+
+---
+
+## 2026-09-18 — DEUX INCIDENTS DU JOURNAL SANTÉ  (v1502 → **v1503**)
+
+**Signalé par Benjamin**, capture de l'écran « Santé de l'app » à l'appui — 4 incidents visibles,
+2 traités, 2 déjà résolus par des versions antérieures.
+
+### ① IMPORTANT — transaction IndexedDB inactive pendant l'étiquetage de boîtes
+
+> « Failed to execute 'getAll' on 'IDBObjectStore': The transaction is inactive or finished. »
+> — `_etiqValiderGo`, écran productions, v1493.
+
+**Cause** : v1438 avait déjà documenté et en partie corrigé le risque du champ `_activeTx`
+**partagé** sur l'instance Dexie sous exécution concurrente — mais uniquement pour le cas où
+`_txFinished` (le WeakSet qui suit les transactions terminées) **sait déjà** que la transaction
+est morte. Il restait une fenêtre plus étroite, documentée dans le commentaire v1438 lui-même sans
+être encore couverte : entre le moment où IndexedDB rend une transaction **inactive** (refuse
+toute nouvelle requête) et celui où l'événement `complete` se déclenche **réellement** — le seul
+qui alimente `_txFinished`. Dans cette fenêtre, `_txStore()` juge la transaction « réutilisable »
+à tort, et l'opération suivante plante.
+
+**Fix** : `get`/`toArray`/`count` — les trois lectures **sans hook**, donc rejouables sans risque
+d'effet de bord dupliqué — retentent une fois avec une transaction fraîche si l'erreur est bien de
+ce type (`TransactionInactiveError` si c'est la requête qui casse, `InvalidStateError` si c'est
+`tx.objectStore()` qui refuse). `_txStore()` a dû être déplacé **dans** le bloc `try` : à
+l'origine il était avant, donc un `InvalidStateError` à cette étape précise passait à travers le
+filet sans jamais être rattrapé.
+
+**Délibérément non touché** : `add`/`update`/`put`/`delete`. Leurs hooks (`creating`/`updating`/
+`deleting`) peuvent déjà avoir produit un effet de bord (ex. écriture au journal d'audit) avant
+que l'opération elle-même échoue — les rejouer les déclencherait une seconde fois. Sécurité avant
+exhaustivité.
+
+### ② MINEUR (3×) — apostrophe cassant l'Inventaire
+
+> « GLOBAL onerror @index.html#modal:1 : Unexpected EOF » — écran matières, v1495.
+
+**Cause** : `onclick='inventaireConfirm(${JSON.stringify(...)})'` insère du JSON directement dans
+un attribut HTML délimité par des **apostrophes**. Un nom de matière contenant lui-même une
+apostrophe — **« poudre d'amande »**, ingrédient des plus courants en macaronnerie — referme
+l'attribut en plein milieu : le reste du JSON devient un fragment JavaScript tronqué,
+syntaxiquement incomplet. `esc()` ne protège pas de ça (il échappe `&`, `<`, `>`, `"`, jamais
+l'apostrophe — c'est `escJs`, juste au-dessus dans le fichier, qui existe pour ça, mais il attend
+une chaîne unique, pas un objet JSON entier).
+
+**Fix** : nouveau helper `escAttrJson(v)` — échappe le JSON pour un attribut entre apostrophes
+(`'` → `&#39;`, en plus des caractères déjà couverts par `esc()`). Appliqué aux **deux** points
+d'appel partageant ce motif fragile : `inventaireConfirm` (le déclencheur réel) et
+`fixIntegrityIssue` (même motif, non déclenché en pratique — son contenu est toujours numérique/
+interne — mais durci par précaution plutôt que laissé fragile en l'état).
+
+### Les deux autres incidents de la capture : déjà résolus, pour mémoire
+- « champ requis absent : nom » (recettes, 6×) → bug déjà corrigé en **v1498**. Occurrences
+  antérieures à la mise à jour de Ben, resteront au journal jusqu'à ce qu'il le vide.
+- `objectStore`/`IDBTransaction` (18/08, 2×) → signature correspondant au bug déjà documenté et
+  corrigé en **v1390**, bien avant le début de cette série. Probable résurgence historique.
+
+### Suite v1503 : 19 assertions (`tests/v1503-sante-app-incidents.test.js`)
+
+**Volet ①** : reproduit la fenêtre étroite exactement — une transaction marquée morte côté
+navigateur (proxy `_complete()`) mais **sans** passer par `watchTxFinish`, donc invisible pour
+`_txFinished`, exactement comme entre l'inactivation réelle et l'événement `complete` qui n'a pas
+eu le temps de se propager. `get`/`toArray`/`count` traversent cette transaction morte sans
+planter ; les données restent exactes. **Sensibilité** : la même transaction, interrogée par le
+chemin `_txStore()` brut (sans passer par le `get()` corrigé), jette bien une erreur — preuve que
+le scénario est réel et que c'est bien le filet ajouté qui change l'issue. Câblage vérifié dans le
+fichier réel : `_txStore()` dans le `try`, les deux noms d'erreur couverts, `add()` non modifié.
+
+**Volet ②** : le helper réel `escAttrJson` est extrait et exécuté sur « Poudre d'amande » —
+l'apostrophe disparaît de l'attribut, encodée en `&#39;`, et un décodage HTML + `JSON.parse`
+restitue fidèlement le nom original. **Sensibilité** : `JSON.stringify` seul, rejoué sur la même
+donnée, laisse bien une apostrophe nue, et un attribut `onclick='...'` construit avec serait bien
+tronqué à la première apostrophe rencontrée. Vérifié aussi qu'aucun onclick entre apostrophes du
+code réel (hors commentaires explicatifs) n'insère plus de `JSON.stringify` nu.
+
+### Reste ouvert
+- L'alerte « risque de rupture » (fenêtre à 8 jours, quantité calculée sur tout le carnet) : cause
+  confirmée, correctif toujours non appliqué.
+- Le BOM de « Pistache framboise » reste à saisir par Ben.
