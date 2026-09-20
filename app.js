@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1503'; // suite : voir tests/v1503-sante-app-incidents.test.js
+const APP_VERSION = 'v1505'; // suite : voir tests/v1505-ca-mois-graphique-avoirs.test.js
 const APP_MAJ = '« CHEQUE DE CAUTION » DEVIENT « EMPREINTE BANCAIRE ». Ben : « le cheque de caution doit se transformer en empreinte bancaire. Peux-tu changer la mention partout ou apparait cheque de caution ? » ⚠️ CE N ETAIT PAS UN SIMPLE RENOMMAGE : le texte associe decrivait des gestes propres a un CHEQUE — il est « remis », il « n est pas encaisse », il est « restitue ». Une empreinte bancaire se PREND, se DEBITE et s ANNULE. Renommer sans adapter les verbes aurait laisse des clauses incoherentes dans les CGV, un document juridique transmis aux clients. Les VERBES ONT DONC ETE ADAPTES partout : sur la ligne du devis et de la facture (« empreinte prise le jour de la livraison, non debitee, annulee apres retour du materiel »), et dans les trois clauses concernees des CGV — 7.1 (prise a la mise a disposition, non debitee, annulee), 7.2 (aucune empreinte exigee du particulier) et 7.4 (l empreinte pourra etre DEBITEE, et non encaissee). La logique juridique est inchangee : montants dus, complement exigible, surplus restitue, engagement sur l honneur du particulier. LES IDENTIFIANTS DE CODE SONT CONSERVES (CAUTION_CHEQUE, cautionRowHtml, cautionMention) : les renommer toucherait des dizaines de references et des donnees DEJA ENREGISTREES, pour zero gain visible. Seul le texte vu par le client change. Les documents deja emis gardent leur redaction d origine, puisqu ils memorisent leur rendu. Suite v1493 : 27 assertions, dont la verification que le vocabulaire du cheque a bien disparu ; un renommage NAIF (terme change mais verbes conserves) fait rougir 5 assertions. La suite v1492 a suivi le nouveau libelle, son mecanisme etant inchange.';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
@@ -8148,8 +8148,25 @@ async function caDuMois(mk){
       lignesMk.push({date:k.date, nom:k.nom||'Marché', montant:net, mac, macConnu, mkId:k.id});
     });
   }catch(e){swallow(e,'caDuMois')}
-  return { total: money2(totalCmd+totalMk), totalCmd: money2(totalCmd), totalMk: money2(totalMk),
-           lignesCmd, lignesMk, totalMac, mkSansMouvement };
+  // [v1505] MÊME FAMILLE DE BUG QUE LE CA CUMULÉ DE L'ACCUEIL (v1504), adaptée à la base de CETTE
+  // carte : `caDuMois` est un CUMUL D'ENCAISSEMENTS RÉELS (paiementsDe), pas le montant facturé
+  // des commandes. Un avoir de REMBOURSEMENT est une vraie sortie de caisse : sans le déduire, le
+  // mois où il est émis afficherait un CA du mois trop élevé (l'argent rendu resterait compté).
+  // Un avoir d'ANNULATION, lui, ne touche RIEN ici : aucun paiement n'a jamais existé pour lui,
+  // donc rien à retirer d'un cumul de paiements. Déduit au mois D'ÉMISSION de l'avoir (comme en
+  // comptabilité, v1283) — jamais au mois du paiement d'origine, qui reste un fait passé inchangé.
+  let totalAvoirsMois = 0; const lignesAvoirs = [];
+  try{
+    const allAvoirsMois = await (db.documents?db.documents.where('type').equals('avoir').toArray():Promise.resolve([])).catch(()=>[]);
+    allAvoirsMois.filter(a=>(a.statut==='emis'||a.statut==='enregistre') && a.nature!=='annulation' && ymKey(a.date||'')===mk)
+      .forEach(a=>{
+        const v = money2(+a.montant||0); if(v<=0) return;
+        totalAvoirsMois = money2(totalAvoirsMois + v);
+        lignesAvoirs.push({date:a.date||'', numero:a.numero||'', montant:v, oid:a.orderId||null});
+      });
+  }catch(e){swallow(e,'caDuMois avoirs')}
+  return { total: money2(totalCmd+totalMk-totalAvoirsMois), totalCmd: money2(totalCmd), totalMk: money2(totalMk),
+           totalAvoirsMois, lignesAvoirs, lignesCmd, lignesMk, totalMac, mkSansMouvement };
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -8296,6 +8313,19 @@ async function _caLignesToutes(){
       if(net>0) lignes.push({ date:k.date||'', nom:k.nom||'Marché', montant:net, type:'mk' });
     });
   }catch(e){ swallow(e,'_caLignesToutes'); }
+  // [v1505] Même principe que `caDuMois` (v1505) : un avoir de REMBOURSEMENT est une vraie sortie
+  // de caisse, à déduire au mois où IL est émis. Sans cette ligne ici, le graphique (qui lit CETTE
+  // fonction) et la carte « CA du mois » (qui lit `caDuMois`) afficheraient deux chiffres
+  // différents pour le mois de l'avoir — exactement le « troisième chiffre » que le commentaire
+  // au-dessus de CA_GRANS met en garde contre (suite v1444 : les deux doivent concorder mois par
+  // mois). Une ANNULATION ne crée aucune ligne : aucun paiement n'a jamais existé pour elle.
+  try{
+    const avoirsLignes = await (db.documents?db.documents.where('type').equals('avoir').toArray():Promise.resolve([])).catch(()=>[]);
+    avoirsLignes.filter(a=>(a.statut==='emis'||a.statut==='enregistre') && a.nature!=='annulation').forEach(a=>{
+      const v = +a.montant||0; if(v<=0) return;
+      lignes.push({ date:a.date||'', nom:'Avoir', montant:-v, type:'avoir' });
+    });
+  }catch(e){ swallow(e,'_caLignesToutes avoirs'); }
   lignes.sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
   return lignes;
 }
@@ -8490,14 +8520,19 @@ async function caMonthDetail(mk){
   const _ca = await caDuMois(mk);
   const lignes = _ca.lignesCmd; const totalCmd = _ca.totalCmd;
   const totalMk = _ca.totalMk; const mkLignes = _ca.lignesMk;
-  const total = _ca.total;
-  const rowsCmd = lignes.length ? lignes.map(l=>
+  const total = _ca.total;  const rowsCmd = lignes.length ? lignes.map(l=>
     `<div class="sum-box" style="cursor:pointer" onclick="closeModal();cmdView(${l.oid})">
        <span>${fmtDate(l.date)} · ${esc(l.nom)}${l.moyen?` <span style="color:#9a8a82;font-size:.74rem">· ${esc(l.moyen)}</span>`:''}</span>
        <span style="display:flex;flex-direction:column;align-items:flex-end;line-height:1.3"><b>${euro(l.montant)}</b><span style="font-size:.68rem;color:#9a8a82">${pctDuTotal(l.montant, total)}${l.mac>0?` · 🍬 ${qtyP(l.mac)}`:''}</span></span></div>`).join('')
     : '<p class="note">Aucun encaissement de commande ce mois.</p>';
   const rowsMk = mkLignes.length ? `<h3 style="font-size:1rem;margin:14px 0 8px">Marchés</h3>`+mkLignes.map(l=>
     `<div class="sum-box"><span>${fmtDate(l.date)} · ${esc(l.nom)}</span><span style="display:flex;flex-direction:column;align-items:flex-end;line-height:1.3"><b>${euro(l.montant)}</b><span style="font-size:.68rem;color:${l.macConnu===false?'#b3261e':'#9a8a82'}">${pctDuTotal(l.montant, total)}${l.macConnu===false?' · 🍬 non compté':(l.mac>0?` · 🍬 ${qtyP(l.mac)}`:'')}</span></span></div>`).join('') : '';
+  // [v1505] Un avoir émis ce mois-ci (v1499 : nature « remboursement », argent réellement rendu)
+  // réduit `total` en amont (caDuMois). Sans une ligne EXPLICITE ici, la somme des lignes
+  // affichées dépasserait le total du bas — exactement l'incohérence que ce correctif règle par
+  // ailleurs (v1504). On l'affiche donc en négatif, aussi cliquable vers la commande d'origine.
+  const rowsAvoirs = (_ca.lignesAvoirs||[]).length ? `<h3 style="font-size:1rem;margin:14px 0 8px">Avoirs émis ce mois</h3>`+_ca.lignesAvoirs.map(a=>
+    `<div class="sum-box"${a.oid?` style="cursor:pointer" onclick="closeModal();cmdView(${a.oid})"`:''}><span>${fmtDate(a.date)} · ↩︎ ${esc(a.numero||'Avoir')}</span><b style="color:#b3261e">− ${euro(a.montant)}</b></div>`).join('') : '';
   openModal(`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px">
       <button class="btn ghost sm" onclick="caMonthDetail('${_mkPrev}')" title="Mois précédent">‹</button>
       <h3 style="margin:0;text-align:center;flex:1">Détail du CA — ${esc((typeof monthLabel==='function') ? monthLabel(mk) : mk)}</h3>
@@ -8507,6 +8542,7 @@ async function caMonthDetail(mk){
     <h3 style="font-size:1rem;margin:14px 0 8px">Commandes encaissées</h3>
     ${rowsCmd}
     ${rowsMk}
+    ${rowsAvoirs}
     <div class="sum-box" style="border-top:2px solid var(--bordeaux);margin-top:10px"><span><b>Total encaissé</b></span><b style="color:var(--bordeaux)">${euro(total)}</b></div>
     <p class="note" style="margin-top:6px">💡 En micro-entreprise, c'est ce <b>total encaissé</b> que tu déclares (URSSAF) — pas le CA facturé, qui suit la date de livraison et sert au pilotage.</p>
     <p class="note">Un montant te semble manquer ? <a href="#" onclick="closeModal();auditCaManquantUI();return false;"><b>Chercher le CA manquant</b></a>.</p>
@@ -8631,8 +8667,29 @@ async function renderDash(){
   const _mkSansMvt = +_caMoisObj.mkSansMouvement || 0;
   // [A11-display] CA cumulé depuis le début : on sépare le fil de l'eau (hors reprises, base fiscale)
   // des reprises d'historique, pour afficher les deux clairement sans mélanger.
-  const _caFilEau = money2(orders.filter(o=>!estReprise(o)).reduce((s,c)=>s+(+c.montant||0),0) + closedMk.reduce((s,k)=>s+k.montant,0));
-  const _caReprises = money2(orders.filter(o=>estReprise(o)).reduce((s,c)=>s+(+c.montant||0),0));
+  let _caFilEau = money2(orders.filter(o=>!estReprise(o)).reduce((s,c)=>s+(+c.montant||0),0) + closedMk.reduce((s,k)=>s+k.montant,0));
+  let _caReprises = money2(orders.filter(o=>estReprise(o)).reduce((s,c)=>s+(+c.montant||0),0));
+  // [v1504] Ben : « le CA activité globale (fil de l'eau + reprises) [comptabilité] ne dit pas la
+  // même chose que le CA total facturé depuis le début [accueil] ». CAUSE : la comptabilité
+  // déduit déjà les avoirs émis de son CA facturé (règle posée en v1283, étendue en v1499 pour
+  // distinguer annulation/remboursement) — mais ce total-ci, ici sur l'accueil, ne le fait
+  // JAMAIS : il additionne le montant de chaque commande tel qu'il a été saisi, sans jamais
+  // regarder si un avoir a ÉTÉ ÉMIS DEPUIS contre elle. Une facture annulée (le cas même de Ben
+  // ce jour) reste donc comptée en pleine valeur ici, alors qu'elle est déjà déduite côté
+  // comptabilité — d'où l'écart. Un avoir corrige TOUJOURS le facturé, quelle que soit sa nature
+  // (annulation ou remboursement) : seul l'ENCAISSÉ distingue les deux (v1499), et cette carte-ci
+  // n'affiche pas l'encaissé. On déduit donc chaque avoir émis du bon panier — reprise ou fil de
+  // l'eau — selon la commande qu'il corrige, pour que les deux écrans racontent enfin la même
+  // histoire.
+  try{
+    const _avoirsDash = await (db.documents?db.documents.where('type').equals('avoir').toArray():Promise.resolve([])).catch(()=>[]);
+    _avoirsDash.filter(a=>a.statut==='emis'||a.statut==='enregistre').forEach(a=>{
+      const v = money2(+a.montant||0); if(v<=0) return;
+      const oOrig = a.orderId!=null ? orders.find(o=>o.id===a.orderId) : null;
+      if(oOrig && estReprise(oOrig)) _caReprises = money2(_caReprises - v);
+      else _caFilEau = money2(_caFilEau - v);
+    });
+  }catch(e){ swallow(e, 'dashboard caFilEau avoirs'); }
   const caTotal = money2(_caFilEau + _caReprises);   // activité globale (rétro-compat : marketCAPopup lit caTotal)
   // [v1479] TOTAL ENCAISSÉ, calculé depuis LA MÊME SOURCE que le graphique (`_caLignesToutes`) —
   // et non par une seconde addition maison, qui pourrait diverger de lui et recréer exactement le
@@ -27121,6 +27178,13 @@ async function computeAccounting(opts){
   // commande d'origine, qui reste un fait historique inchangé). Sans cette déduction, un CA
   // remboursé resterait compté dans la base URSSAF → cotisations sur-estimées (cf. audit externe).
   // Ne modifie JAMAIS o.paiements[] : l'avoir est une écriture symétrique séparée.
+  // [v1504] Un avoir peut porter sur une commande de REPRISE (historique migré, hors base
+  // fiscale). `totalFacture` EXCLUT déjà les reprises (`orders` = ordersInRange sans elles) : lui
+  // soustraire un avoir de reprise ferait baisser à tort le CA du fil de l'eau pour une commande
+  // qui n'en fait pas partie. Un tel avoir doit réduire `migCA` (calculé juste après), jamais
+  // `totalFacture`. Accumulé ici, déduit de migCA à son calcul (voir plus bas) : migCA est
+  // construit après cette boucle, on ne le retarde pas pour si peu.
+  let migCAAvoirDeduit = 0;
   let totalAvoirs=0;
   const allAvoirs = await (db.documents?db.documents.where('type').equals('avoir').toArray():Promise.resolve([])).catch(()=>[]);
   const avoirsEmis = allAvoirs.filter(a=>a.statut==='emis' || a.statut==='enregistre');
@@ -27136,8 +27200,14 @@ async function computeAccounting(opts){
       encByMonth[m]=money2((encByMonth[m]||0)-v);
       totalEncaisse=money2(totalEncaisse-v);
     }
-    factByMonth[m]=money2((factByMonth[m]||0)-v);
-    totalFacture=money2(totalFacture-v); totalAvoirs=money2(totalAvoirs+v);
+    const oAvoir = a.orderId!=null ? allOrders.find(o=>o.id===a.orderId) : null;
+    if(oAvoir && estReprise(oAvoir)){
+      migCAAvoirDeduit = money2(migCAAvoirDeduit + v);   // panier reprises, pas le fil de l'eau
+    } else {
+      factByMonth[m]=money2((factByMonth[m]||0)-v);
+      totalFacture=money2(totalFacture-v);
+    }
+    totalAvoirs=money2(totalAvoirs+v);
   });
 
   // 2) CHARGES par mois (date de la charge) + par catégorie
@@ -27202,6 +27272,9 @@ async function computeAccounting(opts){
   ordersInRange.forEach(o=>{
     if(estReprise(o)){ migCount++; migCA=money2(migCA+(+o.montant||0)); }
   });
+  // [v1504] Avoirs émis contre une commande de reprise, accumulés plus haut : déduits ICI, du
+  // bon panier — jamais de totalFacture, qui exclut déjà les reprises par construction.
+  migCA = money2(migCA - migCAAvoirDeduit);
   // Valeur des pertes / casse déclarées (coût de revient des pièces jetées) — imputée au résultat.
   // [AUDIT-2026-07 · A25] AVANT : lossesAll non filtré → le résultat du mois M incluait les pertes
   // de TOUT l'historique (ex. pertes de migration 2024 déduites d'un résultat de juin 2026). On filtre

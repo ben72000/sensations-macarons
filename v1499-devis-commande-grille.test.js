@@ -134,8 +134,9 @@ function check(label, cond){ if(cond){ pass++; } else { fail++; failures.push(la
   const srcCA = APP.slice(iAv, APP.indexOf('});', iAv) + 3);
   check('F. le CA encaissé n\'est amputé que pour un avoir NON annulation',
     /if\(!_annulation\)\{[\s\S]*totalEncaisse=money2\(totalEncaisse-v\);[\s\S]*\}/.test(srcCA));
-  check('F. le CA facturé est corrigé dans les DEUX cas (hors du bloc conditionnel)',
-    /\}\s*factByMonth\[m\]=money2\(\(factByMonth\[m\]\|\|0\)-v\);/.test(srcCA));
+  check('F. le CA facturé est corrigé pour les DEUX natures (annulation et remboursement) — la condition ne teste que _annulation pour l\'encaissé, jamais pour le facturé',
+    /const oAvoir = [\s\S]{0,400}factByMonth\[m\]=money2\(\(factByMonth\[m\]\|\|0\)-v\);[\s\S]{0,50}totalFacture=money2\(totalFacture-v\);/.test(srcCA)
+    && !new RegExp('_annulation\\)\\{[\\s\\S]{0,30}factByMonth').test(srcCA));
 
   const srcBilan = APP.slice(APP.indexOf('for(const a of allAvoirsBilan){'));
   check('F. le bilan URSSAF (assis sur l\'encaissement) ignore les avoirs d\'annulation',

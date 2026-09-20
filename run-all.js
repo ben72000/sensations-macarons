@@ -202,7 +202,9 @@ const SUITES = [
   'v1500-bouton-avoir-visible.test.js',          // v1500 · le bouton ↩︎ Avoir restait conditionné à l'encaissement (reste d'avant la v1499) : invisible dans le cas exact que la v1499 venait de débloquer
   'v1501-avoir-retour-visuel.test.js',           // v1501 · l'émission d'un avoir ne se reflétait NULLE PART sur la fiche facture (ni fiche commande) : aucune preuve visuelle que ça avait fonctionné
   'v1502-facture-annulee-debloque.test.js',      // v1502 · une facture annulée par avoir restait « définitive » : Facturer rouvrait l'ancienne en boucle, sans jamais créer de nouvelle facture
-  'v1503-sante-app-incidents.test.js'            // v1503 · course activeTx résiduelle (get/toArray/count sans repli, v1438 incomplet) + apostrophe (« poudre d'amande ») cassant l'inventaire
+  'v1503-sante-app-incidents.test.js',           // v1503 · course activeTx résiduelle (get/toArray/count sans repli, v1438 incomplet) + apostrophe (« poudre d'amande ») cassant l'inventaire
+  'v1504-ca-accueil-comptabilite.test.js',       // v1504 · le CA cumulé de l'accueil ne déduisait jamais les avoirs émis, contrairement à la comptabilité (v1283/v1499) — d'où l'écart signalé par Ben
+  'v1505-ca-mois-graphique-avoirs.test.js'       // v1505 · même correctif étendu à caDuMois et au graphique glissant (_caLignesToutes), pour éviter un « troisième chiffre » entre les écrans
 ];
 
 let allOk = true;

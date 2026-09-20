@@ -31,7 +31,7 @@ const eq = (a,b) => Math.abs(a-b) < 0.011;
 
 // ---- B. Les deux bases sont bien DIFFÉRENTES par construction ----
 {
-  const srcFil = APP.slice(APP.indexOf('const _caFilEau'), APP.indexOf('const _caFilEau') + 260);
+  const srcFil = APP.slice(APP.indexOf('let _caFilEau'), APP.indexOf('let _caFilEau') + 260);
   check('B. l\'en-tête somme le MONTANT des commandes', /\+c\.montant\|\|0/.test(srcFil));
   check('B. …et non les paiements', !/paiementsDe/.test(srcFil));
   const srcGraph = extractFunction('_caLignesToutes');
@@ -73,7 +73,7 @@ const eq = (a,b) => Math.abs(a-b) < 0.011;
 {
   const srcGraph = extractFunction('_caLignesToutes');
   check('F. le graphique exclut toujours les reprises', /filter\(o=>!estReprise\(o\)\)/.test(srcGraph));
-  const srcRep = APP.slice(APP.indexOf('const _caReprises'), APP.indexOf('const _caReprises') + 200);
+  const srcRep = APP.slice(APP.indexOf('let _caReprises'), APP.indexOf('let _caReprises') + 200);
   check('F. les reprises restent comptées à part dans l\'en-tête', /estReprise\(o\)/.test(srcRep));
   check('F. …et signalées hors URSSAF', /hors URSSAF, déjà déclaré/.test(APP));
 }

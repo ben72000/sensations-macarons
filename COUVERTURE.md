@@ -6727,3 +6727,113 @@ code réel (hors commentaires explicatifs) n'insère plus de `JSON.stringify` nu
 - L'alerte « risque de rupture » (fenêtre à 8 jours, quantité calculée sur tout le carnet) : cause
   confirmée, correctif toujours non appliqué.
 - Le BOM de « Pistache framboise » reste à saisir par Ben.
+
+---
+
+## 2026-09-18 — LE CA DE L'ACCUEIL NE DISAIT PAS LA MÊME CHOSE QUE CELUI DE LA COMPTABILITÉ  (v1503 → **v1504**)
+
+**Signalé par Benjamin** :
+> « Pourquoi dans comptabilité le CA activité globale (fil de l'eau + reprises) ne dit pas la même
+> chose que le CA total facturé depuis le début présent sur ma page d'accueil ? »
+
+### Cause
+
+La comptabilité **déduit déjà** les avoirs émis de son CA facturé — règle posée en **v1283**,
+affinée en **v1499** pour distinguer annulation (déduit du facturé seul) et remboursement (déduit
+du facturé ET de l'encaissé). Le total cumulé de l'**accueil**, lui, additionnait le montant de
+chaque commande **tel qu'il a été saisi**, sans jamais regarder si un avoir avait depuis été émis
+contre elle. La facture annulée du jour même (le sujet des versions v1499 à v1502 juste
+précédentes) restait donc comptée en pleine valeur sur l'accueil, déjà déduite en comptabilité —
+un cas très concret et très actuel pour illustrer l'écart.
+
+### Fix
+
+L'accueil déduit désormais chaque avoir émis (statut `emis`/`enregistré`), **quelle que soit sa
+nature** — un avoir corrige toujours le facturé, annulation ou remboursement ; seul l'encaissé
+distingue les deux (v1499), et cette carte n'affiche pas l'encaissé. La déduction va au **bon
+panier** (fil de l'eau ou reprises) selon la commande qu'il corrige — `_caFilEau`/`_caReprises`
+passent de `const` à `let` pour l'accueillir.
+
+### Trouvé en creusant, corrigé au passage (même mécanisme, pas la même demande)
+C�té **comptabilité**, un avoir émis contre une commande de **reprise** (historique migré) était
+déduit à tort de `totalFacture` — qui **exclut déjà** les reprises par construction — au lieu de
+`migCA`. Improbable en pratique (Ben n'émet pas d'avoir Swikly contre une commande migrée
+manuellement), mais c'était la même famille de bug repérée en marge du diagnostic principal :
+corrigé au même endroit, avec le même raisonnement (`migCAAvoirDeduit`, déduit de `migCA` après
+son calcul plutôt que de retarder ce calcul).
+
+### Suite v1504 : 11 assertions (`tests/v1504-ca-accueil-comptabilite.test.js`)
+
+Le bloc réel du dashboard est extrait et exécuté contre des données synthétiques : non-régression
+sans avoir, **le cas exact de Ben** (facture de 500 € intégralement annulée → CA de l'accueil à 0,
+pas 500), un remboursement partiel qui déduit pareillement, un avoir sur une commande de reprise
+qui va dans le bon panier, un avoir non émis (brouillon) qui ne compte pas. **Sensibilité** :
+l'ancien calcul (somme brute) afficherait encore 500 € malgré l'avoir — la preuve du défaut.
+C�blage vérifié côté comptabilité pour le correctif « au passage ».
+
+### Incident de méthode (pendant ce correctif)
+Le passage de `const` à `let` sur `_caFilEau`/`_caReprises` a cassé **deux assertions** de
+suites antérieures (`v1479`, ancrées sur le texte littéral `const _caFilEau`) et **une** de
+`v1499` (ancrée sur l'ancienne structure, désormais un `if/else` reprise/non-reprise). Détecté par
+`node run-all.js` sur l'ensemble de la suite avant livraison — pas seulement la suite neuve.
+**Rappel** : modifier une déclaration de variable existante casse potentiellement tout test qui la
+cherche en texte littéral ailleurs ; `run-all.js` sur l'intégralité reste la seule vérification
+fiable, jamais la suite du jour isolément.
+
+### Reste ouvert
+- **`caDuMois`** (CA du mois, carte mensuelle de l'accueil) a la **même lacune** : aucune
+  déduction d'avoir. Repéré en marge de ce correctif, non traité — Ben n'a interrogé que le total
+  cumulé. À corriger si le même écart se manifeste sur la vue mensuelle.
+- L'alerte « risque de rupture » (fenêtre à 8 jours, quantité calculée sur tout le carnet) : cause
+  confirmée, correctif toujours non appliqué.
+- Le BOM de « Pistache framboise » reste à saisir par Ben.
+
+---
+
+## 2026-09-20 — MÊME CORRECTIF ÉTENDU AU CA DU MOIS ET AU GRAPHIQUE  (v1504 → **v1505**)
+
+Suite immédiate de la v1504 : le « reste ouvert » qu'elle listait (`caDuMois`, la carte mensuelle
+de l'accueil, a la même lacune que le CA cumulé) a été traité dans la foulée, avant que Ben n'ait
+à le signaler séparément.
+
+### Une base différente, donc une règle adaptée
+`caDuMois` et `_caLignesToutes` (source du graphique zoomable **et** du total encaissé cumulé de
+l'accueil, `_caEncaisseTotal`) sont des vues en **encaissements réels** (`paiementsDe`), pas en
+facturé — contrairement au total corrigé en v1504. La règle diffère donc, en écho à la distinction
+posée en v1499 : seul un avoir de **REMBOURSEMENT** (argent réellement rendu) doit les réduire, au
+mois où **il** est émis — jamais une **annulation**, puisqu'aucun paiement n'a jamais existé pour
+elle dans un cumul de paiements.
+
+### Un piège structurel repéré et évité avant livraison
+Le commentaire au-dessus de `CA_GRANS` prévient explicitement : `caDuMois` et `_caLignesToutes`
+sont **deux calculs indépendants** qui doivent concorder mois par mois (suite v1444, qui le teste
+noir sur blanc). Réduire l'un sans l'autre aurait recréé, entre le graphique et la carte, **le
+type même d'écart que ce correctif règle par ailleurs** — un troisième chiffre. Les deux ont donc
+reçu la **même** ligne d'avoir (négative, datée à l'émission).
+
+Second piège, repéré en relisant le popup de détail (`caMonthDetail`) avant de considérer le
+correctif terminé : réduire le **total** de `caDuMois` sans ajouter la ligne correspondante dans
+le détail aurait fait apparaître un écart entre la somme des lignes affichées et le total du bas
+— exactement l'incohérence visuelle que ce correctif règle. Une section « Avoirs émis ce mois »
+explicite (montant en négatif, lien vers la commande d'origine) a donc été ajoutée au popup,
+**avant** la ligne de total.
+
+**Bénéfice non demandé mais cohérent** : `_caLignesToutes` alimentant aussi `_caEncaisseTotal`
+(le total encaissé cumulé affiché sur l'accueil, v1479), celui-ci reflète désormais lui aussi les
+remboursements — exactement le traitement que `totalEncaisse` reçoit déjà en comptabilité (v1499).
+
+### Suite v1505 : 13 assertions (`tests/v1505-ca-mois-graphique-avoirs.test.js`)
+
+`caDuMois` et `_caLignesToutes` sont extraites du code réel et exécutées contre des données
+synthétiques : un remboursement de 60 € sur une commande de 200 € ramène le mois à 140 €, la ligne
+est exposée pour l'affichage ; une annulation ne touche rien ; l'avoir compte au mois de son
+émission, jamais à celui du paiement d'origine (vérifié sur deux mois distincts) ; non-régression
+sans avoir. Le graphique (`_caLignesToutes`) reçoit la même ligne négative et son total agrégé
+**concorde avec celui de `caDuMois`** pour le même mois — la preuve directe qu'aucun troisième
+chiffre n'a été introduit. Câblage vérifié : la section « Avoirs émis ce mois » existe dans
+`caMonthDetail`, insérée avant la ligne de total.
+
+### Reste ouvert
+- L'alerte « risque de rupture » (fenêtre à 8 jours, quantité calculée sur tout le carnet) : cause
+  confirmée, correctif toujours non appliqué.
+- Le BOM de « Pistache framboise » reste à saisir par Ben.
