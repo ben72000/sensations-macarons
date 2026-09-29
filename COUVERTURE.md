@@ -6837,3 +6837,84 @@ chiffre n'a été introduit. Câblage vérifié : la section « Avoirs émis ce 
 - L'alerte « risque de rupture » (fenêtre à 8 jours, quantité calculée sur tout le carnet) : cause
   confirmée, correctif toujours non appliqué.
 - Le BOM de « Pistache framboise » reste à saisir par Ben.
+
+
+---
+
+## 2026-09-27 — PISTACHE FRAMBOISE GF : MOITIÉ ROSE, MOITIÉ VERT, ROSE MUTUALISÉ  (v1505 → **v1506**)
+
+**Demandé par Benjamin** :
+> « Le framboise pistache grand format nécessite à la fabrication de séparer les coques. Je veux
+> faire moitié rose moitié vert. Les roses peuvent être mutualisés avec les macarons myrtille
+> framboise grand format. »
+
+### Ce qui existait déjà (vérifié dans le code avant de rien écrire)
+Couleurs par recette (v1249), division automatique 50/50 d'un parfum bicolore au lancement des coques
+(v1449), mutualisation à l'assemblage par couleur ET taille (std ≠ GF), plan de fournées par couleur
+(v1252), meringue commune acceptant des recettes grand format. Le besoin se ramenait donc à des
+DONNÉES correctes — et à cinq trous qui empêchaient de les poser.
+
+### Les cinq trous
+1. **Pas de rose dans la palette.** Ajouté (`rose`, code de lot `ROS`).
+2. **Le pré-remplissage reconnaissait « framboise » avant tout le reste.** La recherche s'arrête au
+   premier motif trouvé : « Pistache framboise » → rouge/rouge, et « Myrtille framboise » aussi (le
+   motif `myrtille framboise`, placé après `framboise`, n'était jamais atteint). Pistache framboise a
+   désormais son motif en tête du tableau → rose + vert pistache.
+3. **Une recette nouvelle n'avait aucune couleur** si on ne touchait pas aux menus (ils s'ouvrent
+   vides, le nom n'étant pas encore tapé). `saveRec` applique maintenant le défaut du nom, jamais
+   par-dessus un choix.
+4. **Assemblage : la couleur complémentaire était toujours la 2e de la recette.** Partir du lot VERT
+   proposait… d'autres lots verts. Depuis la division automatique (v1449), un lot porte l'une OU
+   l'autre couleur : on propose celle qui lui manque.
+5. **« Pistache framboise » n'avait pas de code de lot** : le plus long nom connu trouvé dedans était
+   « Framboise » → lots `FRAGF…`, indiscernables d'une Framboise GF. Code dédié `PFR`.
+
+### Migration `migrateCoquesRoseV1506`
+Ben a dit que les coques de Myrtille framboise GF sont roses : sa recette GF (et elle seule, pas la
+standard) passe en rose/rose. Pistache framboise, si elle existe déjà (probablement pré-remplie en
+rouge), passe en rose + vert. Une seule fois par recette (drapeau posé quand la recette est trouvée) :
+un choix manuel ultérieur n'est jamais écrasé ; tant que Pistache framboise n'existe pas, le contrôle
+se refait au démarrage. Appelée APRÈS `migrateCoqueColors`, qui aurait sinon remis du rouge.
+
+### Suite v1506 : 37 assertions (`tests/v1506-coques-roses-mutualisees.test.js`)
+Le vrai code est exécuté : division 60 → 30 rose + 30 vert (et 61 → 31 + 30, rien de perdu), numéros
+de lot `PFRGFROS` / `PFRGFVPI`, mutualisation GF ↔ GF acceptée pour le rose seulement et refusée vers
+le standard, plan par couleur qui regroupe les deux parfums sur UNE ligne « Rose (GF) » (40 + 60 = 100
+coques), couleur manquante à l'assemblage dans les deux sens, migration sur le cas réel probable (tout
+en rouge). **Sensibilité** : les trois défauts principaux réintroduits dans une copie font rougir 5
+assertions.
+
+### Incident de méthode (pendant cette livraison)
+Le script de finalisation s'est arrêté sur un octet invalide en UTF-8 dans ce journal (écrit par une
+livraison antérieure), APRÈS avoir branché la suite mais AVANT de changer les numéros de version. La
+vérification suivante lisait la sortie de la suite de tests, verte, et un premier zip a été construit
+encore étiqueté v1505. Repéré en contrôlant les numéros avant de livrer. **Rappel** : vérifier l'état
+réel des fichiers (version, cache, journal), jamais seulement le code retour du dernier script.
+
+### Reste ouvert
+- Myrtille framboise STANDARD : laissée telle quelle (Ben n'a parlé que du grand format). Si ses coques
+  sont roses aussi, un changement dans sa fiche recette suffit.
+- Le BOM de « Pistache framboise » reste à saisir par Ben.
+- L'alerte « risque de rupture » (fenêtre à 8 jours, quantité calculée sur tout le carnet) : cause
+  confirmée, correctif toujours non appliqué.
+
+
+## v1507 — Étiquettes de traçabilité CLIENT (tests/v1507-etiquettes-client.test.js, 40 assertions)
+
+Demande de Ben : dans « Tracer » d'une commande, un bouton distinct pour imprimer des étiquettes destinées
+au client : n° de lot, nombre de pièces, date de fabrication AVEC l'heure, DLC. Tout pré-rempli, tout modifiable.
+
+- A. Pré-remplissage depuis un lot livré : lot, pièces LIVRÉES (pas le stock restant), date + heure locale.
+- B. DLC = la plus prudente entre la DLC du lot et livraison + 6 j (4 j grand format) ; passage de mois/année.
+- C. [SÉCURITÉ] Lot au congélateur : sa DLC de 4 mois est écartée ; sans date de livraison → DLC VIDE.
+- D. Rien d'inventé : vieux lot sans heure → heure vide (pas 00:00) ; sans lot → champs vides à compléter.
+- E. Texte imprimé : JJ/MM/AAAA, « à HH:MM » seulement si l'heure est connue, singulier/pluriel, « — » si vide.
+- F. Commande réelle (faux db) : une étiquette PAR LOT, liens vers un même lot additionnés (12 + 12 = 24) ;
+  sans lot lié, une étiquette par parfum (12 + 6 = 18), lot laissé vide.
+- G. Câblage : bouton « 🏷 Étiquettes client » dans traceOrder ; 6 champs éditables ; la saisie ne redessine
+  pas (clavier stable) ; pas de QR ni d'emplacement sur l'étiquette client ; 105 × 55 mm (même rouleau) ;
+  valeurs imprimées mémorisées sur la COMMANDE (orders.etiquettesClient), jamais sur le lot ; « ↺ Recalculer ».
+
+Vérifié aussi dans Chromium sur l'app réelle : modale ouverte sans erreur, pièces modifiées 24 → 20 puis PDF
+généré (valide), mémo enregistré sur la commande, qteRestante du lot inchangée, réouverture sur les valeurs imprimées.
+Sensibilité : retirer l'exclusion « congélateur » fait échouer C (4 mois imprimés) ; retirer la somme par lot fait échouer F.

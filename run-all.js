@@ -204,7 +204,9 @@ const SUITES = [
   'v1502-facture-annulee-debloque.test.js',      // v1502 · une facture annulée par avoir restait « définitive » : Facturer rouvrait l'ancienne en boucle, sans jamais créer de nouvelle facture
   'v1503-sante-app-incidents.test.js',           // v1503 · course activeTx résiduelle (get/toArray/count sans repli, v1438 incomplet) + apostrophe (« poudre d'amande ») cassant l'inventaire
   'v1504-ca-accueil-comptabilite.test.js',       // v1504 · le CA cumulé de l'accueil ne déduisait jamais les avoirs émis, contrairement à la comptabilité (v1283/v1499) — d'où l'écart signalé par Ben
-  'v1505-ca-mois-graphique-avoirs.test.js'       // v1505 · même correctif étendu à caDuMois et au graphique glissant (_caLignesToutes), pour éviter un « troisième chiffre » entre les écrans
+  'v1505-ca-mois-graphique-avoirs.test.js',      // v1505 · même correctif étendu à caDuMois et au graphique glissant (_caLignesToutes), pour éviter un « troisième chiffre » entre les écrans
+  'v1506-coques-roses-mutualisees.test.js',      // v1506 · Pistache framboise GF bicolore rose + vert, rose mutualisé avec Myrtille framboise GF ; couleur manquante à l'assemblage ; code de lot PFR
+  'v1507-etiquettes-client.test.js'              // v1507 · étiquettes de traçabilité client depuis Tracer d'une commande : lot, pièces livrées, fabrication avec heure, DLC prudente ; tout modifiable, mémorisé sur la commande
 ];
 
 let allOk = true;

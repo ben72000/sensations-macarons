@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1505'; // suite : voir tests/v1505-ca-mois-graphique-avoirs.test.js
+const APP_VERSION = 'v1507'; // suite : voir tests/v1507-etiquettes-client.test.js
 const APP_MAJ = '« CHEQUE DE CAUTION » DEVIENT « EMPREINTE BANCAIRE ». Ben : « le cheque de caution doit se transformer en empreinte bancaire. Peux-tu changer la mention partout ou apparait cheque de caution ? » ⚠️ CE N ETAIT PAS UN SIMPLE RENOMMAGE : le texte associe decrivait des gestes propres a un CHEQUE — il est « remis », il « n est pas encaisse », il est « restitue ». Une empreinte bancaire se PREND, se DEBITE et s ANNULE. Renommer sans adapter les verbes aurait laisse des clauses incoherentes dans les CGV, un document juridique transmis aux clients. Les VERBES ONT DONC ETE ADAPTES partout : sur la ligne du devis et de la facture (« empreinte prise le jour de la livraison, non debitee, annulee apres retour du materiel »), et dans les trois clauses concernees des CGV — 7.1 (prise a la mise a disposition, non debitee, annulee), 7.2 (aucune empreinte exigee du particulier) et 7.4 (l empreinte pourra etre DEBITEE, et non encaissee). La logique juridique est inchangee : montants dus, complement exigible, surplus restitue, engagement sur l honneur du particulier. LES IDENTIFIANTS DE CODE SONT CONSERVES (CAUTION_CHEQUE, cautionRowHtml, cautionMention) : les renommer toucherait des dizaines de references et des donnees DEJA ENREGISTREES, pour zero gain visible. Seul le texte vu par le client change. Les documents deja emis gardent leur redaction d origine, puisqu ils memorisent leur rendu. Suite v1493 : 27 assertions, dont la verification que le vocabulaire du cheque a bien disparu ; un renommage NAIF (terme change mais verbes conserves) fait rougir 5 assertions. La suite v1492 a suivi le nouveau libelle, son mecanisme etant inchange.';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
@@ -5514,6 +5514,11 @@ const COQUE_COULEURS = {
   marron_inter_cafe:  { label:'Marron intermédiaire café', hex:'#6b4a30' },
   rouge:              { label:'Rouge',                    hex:'#c0392b' },
   rouge_bourgogne:    { label:'Rouge bourgogne',          hex:'#7b1e2b' },
+  // [v1506] Ben : « Le framboise pistache grand format nécessite à la fabrication de séparer les
+  // coques. Je veux faire moitié rose moitié vert. Les roses peuvent être mutualisés avec les
+  // macarons myrtille framboise grand format. » Le rose n'existait pas dans la palette : aucune
+  // recette ne pouvait donc porter cette couleur, ni la partager avec une autre.
+  rose:               { label:'Rose',                     hex:'#f2a7bf' },
   vert_pastel:        { label:'Vert pastel',              hex:'#b7d3a8' },
   vert_pistache:      { label:'Vert pistache',            hex:'#9fbf5a' },
   bleu_ciel:          { label:'Bleu ciel',               hex:'#a8d0e6' },
@@ -5545,7 +5550,7 @@ function coqueCouleurPastille(k){ return `<span style="display:inline-block;widt
 // éviter. Une table explicite, comme pour les parfums, élimine les deux problèmes à la fois.
 const COQUE_COULEUR_CODES = {
   blanc:'BLA', marron_fonce:'MAF', marron_clair:'MCL', marron_inter:'MIN',
-  marron_inter_cafe:'MIC', rouge:'ROU', rouge_bourgogne:'BOR', vert_pastel:'VEP',
+  marron_inter_cafe:'MIC', rouge:'ROU', rouge_bourgogne:'BOR', rose:'ROS', vert_pastel:'VEP',
   vert_pistache:'VPI', bleu_ciel:'BLE', orange:'ORA', jaune_pale:'JAP',
   jaune:'JAU', violet:'VIO'
 };
@@ -5560,6 +5565,10 @@ function coqueCouleurCode(k){
 // existantes (par correspondance de nom normalisé), non destructif. Modifiable ensuite par recette.
 // La taille GF n'est PAS encodée ici : elle vient du flag grandFormat de la recette.
 const COQUE_COULEURS_DEFAUT = [
+  // [v1506] EN TÊTE, et non à côté de « pistache » : la recherche s'arrête au PREMIER motif trouvé
+  // dans le nom. « Pistache framboise » contient « framboise » (plus bas → rouge/rouge) : sans cette
+  // ligne placée avant, le pré-remplissage lui aurait donné des coques ROUGES, pas rose + vert.
+  { motifs:['pistache framboise','framboise pistache'],           couleurs:['rose','vert_pistache'] },
   { motifs:['chocolat au lait','choco au lait','chocolat lait'], couleurs:['marron_fonce','marron_fonce'] },
   { motifs:['nocciolata'],                                        couleurs:['marron_fonce','marron_fonce'] },
   { motifs:['chocolat noir','valrhona'],                          couleurs:['rouge_bourgogne','rouge_bourgogne'] },
@@ -5931,7 +5940,11 @@ const FLAVOR_CODES = {
   'Nocciolata':'NOC', 'Coco citron vert':'CCV', 'Praliné noisette':'PRA',
   'Popcorn':'POP', 'Café':'CAF', 'Mangue passion':'MAN',
   'Madeleine':'MAD', 'Myrtille framboise':'MYR', 'Deux chocolats':'2CH',
-  'Chantache':'CHA'
+  'Chantache':'CHA',
+  // [v1506] Sans cette entrée, « Pistache framboise » tombait sur « Framboise » (le nom le plus
+  // long trouvé dans « pistache framboise » : 9 lettres contre 8 pour « Pistache ») : ses lots
+  // s'appelaient FRAGF…, indiscernables d'une Framboise grand format sur l'étiquette et en stock.
+  'Pistache framboise':'PFR'
 };
 // Dérive le code parfum à partir d'un nom de recette/produit. Cherche le parfum dont
 // le nom est contenu dans le nom de la recette (ex. « Macaron Caramel beurre salé » → CAR).
@@ -6322,6 +6335,41 @@ async function migrateCoqueColors(){
     }
   }
   if(n>0){ try{ if(typeof diagPublish==='function') diagPublish('coque_colors','Coques · couleurs', {prefill:n}); }catch(e){swallow(e,'migrateCoqueColors')}}
+}
+// [v1506] COQUES ROSES MUTUALISÉES — Myrtille framboise GF ↔ Pistache framboise GF.
+// Ben : « moitié rose moitié vert. Les roses peuvent être mutualisés avec les macarons myrtille
+// framboise grand format. » La mutualisation (v1249) ne rapproche que des coques de MÊME couleur
+// et MÊME taille : il faut donc que les deux recettes portent réellement le rose.
+//   • Myrtille framboise GF : ses coques sont roses (dit par Ben). Le pré-remplissage v1249 lui a
+//     probablement donné du ROUGE (le motif « framboise » est testé avant « myrtille framboise »).
+//   • Pistache framboise : même piège (« framboise » → rouge) si elle a été créée avant cette version.
+// Ciblé par recette et UNE seule fois chacune (drapeau posé quand la recette a été trouvée) :
+// si Ben rechange ensuite une couleur à la main, elle n'est plus jamais écrasée. Tant que la
+// recette n'existe pas encore (Pistache framboise, BOM à venir), le contrôle se refait au démarrage.
+async function migrateCoquesRoseV1506(){
+  let recs=[]; try{ recs=await db.recipes.toArray(); }catch(_){ return 0; }
+  const norm = s => (typeof aiNormalize==='function') ? aiNormalize(s||'') : String(s||'').toLowerCase();
+  const cibles = [
+    { cle:'sm_coqueRoseMyrtilleGF_v1506', couleurs:['rose','rose'],
+      estCible: r => r.grandFormat===true && norm(r.produitNom).indexOf(norm('myrtille framboise'))>=0 },
+    { cle:'sm_coqueRosePistacheFramboise_v1506', couleurs:['rose','vert_pistache'],
+      estCible: r => { const n=norm(r.produitNom); return n.indexOf(norm('pistache framboise'))>=0 || n.indexOf(norm('framboise pistache'))>=0; } }
+  ];
+  let n=0;
+  for(const c of cibles){
+    let fait=false; try{ fait = localStorage.getItem(c.cle)==='1'; }catch(_){}
+    if(fait) continue;
+    const trouvees = recs.filter(c.estCible);
+    if(!trouvees.length) continue;                      // recette pas encore créée : on réessaiera
+    for(const r of trouvees){
+      const cur = recCoqueColors(r);
+      if(cur.length===2 && cur[0]===c.couleurs[0] && cur[1]===c.couleurs[1]) continue;
+      try{ await db.recipes.update(r.id, {coqueColors:c.couleurs.slice()}); n++; }catch(e){ swallow(e,'migrateCoquesRoseV1506'); }
+    }
+    try{ localStorage.setItem(c.cle,'1'); }catch(_){}
+  }
+  if(n>0 && typeof toast==='function') toast(`🎨 ${n} recette(s) passée(s) en coques roses (mutualisables Myrtille framboise ↔ Pistache framboise GF)`);
+  return n;
 }
 // ════════════════════════════════════════════════════════════════════════════════════════
 // [v1421] MIGRATION — DÉLESTER `histo` DES COMMANDES MÈRES RANGÉES PAR LA v1411.
@@ -10522,6 +10570,11 @@ async function saveRec(id){
       // [v1249] Empreinte-couleur : on garde 1 ou 2 couleurs valides, dans l'ordre saisi.
       const a=(val('f_coqueC1')||'').trim(), b=(val('f_coqueC2')||'').trim();
       const out=[]; if(a && COQUE_COULEURS[a]) out.push(a); if(b && COQUE_COULEURS[b]) out.push(b);
+      // [v1506] Une recette NOUVELLE s'ouvre avec des menus couleur vides (le nom n'est pas encore
+      // tapé, donc aucun défaut ne peut être proposé). Enregistrée telle quelle, elle n'avait AUCUNE
+      // couleur : ni division moitié-moitié au lancement, ni mutualisation, ni place dans le plan par
+      // couleur. Si Ben n'a rien choisi, on applique le défaut du nom — jamais par-dessus un choix.
+      if(!out.length){ const def = coqueCouleursDefautPour(val('f_nom')||''); if(def) return def; }
       return out;
     })(),
     componentRefs: Array.from(document.querySelectorAll('.cmpRef'))
@@ -15578,7 +15631,13 @@ async function prodAssembleForm(id, opts){
   {
     // Couleur attendue pour le 2e lot : la SECONDE de la recette (la 1re étant servie par le
     // lot de départ ou par le 1er sélecteur). Sans recette bicolore, on n'impose aucune couleur.
-    const _coul2 = _bicolore ? _coulCible[1] : '';
+    // [v1506] LA COULEUR MANQUANTE, PAS TOUJOURS LA 2e DE LA RECETTE. Pour Pistache framboise GF
+    // (rose + vert), démarrer l'assemblage depuis le lot VERT proposait… d'autres lots verts : la
+    // 2e couleur de la recette était prise telle quelle, sans regarder celle du lot de départ.
+    // Depuis la division automatique en 2 lots (v1449), un lot peut porter l'une OU l'autre
+    // couleur : on propose donc celle qui lui manque.
+    const _coul2 = !_bicolore ? ''
+      : ((p.couleur && p.couleur===_coulCible[1]) ? _coulCible[0] : _coulCible[1]);
     const _lots2 = _bicolore
       ? coquesPourCouleur(_lotsCoques, _coul2, _recById, _profilCible)
       : _lotsCoques;
@@ -19447,7 +19506,7 @@ async function traceOrder(orderId){
   openModal(`${_traceArianeHTML()}<h3>Traçabilité — commande</h3>
     <p style="margin-bottom:8px"><b>${client?esc(client.nom):'—'}</b> · ${fmtDate(order.date)} · ${esc(order.statut||'')}</p>
     ${blocks.length?blocks.join(''):'<p class="note">Aucune production liée. Lie cette commande à un ou plusieurs batchs depuis l\'écran Commandes.</p>'}
-    <div class="modal-actions">${_traceBackBtnHTML()}<button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn" onclick="exportTraceOrder(${orderId})">⬇ Exporter CSV</button></div>`);
+    <div class="modal-actions">${_traceBackBtnHTML()}<button class="btn ghost" onclick="closeModal()">Fermer</button><button class="btn" onclick="exportTraceOrder(${orderId})">⬇ Exporter CSV</button><button class="btn gold" onclick="etiqClientForm(${orderId})" title="Étiquettes à remettre au client : lot, pièces, fabrication, DLC">🏷 Étiquettes client</button></div>`);
  }catch(e){
   console.error('traceOrder', e);
   toast('Erreur lors de l\'affichage de la traçabilité');
@@ -55142,6 +55201,264 @@ function printOrderLabelSheet(labels, titre){
    </body></html>`);
   win.document.close();
 }
+// ════════════════════════════════════════════════════════════════════════════
+// [v1507] ÉTIQUETTES DE TRAÇABILITÉ CLIENT — depuis « Tracer » d'une commande.
+// Ben : « Je veux pouvoir imprimer une étiquette de traçabilité pour les clients. Donc en cliquant
+// sur tracer dans commande je dois avoir un bouton distinct dédié au client. Sur chaque étiquette
+// destinée au client je veux numéro de lot, le nombre de pièces, la date de fabrication avec
+// l'heure ainsi que la DLC. Chaque information est remplie automatiquement mais doit
+// nécessairement pouvoir être modifiée manuellement en cas de besoin. »
+//
+// POURQUOI UNE ÉTIQUETTE À PART, et pas l'étiquette de lot existante (labelToCanvas) :
+//   • elle imprime le STOCK RESTANT du lot (v1454, étiquette « recyclée » du frigo) — le client
+//     doit lire le nombre de pièces QU'IL REÇOIT ;
+//   • elle porte l'EMPLACEMENT (frigo/congélateur de l'atelier) : information interne ;
+//   • son QR renvoie à l'app sur le téléphone de Ben (traceUrl = location.href) : inutile, voire
+//     trompeur, dans les mains d'un client.
+// L'étiquette récapitulative de commande (buildOrderLabelData) ne convient pas non plus : elle
+// fusionne tous les lots et n'est pas modifiable.
+//
+// RÈGLES :
+//   • UNE étiquette par lot livré (liens de picking orderItems, pièces additionnées par lot).
+//     Sans lot lié, une ligne par parfum commandé, lot et fabrication laissés vides — plutôt
+//     qu'inventés : c'est à Ben de les compléter.
+//   • DLC préremplie = la PLUS PRUDENTE entre la DLC réelle du lot et « livraison + 4 j (GF) /
+//     6 j (classique) » (même règle que l'étiquette récap). Exception : un lot encore au
+//     CONGÉLATEUR porte une DLC de 4 mois qui ne vaut plus une fois décongelé chez le client —
+//     on ne retient alors que la règle de livraison.
+//   • Heure de fabrication inconnue (vieux lot sans horodatage) → laissée VIDE, jamais « 00:00 ».
+//   • Modifier ne touche JAMAIS le lot ni sa traçabilité interne. Ce qui a été imprimé est
+//     mémorisé sur la commande (etiquettesClient) : c'est la trace de ce que le client a reçu,
+//     et c'est ce qui se représente à la réimpression.
+// ════════════════════════════════════════════════════════════════════════════
+
+// 'AAAA-MM-JJ' + n jours, calcul local (jamais toISOString : décalage UTC). PURE.
+function _etqCliPlusJours(ymd, n){
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(ymd||''));
+  if(!m) return '';
+  const d = new Date(+m[1], +m[2]-1, +m[3]);
+  d.setDate(d.getDate() + (+n||0));
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+// 'AAAA-MM-JJ' → 'JJ/MM/AAAA' (lecture sans ambiguïté pour un client). PURE.
+function _etqCliDateFR(ymd){
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(ymd||''));
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : '';
+}
+// Horodatage ISO → {date:'AAAA-MM-JJ', heure:'HH:MM'} en heure LOCALE. Une date seule (sans
+// heure connue) donne heure:'' — on n'invente pas minuit. PURE.
+function _etqCliFabDepuis(iso){
+  const s = String(iso||'');
+  if(!s) return {date:'', heure:''};
+  if(/^\d{4}-\d{2}-\d{2}$/.test(s)) return {date:s, heure:''};
+  const d = new Date(s);
+  if(isNaN(d)) return {date:'', heure:''};
+  const p2 = n => String(n).padStart(2,'0');
+  return { date:`${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())}`, heure:`${p2(d.getHours())}:${p2(d.getMinutes())}` };
+}
+// Valeurs AUTOMATIQUES d'une étiquette client. PURE : ne lit que ses arguments.
+//   src = { prodId, produit, lot, pieces, fabIso, dlcLot, enCongelateur, grandFormat, dateLivraison }
+function _etqCliAuto(src){
+  src = src || {};
+  const fab = _etqCliFabDepuis(src.fabIso);
+  const jours = src.grandFormat ? DLC_JOURS.grandFormat : DLC_JOURS.standard;
+  const dlcLiv = src.dateLivraison ? _etqCliPlusJours(src.dateLivraison, jours) : '';
+  const dlcLot = (!src.enCongelateur && /^\d{4}-\d{2}-\d{2}/.test(String(src.dlcLot||''))) ? String(src.dlcLot).slice(0,10) : '';
+  const cands = [dlcLot, dlcLiv].filter(Boolean).sort();
+  return {
+    prodId: (src.prodId!=null ? src.prodId : null),
+    produit: src.produit || '',
+    lot: src.lot || '',
+    pieces: Math.max(0, Math.round(+src.pieces||0)),
+    fabDate: fab.date, fabHeure: fab.heure,
+    dlc: cands[0] || '',
+    copies: 1
+  };
+}
+// Construit les lignes automatiques d'une commande (lecture seule en base).
+async function _etqCliLignesAuto(orderId){
+  const o = await db.orders.get(orderId).catch(()=>null);
+  if(!o) return null;
+  const recipes = await db.recipes.toArray().catch(()=>[]);
+  const links = await db.orderItems.where('orderId').equals(orderId).toArray().catch(()=>[]);
+  const parLot = new Map();   // productionId → pièces livrées cumulées
+  links.forEach(it=>{ if(it.productionId==null) return; parLot.set(+it.productionId, (parLot.get(+it.productionId)||0) + (+it.qte||0)); });
+  const lignes = [];
+  for(const [pid, qte] of parLot){
+    const p = await db.productions.get(pid).catch(()=>null);
+    if(!p) continue;
+    const rec = p.recipeId!=null ? recipes.find(r=>+r.id===+p.recipeId) : null;
+    lignes.push(_etqCliAuto({
+      prodId: pid,
+      produit: (typeof prodNomComplet==='function') ? prodNomComplet(p, recipes) : (rec ? rec.produitNom : (p.produitLibre||'')),
+      lot: p.lotProduction || '',
+      pieces: qte,
+      fabIso: p.prodTermineTs || p.prodTimestamp || p.date || '',
+      dlcLot: (typeof prodDlcEffective==='function') ? prodDlcEffective(p) : (p.dlcProduit||''),
+      enCongelateur: !!(p.emplacement && isFreezer(p.emplacement)),
+      grandFormat: !!(rec && rec.grandFormat),
+      dateLivraison: o.date || ''
+    }));
+  }
+  if(!lignes.length){
+    // Aucun lot lié (picking non fait) : une ligne par parfum commandé, lot/fabrication à compléter.
+    const parParfum = new Map();
+    (orderToLines(o)||[]).forEach(ln=>{
+      [...(ln.parfums||[]), ...(ln.items||[])].forEach(pf=>{
+        const nom = (pf && pf.nom || '').trim(); const q = +pf.qte||0;
+        if(!nom || q<=0) return;
+        parParfum.set(nom, (parParfum.get(nom)||0) + q);
+      });
+    });
+    for(const [nom, q] of parParfum){
+      const rec = (typeof recipeForFlavorName==='function') ? recipeForFlavorName(nom, recipes) : null;
+      lignes.push(_etqCliAuto({ produit:nom, pieces:q, grandFormat: !!(rec && rec.grandFormat), dateLivraison: o.date || '' }));
+    }
+  }
+  return { o, lignes, depuisLots: parLot.size>0 };
+}
+
+let _etqCli = null;   // { orderId, lignes:[...], depuisLots, sauvegarde }
+
+async function etiqClientForm(orderId, opts){
+  opts = opts || {};
+  const auto = await _etqCliLignesAuto(orderId);
+  if(!auto){ toast('Commande introuvable'); return; }
+  const snap = (!opts.recalculer && auto.o.etiquettesClient && Array.isArray(auto.o.etiquettesClient.lignes) && auto.o.etiquettesClient.lignes.length)
+    ? auto.o.etiquettesClient : null;
+  _etqCli = {
+    orderId,
+    lignes: (snap ? snap.lignes : auto.lignes).map(l=>Object.assign({}, l)),
+    depuisLots: auto.depuisLots,
+    sauvegarde: snap ? (snap.ts||'') : ''
+  };
+  let clientNom = '';
+  if(auto.o.clientId){ const c = await db.clients.get(auto.o.clientId).catch(()=>null); clientNom = c ? c.nom : ''; }
+  _etqCli.titre = `Commande ${orderNumber(auto.o)}${clientNom?' · '+clientNom:''}`;
+  _etqCliRender();
+}
+function _etqCliRender(){
+  const S = _etqCli; if(!S) return;
+  const cartes = S.lignes.map((l,i)=>`
+    <div class="sum-box" style="flex-direction:column;align-items:stretch;gap:6px;margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <b style="font-size:.86rem">Étiquette ${i+1}</b>
+        <button class="btn ghost sm" onclick="_etqCliSuppr(${i})" title="Retirer cette étiquette">✕</button>
+      </div>
+      <div class="field" style="margin:0"><label>Produit</label><input value="${esc(l.produit)}" oninput="_etqCliSet(${i},'produit',this.value)"></div>
+      <div class="row2">
+        <div class="field" style="margin:0"><label>N° de lot</label><input value="${esc(l.lot)}" placeholder="à compléter" oninput="_etqCliSet(${i},'lot',this.value)"></div>
+        <div class="field" style="margin:0"><label>Nombre de pièces</label><input type="number" min="0" step="1" value="${esc(l.pieces)}" oninput="_etqCliSet(${i},'pieces',this.value)"></div>
+      </div>
+      <div class="row2">
+        <div class="field" style="margin:0"><label>Fabriqué le</label><input type="date" value="${esc(l.fabDate)}" oninput="_etqCliSet(${i},'fabDate',this.value)"></div>
+        <div class="field" style="margin:0"><label>à (heure)</label><input type="time" value="${esc(l.fabHeure)}" oninput="_etqCliSet(${i},'fabHeure',this.value)"></div>
+      </div>
+      <div class="row2">
+        <div class="field" style="margin:0"><label>DLC</label><input type="date" value="${esc(l.dlc)}" oninput="_etqCliSet(${i},'dlc',this.value)"></div>
+        <div class="field" style="margin:0"><label>Nb d'étiquettes</label><input type="number" min="1" max="50" step="1" value="${esc(l.copies||1)}" oninput="_etqCliSet(${i},'copies',this.value)"></div>
+      </div>
+    </div>`).join('');
+  const bandeau = S.sauvegarde
+    ? `<div class="banner" style="background:#f3eef7;border-color:#caa6d8;margin-bottom:8px">🗂 <div>Valeurs de la <b>dernière impression</b> (${esc(fmtDateTime(S.sauvegarde))}) — ce que le client a reçu. <a href="#" onclick="etiqClientForm(${S.orderId},{recalculer:true});return false;"><b>↺ Recalculer</b></a> depuis les lots.</div></div>`
+    : (S.depuisLots
+      ? `<p class="note" style="margin-bottom:8px">Rempli depuis les lots livrés. DLC proposée : la plus prudente entre celle du lot et livraison + ${DLC_JOURS.standard} j (${DLC_JOURS.grandFormat} j grand format). Tout est modifiable ; les lots eux-mêmes ne changent pas.</p>`
+      : `<div class="banner" style="background:#fdf8ec;border-color:#e8d4a0;margin-bottom:8px">⚠ <div>Aucun lot n'est encore lié à cette commande : une étiquette par parfum commandé, <b>lot et fabrication à compléter</b>.</div></div>`);
+  openModal(`<h3>🏷 Étiquettes client</h3>
+    <p style="margin-bottom:8px"><b>${esc(S.titre||'')}</b></p>
+    ${bandeau}
+    ${cartes || '<p class="note">Aucune étiquette.</p>'}
+    <button class="btn ghost sm" onclick="_etqCliAjout()">＋ Ajouter une étiquette</button>
+    <div class="modal-actions" style="flex-wrap:wrap">
+      <button class="btn ghost" onclick="traceOrder(${S.orderId})">← Traçabilité</button>
+      <button class="btn gold" onclick="etiqClientGenerer()">📄 Générer le PDF</button>
+    </div>`);
+}
+// Saisie : on met à jour l'état SANS redessiner (le clavier resterait sinon sans cesse refermé).
+function _etqCliSet(i, champ, v){
+  if(!_etqCli || !_etqCli.lignes[i]) return;
+  if(champ==='pieces') v = Math.max(0, Math.round(+v||0));
+  if(champ==='copies') v = Math.max(1, Math.min(50, Math.round(+v||1)));
+  _etqCli.lignes[i][champ] = v;
+}
+function _etqCliSuppr(i){ if(!_etqCli) return; _etqCli.lignes.splice(i,1); _etqCliRender(); }
+function _etqCliAjout(){
+  if(!_etqCli) return;
+  _etqCli.lignes.push({ prodId:null, produit:'', lot:'', pieces:0, fabDate:'', fabHeure:'', dlc:'', copies:1 });
+  _etqCliRender();
+}
+// Texte imprimé d'une ligne (séparé du dessin pour être testable). PURE.
+function _etqCliTextes(l){
+  const fab = _etqCliDateFR(l.fabDate) + (l.fabDate && l.fabHeure ? ' à ' + l.fabHeure : '');
+  return {
+    produit: String(l.produit||'').trim(),
+    lot: 'Lot : ' + (String(l.lot||'').trim() || '—'),
+    pieces: (Math.max(0, Math.round(+l.pieces||0))) + ' pièce' + ((+l.pieces||0)>1 ? 's' : ''),
+    fab: 'Fabriqué le : ' + (fab || '—'),
+    dlc: 'DLC : ' + (_etqCliDateFR(l.dlc) || '—')
+  };
+}
+// Dessin 105 × 55 mm à 203 dpi (même support que les étiquettes de lot, donc même rouleau
+// Phomemo). Pas de QR, pas d'emplacement : uniquement ce qui sert au client.
+function labelClientToCanvas(l, marque){
+  const DPI = 203, mm = v => Math.round(v / 25.4 * DPI);
+  const W = mm(105), H = mm(55);
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0,0,W,H); ctx.fillStyle = '#000'; ctx.textBaseline = 'top';
+  const pad = mm(4), tw = W - 2*pad;
+  let y = mm(4);
+  const ligne = (txt, tailleMm, gras, apresMm)=>{
+    let t = tailleMm; const f = s => `${gras?'bold ':''}${mm(s)}px Arial, Helvetica, sans-serif`;
+    ctx.font = f(t);
+    while(t > 3 && ctx.measureText(txt).width > tw){ t -= 0.2; ctx.font = f(t); }   // rétrécit, ne tronque jamais
+    ctx.fillText(txt, pad, y); y += mm(t) + mm(apresMm);
+  };
+  const T = _etqCliTextes(l);
+  if(marque) ligne(String(marque).toUpperCase(), 3.6, true, 2);
+  if(T.produit) ligne(T.produit, 7, true, 3.2);
+  ligne(T.lot, 5.2, false, 2.2);
+  ligne(T.pieces, 5.2, false, 2.2);
+  ligne(T.fab, 5.2, false, 3);
+  ligne(T.dlc, 7.2, true, 0);
+  return cv;
+}
+async function etiqClientGenerer(){
+  const S = _etqCli; if(!S) return;
+  const lignes = S.lignes.filter(l=>l && (String(l.produit||'').trim() || String(l.lot||'').trim()));
+  if(!lignes.length){ toast('Aucune étiquette à générer'); return; }
+  const sansDlc = lignes.filter(l=>!l.dlc).length;
+  if(sansDlc && !confirm(`${sansDlc} étiquette(s) sans DLC. Générer quand même ?`)) return;
+  // Mémorise CE QUI EST IMPRIMÉ sur la commande (trace de ce que le client a reçu). Jamais sur le lot.
+  try{
+    await db.orders.update(S.orderId, { etiquettesClient: { ts: new Date().toISOString(), lignes: lignes.map(l=>Object.assign({}, l)) } });
+    if(typeof markUnsaved==='function') markUnsaved();
+  }catch(e){ swallow(e,'etiqClientGenerer memo'); }
+  let marque = '';
+  try{ const e = (typeof factGetEmetteur==='function') ? factGetEmetteur() : null; marque = (e && e.nom) || 'Sensations Macarons'; }catch(_){ marque = 'Sensations Macarons'; }
+  const jpegList = []; let pxW = 839, pxH = 440;
+  for(const l of lignes){
+    const cv = labelClientToCanvas(l, marque);
+    pxW = cv.width; pxH = cv.height;
+    const bytes = _dataURLtoBytes(cv.toDataURL('image/jpeg', 0.92));
+    const n = Math.max(1, Math.min(50, Math.round(+l.copies||1)));
+    for(let k=0;k<n;k++) jpegList.push(bytes);
+  }
+  const pdfBytes = jpegList.length===1 ? _buildSingleImagePDF(jpegList[0], 105, 55, pxW, pxH) : _buildMultiImagePDF(jpegList, 105, 55, pxW, pxH);
+  const blob = new Blob([pdfBytes], {type:'application/pdf'});
+  const fileName = ('etiquettes-client-' + (S.titre||'commande')).replace(/[^\w-]+/g,'_').slice(0,60) + '.pdf';
+  const file = new File([blob], fileName, {type:'application/pdf'});
+  if(navigator.canShare && navigator.canShare({files:[file]})){
+    try{ await navigator.share({ files:[file], title:'Étiquettes client ('+jpegList.length+')' }); S.sauvegarde = new Date().toISOString(); return; }
+    catch(eShare){ if(eShare && eShare.name==='AbortError') return; }
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = fileName;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(url), 2000);
+  toast(jpegList.length + ' étiquette(s) client dans le PDF — ouvre-le dans Labelife');
+}
+
 // Imprime N copies de l'étiquette récapitulative d'une commande.
 async function printOrderRecapLabel(orderId, copies){
   const d = await buildOrderLabelData(orderId);
@@ -75177,6 +75494,7 @@ function startClock(){
     try{ await seedEmballages(); }catch(e){ console.error('seedEmballages',e); }
     try{ await migrateDlcCongelateur(); }catch(e){ console.error('migrateDlcCongelateur',e); }
     try{ await migrateCoqueColors(); }catch(e){ console.error('migrateCoqueColors',e); }
+    try{ await migrateCoquesRoseV1506(); }catch(e){ console.error('migrateCoquesRoseV1506',e); }   // [v1506] APRÈS le pré-remplissage, qui aurait remis du rouge
     try{ await migrateMereHistoV1421(); }catch(e){ console.error('migrateMereHistoV1421',e); }
     try{ const r=await rdSeedSiVide();
       let nIdees=0,nTests=0; try{nIdees=await db.rdIdees.count();}catch(e){swallow(e,'startClock')}; try{nTests=await db.rdTests.count();}catch(e){swallow(e,'startClock')}
