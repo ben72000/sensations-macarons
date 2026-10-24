@@ -6950,3 +6950,43 @@ Sensibilité (8 mutations réelles sur app.js, chacune attrapée) : réintroduir
 boot → A rouge ; retirer la garde `if(!manual)` → D rouge ; réintroduire la bannière température → C rouge ;
 réintroduire la modale de fin de journée → B + E rouges ; ajouter une NOUVELLE fonction de boot qui ouvre une modale
 → B rouge ; supprimer l'auto-validation HACCP → E rouge ; retirer autoDailyBackup du boot → F rouge.
+
+## v1509 — Coffret : nombre de macarons + prix libre, case « anciens tarifs » retirée (tests/v1509-coffret-nombre-prix.test.js, 69 assertions)
+
+Demande de Ben : dans les commandes, devis et factures, remplacer la case « anciens tarifs » par DEUX champs sur la
+ligne coffret — le nombre de macarons (menu) et le prix (4 macarons à 8 € pour un client, à 10 € pour le suivant ;
+3 macarons à 8 €). Réponses de Ben avant de coder : la case disparaît PARTOUT · prix en SAISIE LIBRE · AUCUN supplément
+parfum sur 3, 4… macarons.
+
+- A. `coffretSupplementParfums(ln, nbDiff)` : UN seul endroit pour le supplément (4 sites l'écrivaient à la main).
+  Format hors 6/8/10/16/25 saisi avec le nouveau sélecteur (`prixLibre:true`) → 0 € ; formats standard inchangés (+3 €/parfum au-delà de la limite).
+- B. `coffretUnitPrice` : le prix de la ligne (saisi ou scellé) PASSE AVANT la grille, qui n'est plus qu'une valeur par défaut.
+  Une ligne rouverte garde son prix : plus de retarification en rouvrant.
+- C. Écran (lineTotalBase) et enregistré (lineTotalStored) donnent le même chiffre ; la remise de ligne s'applique au prix saisi.
+- D. Aller-retour édition ↔ enregistré (leçon v1488) : `prixUnitaireApplique` et `prixLibre` repris à la réouverture.
+- E. Écran : « Nombre de macarons » (1 à 50) + « Prix du coffret (€) » (virgule ou point), raccourcis « grille actuelle » / « ancienne grille »,
+  alerte rouge si le prix manque. Le champ affiche le prix RÉELLEMENT appliqué (leçon v1467).
+- F. Garde par pattern : plus aucun calcul « (nbDiff−limite) × supplément » écrit à la main.
+- G. Enregistrement : un coffret sans prix (> 0) est refusé — pas de zéro silencieux sur un document client.
+- H. [HISTORIQUE] La case disparaît de l'écran mais l'élément `f_ancienTarif` reste, CACHÉ : coché d'office pour une commande
+  déjà enregistrée avant la grille (ni marqueur ni tarifRef) ou marquée « anciens tarifs » → la rouvrir puis l'enregistrer ne
+  retarife pas ses lignes hors coffrets. Nouvelle commande : décoché (grille en vigueur). Les 38 lecteurs de la case restent valides.
+- I. [HISTORIQUE] Une ligne déjà enregistrée n'a pas `prixLibre` : son total reste celui d'avant, au centime (oracle indépendant).
+
+Limite connue : l'emballage d'un format hors standard est chiffré à 0 € dans les marges tant que Ben ne choisit pas « Autre emballage ».
+Un ancien devis/commande « anciens tarifs » ne peut plus être basculé en nouveaux tarifs pour ses lignes hors coffrets (la case n'existe plus) ;
+les coffrets, eux, se règlent ligne par ligne.
+
+Sensibilité (8 défauts réintroduits, tous attrapés) : supplément sur format libre (8 rouges) · grille avant prix saisi (9) · prixLibre perdu
+à la réouverture (2) · prix scellé perdu (2) · case visible (9) · coffret sans prix accepté (1) · verrou historique perdu (1) · supplément recalculé
+à la main (5).
+
+Addendum v1509 — suites antérieures alignées sur la nouvelle règle (décision délibérée, pas un test « arrangé ») :
+- v1494 (A, B, C) et v1463 (F, J, K) encodaient « la case pilote le prix d'un coffret, le prix scellé est ignoré ». Cette règle est
+  REMPLACÉE par Ben : le prix de la ligne (saisi ou scellé) prime, la grille n'est qu'un défaut. Assertions réécrites sur la nouvelle règle ;
+  celles qui restent vraies sont conservées (ligne sans prix → grille selon le verrou ; le catalogue ne gagne jamais ; aucun marqueur de ligne
+  ne fige le prix en saisie). Le menu « Taille » du catalogue n'existe plus : ses gardes visent désormais le champ « Prix du coffret ».
+- Repli de bac à sable : lineTotalStored et lineTotalBase gardent l'ancienne formule du supplément derrière `typeof coffretSupplementParfums`,
+  pour que les suites absentes de l'archive (134 sur 192) qui extraient ces fonctions sans le helper ne rougissent pas. Jamais atteint dans l'app ;
+  la garde F n'en tolère QUE deux, derrière ce test.
+- ⚠️ À FAIRE dès réception de tests/ complet : ajouter `coffretSupplementParfums` aux dépendances des suites qui extraient lineTotalStored / lineTotalBase.

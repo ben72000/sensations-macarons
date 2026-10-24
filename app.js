@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1508'; // suite : voir tests/v1508-demarrage-sans-popup.test.js
+const APP_VERSION = 'v1509'; // suite : voir tests/v1509-coffret-nombre-prix.test.js
 const APP_MAJ = '« CHEQUE DE CAUTION » DEVIENT « EMPREINTE BANCAIRE ». Ben : « le cheque de caution doit se transformer en empreinte bancaire. Peux-tu changer la mention partout ou apparait cheque de caution ? » ⚠️ CE N ETAIT PAS UN SIMPLE RENOMMAGE : le texte associe decrivait des gestes propres a un CHEQUE — il est « remis », il « n est pas encaisse », il est « restitue ». Une empreinte bancaire se PREND, se DEBITE et s ANNULE. Renommer sans adapter les verbes aurait laisse des clauses incoherentes dans les CGV, un document juridique transmis aux clients. Les VERBES ONT DONC ETE ADAPTES partout : sur la ligne du devis et de la facture (« empreinte prise le jour de la livraison, non debitee, annulee apres retour du materiel »), et dans les trois clauses concernees des CGV — 7.1 (prise a la mise a disposition, non debitee, annulee), 7.2 (aucune empreinte exigee du particulier) et 7.4 (l empreinte pourra etre DEBITEE, et non encaissee). La logique juridique est inchangee : montants dus, complement exigible, surplus restitue, engagement sur l honneur du particulier. LES IDENTIFIANTS DE CODE SONT CONSERVES (CAUTION_CHEQUE, cautionRowHtml, cautionMention) : les renommer toucherait des dizaines de references et des donnees DEJA ENREGISTREES, pour zero gain visible. Seul le texte vu par le client change. Les documents deja emis gardent leur redaction d origine, puisqu ils memorisent leur rendu. Suite v1493 : 27 assertions, dont la verification que le vocabulaire du cheque a bien disparu ; un renommage NAIF (terme change mais verbes conserves) fait rougir 5 assertions. La suite v1492 a suivi le nouveau libelle, son mecanisme etant inchange.';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
@@ -4394,10 +4394,13 @@ function cmdTarifBandeau(){
   const z = document.getElementById('f_tarifBandeau'); if(!z) return;
   const g = tarifsSaisie();
   const coche = !!(document.getElementById('f_ancienTarif')||{}).checked;
+  // [v1509] Plus de bandeau « tarifs en vigueur » : il n'y a plus de choix à signaler. Seule une commande
+  // historique (verrou caché coché) l'affiche, pour que Ben sache pourquoi ses lignes hors coffrets gardent
+  // les anciens prix. Les coffrets, eux, se règlent ligne par ligne.
   z.innerHTML = coche
     ? `<p class="note" style="margin:-4px 0 8px;color:#8a6d3b;background:#fdf8ef;border:1px solid #e5d8c8;border-radius:8px;padding:6px 8px">
-         🗓️ <b>${esc(g.libelle)}</b> — case « anciens tarifs » cochée. Décoche-la pour revenir aux tarifs en vigueur.</p>`
-    : `<p class="note" style="margin:-4px 0 8px;color:#2e6b3f">🗓️ <b>${esc(g.libelle)}</b> — tarifs en vigueur.</p>`;
+         🗓️ <b>${esc(g.libelle)}</b> — commande enregistrée avant la nouvelle grille : ses lignes (hors coffrets) gardent les anciens prix. Le prix d'un coffret se saisit sur sa ligne.</p>`
+    : '';
   if(typeof drawLines==='function') drawLines();
 }
 // Prix d'un sachet de n macarons selon sa grille (table non linéaire depuis le 01/09/2026).
@@ -4435,6 +4438,18 @@ function vracPrixMacaron(ln, grille){
 // 16→4) : ni plus stricte que le format juste en dessous, ni plus permissive que celui au-dessus.
 const BOX_FLAVOR_LIMIT = { 6: 3, 8: 4, 10: 4, 16: 4, 25: 5 }; // parfums DIFFÉRENTS inclus
 const FLAVOR_SURCHARGE = 3;     // € par parfum différent supplémentaire
+// [v1509] SUPPLÉMENT PARFUM — UN SEUL ENDROIT. Ben : « 3 macarons à 8 € », « 4 macarons à 10 € »…
+// et, sur sa réponse : « le prix choisi est le prix final ». Un coffret de FORMAT LIBRE (nombre hors
+// 6/8/10/16/25) saisi avec le nouveau sélecteur (`prixLibre:true`) n'a donc AUCUN supplément.
+// ⚠️ PROTECTION DE L'HISTORIQUE : une ligne déjà enregistrée n'a pas `prixLibre` → son calcul reste
+// EXACTEMENT celui d'avant (limite 0 pour un format inconnu), sinon un ancien total bougerait.
+// Les formats standard gardent leur règle (« +3 € par parfum au-delà de la limite »).
+function coffretSupplementParfums(ln, nbDiff){
+  const t = +(ln && ln.taille);
+  if(BOX_FLAVOR_LIMIT[t]==null && ln && ln.prixLibre===true) return 0;
+  const limit = BOX_FLAVOR_LIMIT[t]||0;
+  return money2(Math.max(0, (+nbDiff||0) - limit) * FLAVOR_SURCHARGE);
+}
 const ORDER_STATUS = ['À préparer', 'Terminée', 'Livrée'];
 // Motifs de perte / casse sur stock fini (déclaration explicite)
 const LOSS_REASONS = ['Raté / casse', 'Invendable / DLC dépassée', 'Chute de production', 'Offert / dégustation', 'Autre'];
@@ -21914,7 +21929,7 @@ async function cmdView(id){
     if(ln.type==='coffret'){
       const parfums=(ln.parfums||[]).filter(p=>p.qte>0);
       const totQ=parfums.reduce((s,p)=>s+(+p.qte||0),0);
-      const nbDiff=parfums.length, limit=BOX_FLAVOR_LIMIT[ln.taille]||0, over=Math.max(0,nbDiff-limit);
+      const nbDiff=parfums.length, limit=BOX_FLAVOR_LIMIT[ln.taille]||0, over=(coffretSupplementParfums(ln,nbDiff)>0)?Math.max(0,nbDiff-limit):0;
       const _emb=coffretEmbInfo(ln, _embMats, _embLots, _embRealMap);
       return `<div class="cmd-line"><div class="line-type">Coffret ${ln.taille} macarons ${over?`<span class="line-sub">+${over} parfum(s) suppl. = +${euro(over*FLAVOR_SURCHARGE)}</span>`:''}</div>
         ${parfums.length?`<div style="margin-top:6px">${parfums.map(p=>`<span class="pill">${esc(p.nom)} × ${p.qte}</span>`).join('')}</div>`:'<p class="note">Parfums non détaillés.</p>'}
@@ -22162,8 +22177,9 @@ function lineTotalStored(ln){
       ? +ln.prixUnitaireApplique
       : ((BOX_PRICES[ln.taille]!=null)?BOX_PRICES[ln.taille]:0);
     const nbDiff=(ln.parfums||[]).filter(p=>p.qte>0).length;
-    const limit=BOX_FLAVOR_LIMIT[ln.taille]||0;
-    base = money2(pu + Math.max(0,nbDiff-limit)*FLAVOR_SURCHARGE);
+    // repli : bac à sable de test sans le helper (jamais atteint dans l'app) — ancienne formule, à l'identique
+    const _sup = (typeof coffretSupplementParfums==='function') ? coffretSupplementParfums(ln, nbDiff) : money2(Math.max(0, nbDiff-(BOX_FLAVOR_LIMIT[ln.taille]||0))*FLAVOR_SURCHARGE);
+    base = money2(pu + _sup);
   }
   else if(ln.type==='evenement') base = money2((ln.evQte||0)*eventUnitPrice(ln) + pyraTotalLigne(ln) + accessoireDecoTotal(ln));
   else if(ln.type==='grand'){ const pu=bigPrice(ln.tarif, ln); const tot=(ln.items||[]).reduce((s,p)=>s+(+p.qte||0),0); base = money2(tot*pu); }
@@ -22243,7 +22259,7 @@ function _parfumsToObj(p){
 }
 function _lineToEdit(ln){
   const t=ln.type;
-  if(t==='coffret') return {type:'coffret', tarifRef: ln.tarifRef||null, ancienTarif: !!ln.ancienTarif, taille:ln.taille||6, parfums:_parfumsToObj(ln.parfums), sansParfum:(+ln.sansParfum||0), spMode:ln.spMode||'assortiment', spNbParfums:(+ln.spNbParfums||0), remisePct:+ln.remisePct||0, prixUnitaireApplique: (ln.prixUnitaireApplique!=null?+ln.prixUnitaireApplique:null), embMode:ln.embMode||'standard', embMatId:ln.embMatId||null};
+  if(t==='coffret') return {type:'coffret', tarifRef: ln.tarifRef||null, ancienTarif: !!ln.ancienTarif, taille:ln.taille||6, parfums:_parfumsToObj(ln.parfums), sansParfum:(+ln.sansParfum||0), spMode:ln.spMode||'assortiment', spNbParfums:(+ln.spNbParfums||0), remisePct:+ln.remisePct||0, prixUnitaireApplique: (ln.prixUnitaireApplique!=null?+ln.prixUnitaireApplique:null), embMode:ln.embMode||'standard', embMatId:ln.embMatId||null, prixLibre:(ln.prixLibre===true)};
   if(t==='evenement') return {type:'evenement', tarifRef: ln.tarifRef||null, ancienTarif: !!ln.ancienTarif, evQte:ln.evQte||EVENT_MIN, equip:(ln.equip!=null?ln.equip:EVENT_MIN_EQUIP), evFiltrePyr:(ln.evFiltrePyr!=null?ln.evFiltrePyr:null), parfums:_parfumsToObj(ln.parfums), sansParfum:(+ln.sansParfum||0), spMode:ln.spMode||'assortiment', spNbParfums:(+ln.spNbParfums||0), remisePct:+ln.remisePct||0, pyraVendue:!!ln.pyraVendue, pyraPrixVente:(ln.pyraPrixVente!=null?+ln.pyraPrixVente:null), pyraCoutAchat:(ln.pyraCoutAchat!=null?+ln.pyraCoutAchat:null), accessoireDeco:!!ln.accessoireDeco, _configChoisie:!!ln._configChoisie};
   if(t==='grand') return {type:'grand', tarifRef: ln.tarifRef||null, ancienTarif: !!ln.ancienTarif, tarif:ln.tarif||'particulier', items:_parfumsToObj(ln.items), remisePct:+ln.remisePct||0, embMode:ln.embMode||'reutilisable', embMatId:ln.embMatId||null};
   if(t==='vrac') return {type:'vrac', tarifRef: ln.tarifRef||null, ancienTarif: !!ln.ancienTarif, proMode:(ln.proMode==='nonpro'||ln.proMode==='prorec')?ln.proMode:'pro', parfums:_parfumsToObj(ln.parfums), sansParfum:(+ln.sansParfum||0), spMode:ln.spMode||'assortiment', spNbParfums:(+ln.spNbParfums||0), remisePct:+ln.remisePct||0};
@@ -22355,13 +22371,12 @@ async function cmdForm(id, opts){
    <div class="field"><label>Date</label><input type="date" id="f_date" value="${o.date||today()}" oninput="cmdFeasibilityRecalc();cmdTarifBandeau();cmdIndispoAlerte()"></div>
    <div id="cmdIndispoAlerte"></div>
    <div id="f_tarifBandeau"></div>
-   <!-- [v1464] Case « ancien tarif » : choix EXPLICITE de Ben, prioritaire sur la date. Sert au cas
-        d'une commande prise avant le changement de grille mais livrée après — une date seule ne
-        pouvait pas le distinguer (l'app ne stocke que la date de livraison). -->
-   <label style="display:flex;align-items:center;gap:8px;margin:-4px 0 10px;cursor:pointer;font-size:.86rem">
-     <input type="checkbox" id="f_ancienTarif" ${o.ancienTarif?'checked':''} onchange="cmdTarifBandeau()">
-     <span>Appliquer les <b>anciens tarifs</b> <span style="color:#9a8a82">— pour une commande convenue avant le changement de grille</span></span>
-   </label>
+   <!-- [v1509] La case « anciens tarifs » a DISPARU de l'écran (demande de Ben : « au lieu d'une case à
+        cocher ancien/nouveau prix et de devoir jongler sans arrêt »). L'élément reste, CACHÉ, car il porte
+        le verrou historique lu par tarifsSaisie() et l'enregistrement : coché d'office pour une commande
+        déjà enregistrée AVANT la grille (ni marqueur ni tarifRef) ou marquée « anciens tarifs » — rouvrir
+        puis enregistrer une telle commande ne la retarife donc pas. Nouvelle commande : décoché. -->
+   <input type="checkbox" id="f_ancienTarif" hidden ${(o.ancienTarif || (o.id && !o.tarifRef))?'checked':''}>
    <div class="field"><label>Heure de livraison <span style="color:#9a8a82;font-weight:400">— pour vérifier les délais (repos ganache, maturation)</span></label><input type="time" id="f_heure" value="${esc(o.heureLivraison||'')}" oninput="cmdSyncHeure(this.value);cmdFeasibilityRecalc()"></div>
    <div id="feasibility" class="feasibility" style="display:none"></div>
 
@@ -22959,10 +22974,22 @@ function drawCoffretLine(ln,i){
   // annonçait « tarifs en vigueur » pendant que la liste proposait « Coffret 6 macarons — 12,00 € ».
   // Le prix FACTURÉ était pourtant correct : c'est l'affichage qui mentait, ce qui est pire —
   // Ben choisit sur ce qu'il lit.
-  const boxOpts = cmdProductsCache.map(p=>{
-    const pu = coffretUnitPrice({ taille:+p.taille });
-    return `<option value="${p.taille}" data-prix="${pu}" ${(+ln.taille===+p.taille)?'selected':''}>${esc(p.nom)} — ${euro(pu)}</option>`;
-  }).join('');
+  // [v1509] DEUX CHAMPS CÔTE À CÔTE : le NOMBRE de macarons (menu) et le PRIX (saisie libre).
+  // Ben : « 4 macarons à 8 € pour tel client, à 10 € pour le suivant ». Le prix affiché est TOUJOURS
+  // celui réellement appliqué (`coffretUnitPrice`, leçon v1467). Les deux grilles ne servent plus que
+  // de raccourcis d'un geste : plus de case à cocher, plus de bascule globale.
+  const _t = +ln.taille||0;
+  const _nbs = []; for(let n=1;n<=50;n++) _nbs.push(n);
+  if(_t>0 && !_nbs.includes(_t)){ _nbs.push(_t); _nbs.sort((a,b)=>a-b); }
+  const nbOpts = _nbs.map(n=>`<option value="${n}" ${_t===n?'selected':''}>${n} macaron${n>1?'s':''}</option>`).join('');
+  const _pu = coffretUnitPrice(ln);
+  const _gC = grilleCourante().box[_t], _gH = grilleHistorique().box[_t];
+  const _raccourcis = [];
+  if(_gC!=null) _raccourcis.push({v:+_gC, l: (_gH!=null && +_gH===+_gC) ? 'grille' : 'grille actuelle'});
+  if(_gH!=null && !(_gC!=null && +_gH===+_gC)) _raccourcis.push({v:+_gH, l:'ancienne grille'});
+  const raccourcisHtml = _raccourcis.length
+    ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">${_raccourcis.map(r=>`<button type="button" class="btn sm" style="font-size:.78rem;padding:4px 9px" onclick="setCoffretPrix(${i},${r.v})">${euro(r.v)} <span style="color:#9a8a82">${r.l}</span></button>`).join('')}</div>`
+    : '';
   const limit = BOX_FLAVOR_LIMIT[ln.taille]||0;
   // sélecteur de quantité 0..taille pour chaque parfum
   const flavRows = FLAVORS.map((f,fi)=>{
@@ -22987,7 +23014,8 @@ function drawCoffretLine(ln,i){
   const sansParfum = +ln.sansParfum||0;
   const totQ = Object.values(ln.parfums).reduce((s,q)=>s+(+q||0),0) + sansParfum;
   const cap = +ln.taille||25;
-  const over = Math.max(0, nbDiff-limit);
+  const over = (coffretSupplementParfums(ln,nbDiff)>0) ? Math.max(0, nbDiff-limit) : 0;
+  const _formatLibre = (BOX_FLAVOR_LIMIT[+ln.taille]==null && ln.prixLibre===true);
   // Compteur de remplissage coloré : vert si pile, rouge si dépasse, neutre si en dessous.
   const rempliCol = totQ===cap ? '#2e7d32' : (totQ>cap ? '#b3261e' : '#7a6a62');
   const rempliTxt = totQ>cap ? `${totQ}/${cap} — dépasse de ${totQ-cap} !` : `${totQ}/${cap}`;
@@ -23005,8 +23033,13 @@ function drawCoffretLine(ln,i){
       : `<span style="color:#9a8a82;font-size:.9rem">+ ajouter</span>`}
   </div>`;
   return `<div class="cmd-line">
-    <div class="line-head"><span class="line-type">Coffret <span class="line-sub">jusqu'à ${limit} parfum(s) inclus</span></span><span class="line-del" onclick="removeLine(${i})">✕ retirer</span></div>
-    <div class="field"><label>Taille</label><select onchange="setCoffretTaille(${i},this.value)">${boxOpts}</select></div>
+    <div class="line-head"><span class="line-type">Coffret <span class="line-sub">${_formatLibre ? 'prix final — sans supplément parfum' : `jusqu'à ${limit} parfum(s) inclus`}</span></span><span class="line-del" onclick="removeLine(${i})">✕ retirer</span></div>
+    <div style="display:flex;gap:10px;align-items:flex-start">
+      <div class="field" style="flex:1;margin-bottom:0"><label>Nombre de macarons</label><select onchange="setCoffretTaille(${i},this.value)">${nbOpts}</select></div>
+      <div class="field" style="flex:1;margin-bottom:0"><label>Prix du coffret (€)</label><input type="number" inputmode="decimal" step="0.01" min="0" value="${_pu>0?_pu:''}" placeholder="ex : 8" onchange="setCoffretPrix(${i},this.value)"></div>
+    </div>
+    ${raccourcisHtml}
+    ${!(_pu>0)?`<p class="note" style="color:var(--red);margin:6px 0 0">⚠ Saisis le prix de ce coffret de ${_t||'?'} macarons.</p>`:''}
     ${(()=>{
       const mode = ln.embMode || 'standard';
       const embOpts = cmdEmballagesCache.map(m=>`<option value="${m.id}" ${(+ln.embMatId===+m.id)?'selected':''}>${esc(m.nom)}${m.capacite?` (${m.capacite} mac.)`:''}</option>`).join('');
@@ -23056,8 +23089,19 @@ function cmdSpModeBlock(ln,i){
 }
 function setSpMode(i,v){ if(!cmdLines[i]) return; cmdLines[i].spMode = (v==='adeterminer')?'adeterminer':'assortiment'; if(v==='adeterminer') delete cmdLines[i].spNbParfums; drawLines(); }
 function setSpNbParfums(i,v){ if(!cmdLines[i]) return; const n=Math.max(0,Math.round(+v||0)); if(n>0) cmdLines[i].spNbParfums=n; else delete cmdLines[i].spNbParfums; }
+// [v1509] Prix d'un coffret saisi À LA MAIN sur la ligne. Virgule ou point acceptés. Champ vidé →
+// retour au prix par défaut de la grille (jamais un 0 silencieux : l'enregistrement exige un prix > 0).
+function setCoffretPrix(i, v){
+  const ln = cmdLines[i]; if(!ln) return;
+  const txt = String(v==null?'':v).replace(',', '.').trim();
+  const n = (txt==='') ? NaN : parseFloat(txt);
+  if(isFinite(n) && n>=0){ ln.prixUnitaireApplique = money2(n); ln.prixLibre = true; }
+  else { ln.prixUnitaireApplique = null; }
+  drawLines();
+}
 function setCoffretTaille(i,v){ cmdLines[i].taille=+v;
-  cmdLines[i].prixUnitaireApplique=null; // taille changée → re-tarifer au prix courant du catalogue
+  cmdLines[i].prixUnitaireApplique=null; // nombre changé → le prix se choisit à nouveau (défaut = grille si ce format y figure)
+  cmdLines[i].prixLibre=true;            // [v1509] format choisi avec le nouveau sélecteur : pas de supplément hors formats standard
   // [v1452] Ben : « L'emballage par défaut est la boîte blanche de 8/10 macarons. Assure toi de
   // rendre les autres emballages selectionnables aussi telle que c'est déjà le cas aujourd'hui. »
   // On pré-sélectionne donc « Autre emballage » + la boîte blanche pour le format 10 — un DÉFAUT,
@@ -24079,9 +24123,9 @@ function lineTotalBase(ln){
   if(ln.type==='coffret'){
     const base = coffretUnitPrice(ln);
     const nbDiff = Object.values(ln.parfums||{}).filter(q=>q>0).length;
-    const limit = BOX_FLAVOR_LIMIT[ln.taille]||0;
-    const over = Math.max(0, nbDiff-limit);
-    return money2(base + over*FLAVOR_SURCHARGE);
+    // repli : bac à sable de test sans le helper (jamais atteint dans l'app) — ancienne formule, à l'identique
+    const _sup = (typeof coffretSupplementParfums==='function') ? coffretSupplementParfums(ln, nbDiff) : money2(Math.max(0, nbDiff-(BOX_FLAVOR_LIMIT[ln.taille]||0))*FLAVOR_SURCHARGE);
+    return money2(base + _sup);
   }
   if(ln.type==='evenement') return addMoney(addMoney(mulMoney(ln.evQte||0,eventUnitPriceSaisie(ln)), pyraTotalLigne(ln)), accessoireDecoTotal(ln));
   if(ln.type==='grand'){ const pu=bigPrice(ln.tarif, {__grille:tarifsLigneSaisie(ln)}); const tot=Object.values(ln.items||{}).reduce((s,q)=>s+(+q||0),0); return mulMoney(tot,pu); }
@@ -24106,6 +24150,13 @@ function lineTotalBase(ln){
 // se ne servaient qu'à ça, jamais à protéger un prix tapé à la main (aucune saisie manuelle
 // n'écrit prixUnitaireApplique — seul un changement de taille le remet à null).
 function coffretUnitPrice(ln){
+  // [v1509] LE PRIX DE LA LIGNE D'ABORD. Ben : « au lieu d'une case ancien/nouveau prix et de devoir
+  // jongler sans arrêt… le prix pour 4 macarons est à 8 € pour tel client, à 10 € pour le suivant ».
+  // `prixUnitaireApplique` = le prix saisi dans le champ de la ligne (ou celui déjà scellé à
+  // l'enregistrement). La grille n'est plus qu'une valeur PAR DÉFAUT, utilisée tant qu'aucun prix
+  // n'existe sur la ligne. Une ligne rouverte garde donc son prix : plus de re-tarification en
+  // rouvrant (le point que v1494 réglait par la case, devenue inutile pour les coffrets).
+  if(ln && ln.prixUnitaireApplique!=null && ln.prixUnitaireApplique!=='' && +ln.prixUnitaireApplique>=0) return money2(+ln.prixUnitaireApplique);
   const taille = +(ln&&ln.taille);
   const g = (typeof tarifsSaisie==='function') ? tarifsSaisie() : null;
   if(g && g.box && g.box[taille]!=null) return money2(g.box[taille]);
@@ -24201,7 +24252,7 @@ function cmdLinesToStored(){
     // CHAQUE enregistrement, sans mémoire d'un choix précédent (c'est déjà elle, et seulement
     // elle, qui a fixé le prix affiché pendant toute la saisie qui vient de se terminer).
     const ancienTarif = _ancien;
-    if(ln.type==='coffret') return {type:'coffret', taille:ln.taille, remisePct:rp, tarifRef, ancienTarif:ancienTarif||undefined, prixUnitaireApplique: coffretUnitPrice(ln), embMode:ln.embMode||'standard', embMatId:ln.embMatId||null, sansParfum:(+ln.sansParfum||0)||undefined, spMode:((+ln.sansParfum||0)>0?(ln.spMode||'assortiment'):undefined), spNbParfums:((+ln.sansParfum||0)>0&&ln.spMode!=='adeterminer'&&+ln.spNbParfums>0?+ln.spNbParfums:undefined), parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
+    if(ln.type==='coffret') return {type:'coffret', taille:ln.taille, remisePct:rp, tarifRef, ancienTarif:ancienTarif||undefined, prixUnitaireApplique: coffretUnitPrice(ln), prixLibre: (ln.prixLibre===true)||undefined, embMode:ln.embMode||'standard', embMatId:ln.embMatId||null, sansParfum:(+ln.sansParfum||0)||undefined, spMode:((+ln.sansParfum||0)>0?(ln.spMode||'assortiment'):undefined), spNbParfums:((+ln.sansParfum||0)>0&&ln.spMode!=='adeterminer'&&+ln.spNbParfums>0?+ln.spNbParfums:undefined), parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
     if(ln.type==='evenement') return {type:'evenement', evQte:ln.evQte, equip:ln.equip, remisePct:rp, tarifRef, ancienTarif:ancienTarif||undefined, sansParfum:(+ln.sansParfum||0)||undefined, spMode:((+ln.sansParfum||0)>0?(ln.spMode||'assortiment'):undefined), spNbParfums:((+ln.sansParfum||0)>0&&ln.spMode!=='adeterminer'&&+ln.spNbParfums>0?+ln.spNbParfums:undefined), pyraVendue:!!ln.pyraVendue, pyraPrixVente:(ln.pyraPrixVente!=null?+ln.pyraPrixVente:null), pyraCoutAchat:(ln.pyraCoutAchat!=null?+ln.pyraCoutAchat:null), accessoireDeco:(ln.accessoireDeco?true:undefined), parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
     if(ln.type==='grand') return {type:'grand', tarif:ln.tarif, remisePct:rp, tarifRef, ancienTarif:ancienTarif||undefined, embMode:ln.embMode||'reutilisable', embMatId:ln.embMatId||null, items:Object.keys(ln.items).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
     if(ln.type==='vrac') return {type:'vrac', proMode:(ln.proMode==='nonpro'||ln.proMode==='prorec')?ln.proMode:'pro', remisePct:rp, tarifRef, ancienTarif:ancienTarif||undefined, sansParfum:(+ln.sansParfum||0)||undefined, spMode:((+ln.sansParfum||0)>0?(ln.spMode||'assortiment'):undefined), spNbParfums:((+ln.sansParfum||0)>0&&ln.spMode!=='adeterminer'&&+ln.spNbParfums>0?+ln.spNbParfums:undefined), parfums:Object.keys(ln.parfums||{}).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
@@ -25089,7 +25140,10 @@ async function saveCmd(id){
       const tot=Object.values(ln.items||{}).reduce((s,q)=>s+(+q||0),0);
       if(!tot){ toast('Grand format : sélectionne au moins une pièce'); return; }
     }
-    if(ln.type==='coffret' && !ln.taille){ toast('Coffret : choisis une taille'); return; }
+    if(ln.type==='coffret' && !ln.taille){ toast('Coffret : choisis le nombre de macarons'); return; }
+    // [v1509] Un coffret sans prix partirait à 0 € sur un document client (format libre, aucune valeur
+    // dans la grille) : on refuse plutôt que de laisser un zéro silencieux. Un don se saisit en « Don ».
+    if(ln.type==='coffret' && !(coffretUnitPrice(ln)>0)){ toast(`Coffret de ${ln.taille} macarons : indique son prix`); return; }
     if(ln.type==='sachet'){
       const tot=Object.values(ln.parfums||{}).reduce((s,q)=>s+(+q||0),0) + (+ln.sansParfum||0);
       if(!tot){ toast('Sachet : indique au moins 1 macaron'); return; }

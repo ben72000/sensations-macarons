@@ -70,8 +70,14 @@ const NEUF = '2026-09-15';
   const ligneRouverte = { type:'coffret', taille:6, tarifRef:'2026-08-10', ancienTarif:true, prixUnitaireApplique:12 };
 
   M.setCoche(false);   // Ben vient de décocher
-  check('A. case décochée → 14 € (le tarif en vigueur), malgré le scellé à 12 € et ancienTarif:true sur la ligne',
-    M.coffretUnitPrice(ligneRouverte) === 14);
+  check('A. [v1509] le prix SCELLÉ de la ligne rouverte (12 €) PRIME, case décochée : plus de retarification à la réouverture (la case ne pilote plus le prix d\'un coffret)',
+    M.coffretUnitPrice(ligneRouverte) === 12);
+  // Ligne SANS prix : la grille reste la valeur par défaut, pilotée par le verrou (case cachée depuis v1509).
+  check('A. [v1509] ligne SANS prix, verrou décoché → 14 € (grille en vigueur par défaut)',
+    (M.setCoche(false), M.coffretUnitPrice({ type:'coffret', taille:6 }) === 14));
+  check('A. [v1509] ligne SANS prix, verrou historique coché → 12 €',
+    (M.setCoche(true), M.coffretUnitPrice({ type:'coffret', taille:6 }) === 12));
+  M.setCoche(false);
 
   M.setCoche(true);    // et si Ben recoche
   check('A. case recochée → 12 € (l\'ancien tarif), la case reste bien réactive dans les deux sens',
@@ -84,21 +90,24 @@ const NEUF = '2026-09-15';
 // ---- B. LE MENU DÉROULANT NE DOIT PLUS RECEVOIR LE MARQUEUR DE LA LIGNE ----
 // Capture de Ben : le sélecteur de taille restait sur l'ancien prix après avoir décoché la case.
 {
-  const i = require('./_extract').APP.indexOf('const boxOpts = cmdProductsCache.map');
-  const src = require('./_extract').APP.slice(i, require('./_extract').APP.indexOf(".join('');", i));
+  // [v1509] le menu « Taille » du catalogue a été remplacé par deux champs (nombre + prix) : on garde la
+  // garde sur la même fonction d'écran.
+  const _A = require('./_extract').APP;
+  const i = _A.indexOf('function drawCoffretLine(ln,i){');
+  const src = _A.slice(i, _A.indexOf('function setCoffretSansParfum', i));
   check('B. le menu déroulant ne transmet plus ln.tarifRef à coffretUnitPrice',
     !/tarifRef:\s*ln\.tarifRef/.test(src));
   check('B. le menu déroulant ne transmet plus ln.ancienTarif à coffretUnitPrice',
     !/ancienTarif:\s*ln\.ancienTarif/.test(src));
-  check('B. il continue de passer la taille de chaque option (sinon plus aucun prix ne s\'afficherait)',
-    /taille:\+p\.taille/.test(src));
+  check('B. [v1509] le champ de prix lit coffretUnitPrice(ln) — le prix RÉELLEMENT appliqué, jamais celui du catalogue',
+    /const _pu = coffretUnitPrice\(ln\)/.test(src));
 }
 
 // ---- C. `coffretUnitPrice` ELLE-MÊME NE LIT PLUS AUCUN MARQUEUR DE LIGNE ----
 {
   const src = extractFunction('coffretUnitPrice');
-  check('C. plus aucune lecture de prixUnitaireApplique (elle n\'est appelée qu\'en saisie)',
-    !/prixUnitaireApplique/.test(src));
+  check('C. [v1509] lit le prix de la ligne (saisi ou scellé) EN PREMIER, avant toute grille',
+    /prixUnitaireApplique/.test(src) && src.indexOf('prixUnitaireApplique') < src.indexOf('tarifsSaisie'));
   check('C. plus aucune lecture de tarifsDeLigne/tarifRef/ancienTarif',
     !/tarifsDeLigne/.test(src) && !/ln\s*&&\s*\(ln\.tarifRef/.test(src));
   check('C. la source unique restante est tarifsSaisie()', /tarifsSaisie\(\)/.test(src));

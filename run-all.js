@@ -207,7 +207,8 @@ const SUITES = [
   'v1505-ca-mois-graphique-avoirs.test.js',      // v1505 · même correctif étendu à caDuMois et au graphique glissant (_caLignesToutes), pour éviter un « troisième chiffre » entre les écrans
   'v1506-coques-roses-mutualisees.test.js',      // v1506 · Pistache framboise GF bicolore rose + vert, rose mutualisé avec Myrtille framboise GF ; couleur manquante à l'assemblage ; code de lot PFR
   'v1507-etiquettes-client.test.js',  // v1507 · étiquettes de traçabilité client depuis Tracer d'une commande : lot, pièces livrées, fabrication avec heure, DLC prudente ; tout modifiable, mémorisé sur la commande
-  'v1508-demarrage-sans-popup.test.js'          // v1508 · zéro popup au démarrage : plus aucune modale ni bannière-rappel au boot (sauvegarde, rupture, cohérence, nettoyages, température) ; fonctions conservées, sauvegarde auto et contrôles toujours actifs ; garde par pattern sur toute fonction de boot
+  'v1508-demarrage-sans-popup.test.js',  // v1508 · zéro popup au démarrage : plus aucune modale ni bannière-rappel au boot (sauvegarde, rupture, cohérence, nettoyages, température) ; fonctions conservées, sauvegarde auto et contrôles toujours actifs ; garde par pattern sur toute fonction de boot
+  'v1509-coffret-nombre-prix.test.js'           // v1509 · coffret = nombre de macarons + prix libre ; case « anciens tarifs » retirée de l'écran (verrou historique caché) ; aucun supplément hors formats standard ; historique protégé au centime
 ];
 
 let allOk = true;

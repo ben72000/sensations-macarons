@@ -142,8 +142,8 @@ const NEUF = '2026-09-15', VIEUX = '2026-01-20', VEILLE = '2026-08-31', JOUR_J =
   // déjà émis, qui lit son prixUnitaireApplique directement via lineTotalStored, sans passer par
   // ici) — elle ne doit donc plus consulter ni le scellé ni tarifsDeLigne : voir
   // tests/v1494-tarif-saisie-reactif.test.js pour le défaut que ça corrige.
-  check('F. [v1494] ne consulte plus le prix scellé de la ligne (systématiquement recalculé en saisie)',
-    !/prixUnitaireApplique/.test(srcCoffret));
+  check('F. [v1509] lit d\'abord le prix de la ligne (saisi ou scellé) ; la grille n\'est plus qu\'une valeur par défaut',
+    /prixUnitaireApplique/.test(srcCoffret));
   check('F. [v1494] ne consulte plus tarifsDeLigne (la case décide seule, jamais le tarifRef/ancienTarif d\'une ligne rouverte)',
     !/tarifsDeLigne/.test(srcCoffret));
   const iGrille = srcCoffret.indexOf('tarifsSaisie');
@@ -269,8 +269,8 @@ const NEUF = '2026-09-15', VIEUX = '2026-01-20', VEILLE = '2026-08-31', JOUR_J =
   // formulaire, y compris rouverte depuis une commande enregistrée avec l'ancienne grille. Le
   // scellé et le drapeau ancienTarif d'une ligne rouverte ne doivent donc plus rien geler ICI —
   // seule la case (donc tarifsSaisie(), figée à septembre par ce harnais) décide.
-  check('J. [v1494] un ancien prix scellé sur la ligne ne bloque plus le recalcul (14 €, pas 12 €)',
-    M2({type:'coffret', taille:6, prixUnitaireApplique:12}) === 14);
+  check('J. [v1509] le prix scellé de la ligne PRIME (12 €) : une ligne rouverte n\'est plus retarifiée',
+    M2({type:'coffret', taille:6, prixUnitaireApplique:12}) === 12);
   check('J. [v1494] une ligne rouverte marquée « ancien tarif » suit quand même la case (14 €, pas 12 €)',
     M2({type:'coffret', taille:6, ancienTarif:true}) === 14);
 }
@@ -280,8 +280,9 @@ const NEUF = '2026-09-15', VIEUX = '2026-01-20', VEILLE = '2026-08-31', JOUR_J =
 // proposait « Coffret 6 macarons — 12,00 € ». Le prix FACTURÉ était pourtant correct : c'est
 // l'affichage qui mentait — pire, car Ben choisit sur ce qu'il lit. ----
 {
-  const i = APP.indexOf('const boxOpts = cmdProductsCache.map');
-  const src = APP.slice(i, APP.indexOf('.join(\'\');', i));
+  // [v1509] le menu « Taille » est devenu deux champs (nombre + prix) : mêmes gardes, sur la ligne d'écran.
+  const i = APP.indexOf('function drawCoffretLine(ln,i){');
+  const src = APP.slice(i, APP.indexOf('function setCoffretSansParfum', i));
   check('K. le libellé du sélecteur passe par coffretUnitPrice', /coffretUnitPrice\(/.test(src));
   check('K. il n\'affiche plus le prix brut du catalogue', !/euro\(p\.prix\)/.test(src));
   // [v1494] avant, le menu déroulant transmettait le tarifRef/ancienTarif DE LA LIGNE (gelés à
@@ -290,7 +291,7 @@ const NEUF = '2026-09-15', VIEUX = '2026-01-20', VEILLE = '2026-08-31', JOUR_J =
   // transmettre de tel : la case seule décide.
   check('K. [v1494] ne transmet plus le tarifRef/ancienTarif d\'une ligne rouverte (la case seule décide)',
     !/ancienTarif:\s*ln\.ancienTarif/.test(src) && !/tarifRef:\s*ln\.tarifRef/.test(src));
-  check('K. data-prix porte aussi le prix appliqué (cohérence affichage/valeur)', /data-prix="\$\{pu\}"/.test(src));
+  check('K. [v1509] le champ de prix affiche le prix appliqué (cohérence affichage/valeur)', /value="\$\{_pu>0\?_pu:''\}"/.test(src));
 }
 
 // ---- L. [v1467] Alignement prudent du catalogue produits ----
