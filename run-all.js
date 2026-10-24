@@ -206,7 +206,8 @@ const SUITES = [
   'v1504-ca-accueil-comptabilite.test.js',       // v1504 · le CA cumulé de l'accueil ne déduisait jamais les avoirs émis, contrairement à la comptabilité (v1283/v1499) — d'où l'écart signalé par Ben
   'v1505-ca-mois-graphique-avoirs.test.js',      // v1505 · même correctif étendu à caDuMois et au graphique glissant (_caLignesToutes), pour éviter un « troisième chiffre » entre les écrans
   'v1506-coques-roses-mutualisees.test.js',      // v1506 · Pistache framboise GF bicolore rose + vert, rose mutualisé avec Myrtille framboise GF ; couleur manquante à l'assemblage ; code de lot PFR
-  'v1507-etiquettes-client.test.js'              // v1507 · étiquettes de traçabilité client depuis Tracer d'une commande : lot, pièces livrées, fabrication avec heure, DLC prudente ; tout modifiable, mémorisé sur la commande
+  'v1507-etiquettes-client.test.js',  // v1507 · étiquettes de traçabilité client depuis Tracer d'une commande : lot, pièces livrées, fabrication avec heure, DLC prudente ; tout modifiable, mémorisé sur la commande
+  'v1508-demarrage-sans-popup.test.js'          // v1508 · zéro popup au démarrage : plus aucune modale ni bannière-rappel au boot (sauvegarde, rupture, cohérence, nettoyages, température) ; fonctions conservées, sauvegarde auto et contrôles toujours actifs ; garde par pattern sur toute fonction de boot
 ];
 
 let allOk = true;

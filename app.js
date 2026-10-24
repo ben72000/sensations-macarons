@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1507'; // suite : voir tests/v1507-etiquettes-client.test.js
+const APP_VERSION = 'v1508'; // suite : voir tests/v1508-demarrage-sans-popup.test.js
 const APP_MAJ = '« CHEQUE DE CAUTION » DEVIENT « EMPREINTE BANCAIRE ». Ben : « le cheque de caution doit se transformer en empreinte bancaire. Peux-tu changer la mention partout ou apparait cheque de caution ? » ⚠️ CE N ETAIT PAS UN SIMPLE RENOMMAGE : le texte associe decrivait des gestes propres a un CHEQUE — il est « remis », il « n est pas encaisse », il est « restitue ». Une empreinte bancaire se PREND, se DEBITE et s ANNULE. Renommer sans adapter les verbes aurait laisse des clauses incoherentes dans les CGV, un document juridique transmis aux clients. Les VERBES ONT DONC ETE ADAPTES partout : sur la ligne du devis et de la facture (« empreinte prise le jour de la livraison, non debitee, annulee apres retour du materiel »), et dans les trois clauses concernees des CGV — 7.1 (prise a la mise a disposition, non debitee, annulee), 7.2 (aucune empreinte exigee du particulier) et 7.4 (l empreinte pourra etre DEBITEE, et non encaissee). La logique juridique est inchangee : montants dus, complement exigible, surplus restitue, engagement sur l honneur du particulier. LES IDENTIFIANTS DE CODE SONT CONSERVES (CAUTION_CHEQUE, cautionRowHtml, cautionMention) : les renommer toucherait des dizaines de references et des donnees DEJA ENREGISTREES, pour zero gain visible. Seul le texte vu par le client change. Les documents deja emis gardent leur redaction d origine, puisqu ils memorisent leur rendu. Suite v1493 : 27 assertions, dont la verification que le vocabulaire du cheque a bien disparu ; un renommage NAIF (terme change mais verbes conserves) fait rougir 5 assertions. La suite v1492 a suivi le nouveau libelle, son mecanisme etant inchange.';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
@@ -8677,9 +8677,8 @@ async function renderDash(){
       margeApresLivraison = (_An.totals.margeApresLivraison!=null) ? _An.totals.margeApresLivraison : null;
     }
   } catch(e){ console.error('margeNetteParMacaron', e); }
-  // Relevé de température du jour fait ou non (rappel HACCP discret).
-  const tLogsToday = await (db.temperatureLogs?db.temperatureLogs.where('date').equals(today()).toArray():Promise.resolve([])).catch(()=>[]);
-  const releveFait = tLogsToday.length>0;
+  // [v1508] Le rappel « relevé de température non fait » et la bannière « non sauvegardé sur iCloud »
+  // ne s'affichent plus sur l'accueil (zéro rappel au démarrage). Les relevés restent saisissables dans PMS.
   // CA des marchés clôturés (pour les compteurs annexes _nbEncMois / caTotal).
   let _marketsForCA = markets;
   try { const _mk = await db.markets.toArray(); if(Array.isArray(_mk)) _marketsForCA = _mk; } catch(e){swallow(e,'renderDash')}
@@ -8825,8 +8824,6 @@ async function renderDash(){
    ${privacyModeEnabled()?`<div class="banner">🙈 <div>Mode discret actif : montants et volumes sensibles masqués dans toute l'application. Touchez « Afficher les chiffres » pour les réafficher.</div></div>`:''}
    ${_nbIncGraves>0?`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">🩺 <div><b>${_nbIncGraves} incident(s) important(s) enregistré(s)</b> — une écriture en base, une sauvegarde ou une validation a échoué. L'app a continué de fonctionner, mais quelque chose n'a peut-être pas été enregistré. <span class="act" onclick="renderSanteModal()">Voir le détail →</span></div></div>`:''}
    ${prodEnRetard.length?`<div class="banner" style="background:#fdf3f2;border-color:#e5b4ae">⛔ <div><b>${prodEnRetard.length} production(s) ouverte(s) &gt; ${PROD_OPEN_MAX_DAYS} jours</b> : ${prodEnRetard.slice(0,5).map(p=>`${esc(prodNomComplet(p, recipes))} (lot ${esc(p.lotProduction||('#'+p.id))})`).join(' · ')}. À terminer ou supprimer. <span class="act" onclick="goView('productions')">Ouvrir Productions →</span></div></div>`:''}
-   ${unsavedCount()>0?`<div class="banner" style="background:#fdeaea;border:1.5px solid #d9534f"><div style="flex:1"><b>⚠ ${unsavedCount()} modification(s) non sauvegardée(s) sur iCloud.</b><br><span style="font-size:.84rem">Tes données récentes ne sont PAS encore à l'abri. Sur iPhone, un effacement de Safari peut les perdre définitivement. <b>Sauvegarde maintenant.</b></span><br><button class="btn gold" style="margin-top:8px" onclick="shareBackupToICloud()">☁️ Sauvegarder sur iCloud maintenant</button></div></div>`:''}
-   ${!releveFait?`<div class="banner">🌡 <div><b>Relevé de température non fait aujourd'hui.</b> Pense à le saisir et à <b>valider</b>. <span class="act" onclick="goView('pms')">Faire le relevé →</span></div></div>`:''}
    ${prodOuvertes.length && !prodEnRetard.length?`<div class="banner">▶ <div><b>${prodOuvertes.length} production(s) en cours</b> — DLC en attente du passage en « terminée ». <span class="act" onclick="goView('productions')">Voir →</span></div></div>`:''}
    ${(_gaspReady && _gaspReady.ready && !_gaspDismissed())?`<div class="banner" style="background:#eef6ef;border-color:#bcd9c4">✅ <div><b>Aide aux quantités activable</b> — tu as ${_gaspReady.nbVentiles} marchés avec invendus bien renseignés. L'app peut maintenant te conseiller combien produire par parfum pour limiter le gaspillage. <span class="act" onclick="gaspillagePopup()">Voir le gaspillage →</span> · <span class="act" onclick="_gaspDismiss()">Plus tard</span></div></div>`:''}
    ${prodSugg.length?`<div class="banner" style="background:#f4faf5;border-color:#cfe3d4">🔗 <div><b>${prodSugg.length} assemblage(s) possible(s)</b> — coques et ganaches en stock peuvent être réunies (${prodSugg.slice(0,3).map(s=>esc(s.ganRec)+' '+qty(s.assemblable)+' mac.'+(s.mutualise?' 🎨':'')).join(' · ')}${prodSugg.length>3?' …':''}). <span class="act" onclick="goView('productions')">Assembler →</span></div></div>`:''}
@@ -59118,9 +59115,9 @@ async function renderBackups(){
    <div class="panel"><h2>Sauvegarde iCloud & rappel</h2>
      <p class="note" style="margin-bottom:8px">${lastICloudInfo().txt} ${lastExport?`Dernier export hors appareil : <b>${fmtDate(lastExport)}</b>${dExp!==null?` (il y a ${Math.abs(dExp)} j)`:''}.`:'Aucun export hors appareil enregistré.'}</p>
      <button class="btn gold" style="margin-bottom:10px" onclick="shareBackupToICloud()">☁️ Sauvegarder sur iCloud maintenant</button>
-     <div class="field"><label>Me rappeler de sauvegarder tous les… (jours)</label>
+     <div class="field"><label>Considérer la sauvegarde en retard après… (jours)</label>
        <input type="number" min="1" max="60" id="set_expReminder" value="${exportReminderDays()}" onchange="saveExportReminderDays(this.value)"></div>
-     <p class="note">À l'ouverture, si la dernière sauvegarde dépasse ce délai, l'app te proposera en un geste de l'enregistrer sur iCloud Drive. Mets <b>1</b> pour un rappel quotidien.</p>
+     <p class="note">Sert à l'indicateur « dernière sauvegarde en retard » de cet écran. L'app n'ouvre plus de fenêtre au démarrage.</p>
    </div>
    <div class="panel"><h2>Historique des sauvegardes</h2>
    ${backups.length?`<div class="table-wrap"><table><thead><tr><th>Date</th><th>Type</th><th>Contenu</th><th>Taille</th><th>Intégrité</th><th></th></tr></thead>
@@ -59160,6 +59157,14 @@ async function runConsistencyCheck(manual){
   const issues = await checkDbConsistency();
   if(!issues.length){
     if(manual) toast('✓ Base cohérente, aucune anomalie détectée');
+    else { try{ diagPublish('coherence_boot','Contrôle de cohérence (démarrage)',{anomalies:0}); }catch(e){swallow(e,'runConsistencyCheck')} }
+    return;
+  }
+  // [v1508] Au démarrage (manual falsy) : plus de modale. Les anomalies restent consignées dans le
+  // registre de diagnostic (Sauvegarde & sécurité → Diagnostic technique) et dans la console.
+  if(!manual){
+    try{ diagPublish('coherence_boot','Contrôle de cohérence (démarrage)',{anomalies:issues.length, detail:issues.slice(0,20)}); }catch(e){swallow(e,'runConsistencyCheck')}
+    console.warn('Contrôle de cohérence au démarrage :', issues);
     return;
   }
   // proposer une restauration depuis la dernière sauvegarde saine
@@ -60756,8 +60761,8 @@ async function seedCoffret10(){
 }
 
 // Rappel d'export automatique (parade à la purge iOS d'IndexedDB).
-// Réglable : fréquence en jours. Affiche une MODALE actionnable (pas un simple toast
-// qu'on rate). Se déclenche au démarrage si l'export hors-appareil est en retard.
+// Réglable : fréquence en jours. [v1508] Plus déclenché au démarrage (zéro popup) : la fréquence
+// ne sert plus qu'à l'indicateur « en retard » de l'écran Sauvegarde & sécurité.
 function saveExportReminderDays(v){
   const n=parseInt(v,10);
   if(!n||n<1){ toast('Valeur invalide'); return; }
@@ -61017,7 +61022,7 @@ if('serviceWorker' in navigator){
   });
 }
 
-// POPUP D'ALERTE PRÉVISIONNELLE — affichée à l'ouverture (1×/jour) et après création/modif de commande.
+// POPUP D'ALERTE PRÉVISIONNELLE — [v1508] plus appelée automatiquement (ni à l'ouverture, ni au boot).
 // Toujours recalculée sur les données réelles du jour.
 async function showForecastPopup(opts){
   opts=opts||{};
@@ -75305,15 +75310,9 @@ async function pmsEndOfDayCheck(){
     localStorage.setItem('sm_pmsEod', d);
     return;
   }
-  // L'app a servi → on rappelle (popup) les nettoyages quotidiens non faits.
+  // [v1508] L'app a servi : on ne rappelle PLUS par popup les nettoyages quotidiens non faits.
+  // On marque seulement la journée ; les nettoyages se valident dans PMS → Nettoyage.
   localStorage.setItem('sm_pmsEod', d);
-  openModal(`<h3>🧼 Nettoyages de fin de journée</h3>
-    <div class="banner" style="background:#fbeede;border-color:#e5c98a"><div>Il reste <b>${restants.length} nettoyage(s) quotidien(s)</b> non validé(s) aujourd'hui.</div></div>
-    <div style="margin:6px 0 10px">${restants.map(t=>`<div class="trace-step">• ${esc(t.nom)}</div>`).join('')}</div>
-    <div class="modal-actions">
-      <button class="btn ghost" onclick="closeModal()">Plus tard</button>
-      <button class="btn gold" onclick="pmsValidateDailyCleaning()">✓ Tout valider</button>
-    </div>`);
 }
 async function pmsValidateDailyCleaning(){
   const d=today();
@@ -75530,9 +75529,9 @@ function startClock(){
   try{ await requestPersistentStorage(); }catch(e){ console.error('persist',e); }
   try{ await autoDailyBackup(); }catch(e){ console.error('autoBackup',e); }
   try{ await pmsEndOfDayCheck(); }catch(e){ console.error('pmsEod',e); }
-  // Rappel d'export en DERNIER (et seulement si aucune autre modale n'est ouverte),
-  // pour qu'il ne soit pas masqué par un autre message de démarrage.
-  setTimeout(()=>{ try{ if(!document.getElementById('overlay')?.classList.contains('show')) exportReminder(); }catch(e){swallow(e,'startClock')} }, 1200);
-  // Surveillance quotidienne : réévalue toutes les commandes futures vs stock actuel.
-  setTimeout(()=>{ showForecastPopup({daily:true}); }, 600);
+  // [v1508] ZÉRO POPUP AU DÉMARRAGE (demande de Ben). Ne sont plus appelés au boot :
+  //   · exportReminder()          — modale « Sauvegarde recommandée »
+  //   · showForecastPopup(daily)  — modale « Risque de rupture » (commandes à venir vs stock)
+  // Les fonctions restent définies (rien n'est supprimé) ; seul le déclenchement automatique est retiré.
+  // Garde : tests/v1508-demarrage-sans-popup.test.js interdit toute modale/bannière auto au boot.
 })();

@@ -6918,3 +6918,35 @@ au client : n° de lot, nombre de pièces, date de fabrication AVEC l'heure, DLC
 Vérifié aussi dans Chromium sur l'app réelle : modale ouverte sans erreur, pièces modifiées 24 → 20 puis PDF
 généré (valide), mémo enregistré sur la commande, qteRestante du lot inchangée, réouverture sur les valeurs imprimées.
 Sensibilité : retirer l'exclusion « congélateur » fait échouer C (4 mois imprimés) ; retirer la somme par lot fait échouer F.
+
+## v1508 — Zéro popup au démarrage (tests/v1508-demarrage-sans-popup.test.js, 51 assertions)
+
+Demande de Ben : enlever tous les popups qui se déclenchent au démarrage (rappel de température, rappel de
+sauvegarde, prochains macarons à faire selon les commandes…) — « fais le tour de tous ceux qui se déclenchent
+automatiquement ». Aucun calcul touché : seul le DÉCLENCHEMENT automatique est retiré, les fonctions restent.
+
+Inventaire lu dans le boot réel : 4 MODALES (exportReminder « Sauvegarde recommandée », showForecastPopup
+« Risque de rupture », runConsistencyCheck « Anomalies détectées », pmsEndOfDayCheck « Nettoyages de fin de
+journée ») + 2 BANNIÈRES d'accueil (« Relevé de température non fait », « non sauvegardé sur iCloud »).
+
+- A. Le boot n'appelle plus exportReminder ni showForecastPopup, aucun openModal ni setTimeout de rappel ;
+  chacune de ces deux fonctions n'a plus aucun appelant (une seule occurrence = sa définition).
+- B. GARDE PAR PATTERN : toute fonction appelée par le boot dont le corps ouvre une modale fait rougir la suite
+  (seule exception : runConsistencyCheck, protégée par `manual`). Une future fonction de rappel ajoutée au boot est attrapée.
+- C. Accueil : les 2 bannières ont disparu (+ le calcul releveFait devenu mort) ; DLC matières, DLC produits finis,
+  incidents importants, productions en retard et carte « À produire » restent ; le relevé reste saisissable dans PMS.
+- D. [SÉCURITÉ DES DONNÉES] runConsistencyCheck : au démarrage → aucune modale, consigné dans le registre de
+  diagnostic (Sauvegarde & sécurité) + console.warn ; appelé à la main → la modale s'ouvre toujours. Preuve sur le vrai code.
+- E. pmsEndOfDayCheck : plus de modale, MAIS l'auto-validation des nettoyages quand l'app n'a pas servi continue
+  (non-régression des données HACCP) ; avant 18 h rien ne change.
+- F. Rien n'est supprimé : les fonctions existent ; le boot appelle toujours autoDailyBackup (sauvegarde auto
+  quotidienne, silencieuse), runConsistencyCheck(false), pmsEndOfDayCheck, requestPersistentStorage.
+- G. Libellés : le réglage « rappeler de sauvegarder » devient « considérer la sauvegarde en retard après… jours »
+  (la promesse d'une fenêtre à l'ouverture était devenue fausse) ; sortieEtat lit toujours la fréquence.
+- H. Laissés volontairement : bannière « Une nouvelle version est disponible » (seul moyen de recevoir une mise
+  à jour), mascotte (bulle jamais ouverte toute seule).
+
+Sensibilité (8 mutations réelles sur app.js, chacune attrapée) : réintroduire showForecastPopup ou exportReminder au
+boot → A rouge ; retirer la garde `if(!manual)` → D rouge ; réintroduire la bannière température → C rouge ;
+réintroduire la modale de fin de journée → B + E rouges ; ajouter une NOUVELLE fonction de boot qui ouvre une modale
+→ B rouge ; supprimer l'auto-validation HACCP → E rouge ; retirer autoDailyBackup du boot → F rouge.
