@@ -7071,3 +7071,33 @@ logo et au forfait création, qui n'ont aucun prix dans l'ancienne grille. Leço
 Sensibilité (7 défauts réintroduits, tous attrapés) : bouton qui ne décoche plus (3 rouges) · bandeau sans bouton (1) · zéro muet de retour (1,
 après renforcement de l'assertion D — la 1re version ne le voyait pas : elle cherchait une mention, pas la condition exacte) · logo à 0 € de nouveau
 accepté (6) · refus trop large (6) · verrou par défaut supprimé (1) · grille historique qui facture le logo (3).
+
+## v1513 — Assemblage libre couleur × parfum, phase 1 (tests/v1513-assemblage-libre-couleur-parfum.test.js, 48 assertions)
+
+Demande de Ben : « toutes les coques de macarons définies par leurs couleurs, et que je puisse facilement assembler n'importe quelle couleur
+avec n'importe quel parfum — ainsi on ferait sauter tous les verrous liés à ces restrictions ». Réponses de Ben avant de coder : production par
+COULEUR directement (phase 2) · lots existants CONVERTIS en coques de couleur, tout parfum · « d'abord l'assemblage libre, la production ensuite ».
+
+VERROUS RETIRÉS : l'entrée « Stock par parfum » n'impose plus « un seul parfum » (v1426 ; `opts.sansMelange` ignoré, garde d'enregistrement
+supprimée) · le filtre de couleur de la mutualisation (v1249) · la couleur « manquante » imposée au 2e lot (v1506) · le sélecteur forcé des recettes
+bicolores · les avertissements « parfum différent » / « coques compatibles ».
+CONSERVÉ : coques standard et grand format ne se mélangent pas (physique) ; règle du grand format vendable (crémeux du même parfum que les coques, sauf
+dégustation) — hors périmètre, à confirmer avec Ben.
+
+🚨 DÉFAUT DÉCOUVERT EN CHEMIN : `prodAssembleSave` créait le lot assemblé avec la recette des COQUES (`recipeId: coques.recipeId`). Sans effet tant que
+coques et garniture venaient du même parfum ; FAUX dès qu'on les mélange (macaron framboise sur coques « vanille » enregistré « vanille » : stock,
+étiquette, prix). Le parfum est désormais celui de la GARNITURE ; repli sur la recette des coques si la garniture n'a pas de recette. Sans mélange : strictement inchangé.
+- Couleurs des coques tracées sur le lot assemblé (`coquesCouleurs`) et dans `assembleFrom` (couleur de chaque lot de coques). Les mouvements de stock gardent
+  les coques sous leur parfum d'ORIGINE (traçabilité) ; seul l'entrée du macaron suit la garniture. Base du lot : celle de la garniture quand les parfums diffèrent.
+- « Convertir » les lots existants = les PRÉSENTER par leurs couleurs (`coqueLotLibelle` : « Coques Rose · issues de « Framboise » », bicolore non divisé = les
+  deux couleurs, couleur inconnue = « couleur non renseignée », jamais écartée). Aucune donnée réécrite.
+- Suite : exécute le VRAI `prodAssembleSave` dans un bac à sable (même parfum, mélange libre, ancien indicateur ignoré, bicolore libre, lot bicolore non divisé,
+  garniture sans recette, GF vendable refusé / dégustation libre, capacités).
+
+PHASE 2 (non faite, décidée avec Ben) : lancer la production des coques PAR COULEUR (sans parfum) ; stock et potentiel par couleur ; le coût de revient d'une
+coque devra alors venir d'une recette de coque par couleur (aujourd'hui la coque est une part de la recette du parfum).
+⚠️ Suites ABSENTES de l'archive à aligner quand elles seront fournies : celles de v1426 (verrou un seul parfum), v1249/v1250 (filtre et réserves de couleur),
+et toute suite qui supposerait `recipeId` du lot assemblé = recette des coques. Assertions alignées ici (présentes) : v1454 D, v1482 C/E, v1506 G.
+
+Sensibilité (10 défauts réintroduits, tous attrapés) : parfum des coques (6 rouges) · verrou à l'enregistrement (2) · couleurs non tracées (5) · règle GF supprimée (1) ·
+verrou dans le formulaire (1) · bouton avec sansMelange (2) · base de lot (1) · standard/GF mélangés (1) · libellé par parfum (1) · filtre de couleur de retour (1).

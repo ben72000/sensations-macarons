@@ -66,9 +66,9 @@ function check(label, cond){ if(cond){ pass++; } else { fail++; failures.push(la
 
 // ---- C. ② le lot courant est exclu de la liste du second lot ----
 {
-  const i = APP.indexOf('const _opts2 = _lots2');
+  const i = APP.indexOf('const _opts2 = _lotsCoques');
   const src = APP.slice(i - 500, i + 400);
-  check('C. la liste exclut le lot déjà choisi', /_lots2\.filter\(c=>\+c\.id !== \+p\.id\)/.test(src));
+  check('C. la liste exclut le lot déjà choisi', /_lotsCoques\.filter\(c=>\+c\.id !== \+p\.id\)/.test(src));
 
   // Comportement : le lot courant ne peut plus être proposé, donc plus déclencher le refus.
   const lots = [{ id:10 }, { id:11 }, { id:12 }];
@@ -91,12 +91,13 @@ function check(label, cond){ if(cond){ pass++; } else { fail++; failures.push(la
 
 // ---- E. L'écran DIT que le lot se suffit à lui-même ----
 {
-  const i = APP.indexOf('const _lotDejaBicolore');
-  const src = APP.slice(i, i + 1200);
-  check('E. le cas « lot portant déjà les 2 couleurs » est distingué', /_bicolore && !p\.couleur/.test(src));
-  check('E. …et l\'aide dit de laisser « Aucun »', /contient <b>déjà les deux couleurs<\/b>/.test(src));
-  check('E. le cas « lot d\'une seule couleur » garde son aide d\'origine',
-    /Ce lot ne contient qu'<b>une<\/b> couleur/.test(src));
+  // [v1513] L'assemblage est LIBRE : la recette n'impose plus de couleur (`_bicolore`, `_lotDejaBicolore`, `_coulCible`
+  // retirés du formulaire). Ce qui reste vrai de v1482 : l'écran dit qu'un lot déjà bicolore se suffit à lui-même.
+  const i = APP.indexOf('const _aide = `Facultatif');
+  const src = APP.slice(i, i + 700);
+  check('E. [v1513] aucune couleur imposée par la recette dans le formulaire (plus de _bicolore / _coulCible)', !/_bicolore|_coulCible|_lotDejaBicolore/.test(APP.slice(APP.indexOf('async function prodAssembleForm('), APP.indexOf('function prodAsmDegSwitch('))));
+  check('E. …et l\'aide dit de laisser « Aucun » pour un lot déjà bicolore', /Un lot déjà bicolore \(ex\. marron foncé \+ blanc\) contient ses deux couleurs : laisse « Aucun »/.test(src));
+  check('E. [v1513] l\'aide propose le 2e lot pour un macaron bicolore ou un mélange de couleurs', /pour un macaron <b>bicolore<\/b> ou un mélange de couleurs/.test(src));
   check('E. l\'option « Aucun » reste proposée', /Aucun : les 2 coques viennent du même lot/.test(APP));
 }
 

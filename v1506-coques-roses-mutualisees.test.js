@@ -131,15 +131,15 @@ check('B. c\'est bien un parfum BICOLORE', M.recEstBicolore(pistacheFramboise));
   check('F. …sans jamais passer par-dessus un choix fait dans les menus', src.indexOf('if(!out.length)') > src.indexOf("if(b && COQUE_COULEURS[b]) out.push(b);"));
 }
 
-// ---- G. ④ Assemblage : on propose la couleur MANQUANTE, pas toujours la 2e de la recette ----
+// ---- G. ④ Assemblage : [v1513] SUPERSEDÉ — la couleur n'est plus imposée, tout lot de coques est proposé ----
+// v1506 faisait proposer la couleur MANQUANTE de la recette. Ben a ensuite demandé que toute couleur aille avec
+// tout parfum (v1513) : plus de couleur attendue, plus de filtre. On garde la garde utile — le formulaire ne
+// ré-impose pas une couleur — et on vérifie que tous les lots de coques du même gabarit sont proposés.
 {
-  const i = APP.indexOf('const _coul2 = !_bicolore');
-  const bloc = APP.slice(i, i + 200);
-  const choisir = new Function('_bicolore', '_coulCible', 'p', bloc.slice(0, bloc.indexOf(';') + 1) + ' return _coul2;');
-  check('G. [LE DÉFAUT CORRIGÉ] depuis le lot VERT, on propose du ROSE', choisir(true, ['rose','vert_pistache'], { couleur: 'vert_pistache' }) === 'rose');
-  check('G. depuis le lot ROSE, on propose du VERT', choisir(true, ['rose','vert_pistache'], { couleur: 'rose' }) === 'vert_pistache');
-  check('G. non-régression : lot sans couleur (bicolore entier) → 2e couleur, comme avant', choisir(true, ['rose','vert_pistache'], {}) === 'vert_pistache');
-  check('G. non-régression : parfum monochrome → aucune 2e couleur imposée', choisir(false, ['rose','rose'], {}) === '');
+  const form = APP.slice(APP.indexOf('async function prodAssembleForm('), APP.indexOf('function prodAsmDegSwitch('));
+  check('G. [v1513] plus de « couleur attendue » pour le 2e lot (_coul2 retiré du formulaire)', !/_coul2/.test(form));
+  check('G. [v1513] le filtre par couleur (coquesPourCouleur) n\'est plus utilisé à l\'assemblage', !/coquesPourCouleur\(/.test(form));
+  check('G. [v1513] tous les lots de coques du même gabarit sont proposés (standard avec standard, GF avec GF)', /const _lotsCoques = all\.filter\(x=>prodComposant\(x\)==='coques'[^;]*_gfMeme\(x\)\)/.test(form));
 }
 
 // ---- H. Migration des recettes existantes ----

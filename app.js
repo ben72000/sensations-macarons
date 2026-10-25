@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1512'; // suite : voir tests/v1512-logo-zero-verrou.test.js
+const APP_VERSION = 'v1513'; // suite : voir tests/v1513-assemblage-libre-couleur-parfum.test.js
 const APP_MAJ = '« CHEQUE DE CAUTION » DEVIENT « EMPREINTE BANCAIRE ». Ben : « le cheque de caution doit se transformer en empreinte bancaire. Peux-tu changer la mention partout ou apparait cheque de caution ? » ⚠️ CE N ETAIT PAS UN SIMPLE RENOMMAGE : le texte associe decrivait des gestes propres a un CHEQUE — il est « remis », il « n est pas encaisse », il est « restitue ». Une empreinte bancaire se PREND, se DEBITE et s ANNULE. Renommer sans adapter les verbes aurait laisse des clauses incoherentes dans les CGV, un document juridique transmis aux clients. Les VERBES ONT DONC ETE ADAPTES partout : sur la ligne du devis et de la facture (« empreinte prise le jour de la livraison, non debitee, annulee apres retour du materiel »), et dans les trois clauses concernees des CGV — 7.1 (prise a la mise a disposition, non debitee, annulee), 7.2 (aucune empreinte exigee du particulier) et 7.4 (l empreinte pourra etre DEBITEE, et non encaissee). La logique juridique est inchangee : montants dus, complement exigible, surplus restitue, engagement sur l honneur du particulier. LES IDENTIFIANTS DE CODE SONT CONSERVES (CAUTION_CHEQUE, cautionRowHtml, cautionMention) : les renommer toucherait des dizaines de references et des donnees DEJA ENREGISTREES, pour zero gain visible. Seul le texte vu par le client change. Les documents deja emis gardent leur redaction d origine, puisqu ils memorisent leur rendu. Suite v1493 : 27 assertions, dont la verification que le vocabulaire du cheque a bien disparu ; un renommage NAIF (terme change mais verbes conserves) fait rougir 5 assertions. La suite v1492 a suivi le nouveau libelle, son mecanisme etant inchange.';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
@@ -5659,6 +5659,19 @@ function coqueColorProfile(prod, recById){
 function recEstBicolore(rec){
   const c = recCoqueColors(rec);
   return c.length===2 && c[0]!==c[1];
+}
+
+// [v1513] LIBELLÉ D'UN LOT DE COQUES PAR SA COULEUR. Ben : « toutes les coques de macarons définies par leurs
+// couleurs ». Le lot est présenté par ses couleurs (un lot bicolore non divisé montre les deux) ; le parfum
+// d'origine n'est plus qu'une information de traçabilité (« issues de… »). Texte BRUT : l'appelant échappe.
+// Un lot dont la couleur n'est pas renseignée reste proposé (« couleur non renseignée »), jamais écarté.
+function coqueLotLibelle(lot, recById, nomFn){
+  const prof = coqueColorProfile(lot, recById);
+  const cols = prof ? Array.from(new Set(prof.colors)) : [];
+  const couleurs = cols.length ? cols.map(k=>coqueCouleurLabel(k)).join(' + ') : 'couleur non renseignée';
+  const gf = (prof && prof.gf) ? ' (grand format)' : '';
+  const origine = (typeof nomFn==='function') ? String(nomFn(lot)||'') : '';
+  return `Coques ${couleurs}${gf}${origine ? ` · issues de « ${origine} »` : ''}`;
 }
 
 // [v1441] RAPPEL DE DIVISION BICOLORE — Ben : pour un parfum bicolore (praliné = marron foncé +
@@ -15561,30 +15574,15 @@ async function prodAssembleForm(id, opts){
   let cands=all.filter(x=>prodComposant(x)===want && round3(+x.qteRestante)>0
                           && (x.prodStatut||'termine')==='termine'
                           && (!mode3 || x.composantCatalogue!==true));
-  // [v1426] MÉLANGE DE PARFUMS INTERDIT SUR CE CHEMIN — demande de Ben pour l'entrée depuis
-  // « Stock par parfum » : « une coque prévue initialement pour faire des macarons vanille ne
-  // pourra pas servir à faire des macarons praliné ». On ne retire pas la mutualisation par
-  // couleur de l'app : elle reste entière depuis l'écran Production, où Ben la pilote en
-  // connaissance de cause. Ici, on consulte UN parfum : lui proposer les coques d'un autre serait
-  // lui faire quitter le sujet qu'il regarde, et fabriquer un lot non vendable sans l'avoir voulu.
-  // `sansMelange` filtre AVANT la mutualisation : aucune règle de couleur ne peut la rouvrir.
-  if(opts.sansMelange){
-    cands = cands.filter(x=>+x.recipeId===+p.recipeId);
-    if(!cands.length){
-      toast(`Aucun sous-lot ${want==='ganache'?'garniture':'coques'} du même parfum. Passe par Production pour mélanger les couleurs.`);
-      return;
-    }
-  }
-  // [v1249] MUTUALISATION PAR COULEUR — quand on cherche des COQUES : on garde, en plus des coques
-  // du parfum monté, celles d'AUTRES parfums de MÊME couleur + MÊME taille (proposition de dépannage).
-  // Les coques d'une couleur incompatible sont retirées (elles ne pourraient pas servir ce macaron).
-  if(!opts.sansMelange && want==='coques' && _profilCible && _profilCible.colors.length){
-    cands = cands.filter(x=>{
-      if(x.recipeId===p.recipeId) return true;                    // même parfum : toujours proposé
-      const ps = coqueColorProfile(x, _recById);
-      if(!ps) return false;                                       // couleur inconnue → pas de rapprochement hasardeux
-      return coquesMutualisables(_profilCible, ps, null);         // au moins une couleur commune + même taille
-    });
+  // [v1513] ASSEMBLAGE LIBRE COULEUR × PARFUM. Ben : « toutes les coques définies par leurs couleurs, et que je
+  // puisse assembler n'importe quelle couleur avec n'importe quel parfum — on fait sauter tous les verrous ».
+  // TOMBENT : (1) le verrou « un seul parfum » de l'entrée depuis Stock par parfum (v1426) — `opts.sansMelange`
+  // est désormais IGNORÉ ; (2) le filtre de couleur de la mutualisation (v1249) : une coque d'une autre couleur
+  // n'est plus retirée de la liste. RESTE, parce que c'est physique et non une règle de couleur : coques STANDARD et
+  // GRAND FORMAT ne se mélangent jamais.
+  if(want==='coques'){
+    const _gfCible = !!(_rec && _rec.grandFormat);
+    cands = cands.filter(x=>{ const rx=_recById[+x.recipeId]; return !!(rx && rx.grandFormat) === _gfCible; });
   }
   cands.sort((a,b)=>{
     const sa=(a.lotBase&&a.lotBase===p.lotBase)?0:1, sb=(b.lotBase&&b.lotBase===p.lotBase)?0:1;
@@ -15595,20 +15593,15 @@ async function prodAssembleForm(id, opts){
   });
   if(!cands.length){ toast(`Aucun sous-lot ${want==='ganache'?'garniture (ganache/crémeux)':'coques'} disponible pour assembler.`); return; }
   const optsCand = cands.map(c=>{
-    const same = c.recipeId===p.recipeId;
     // [v1249] Pour une coque d'un AUTRE parfum, on affiche la couleur mutualisée plutôt qu'un simple ⚠.
-    let tag;
-    if(c.lotBase===p.lotBase){ tag=' · même lot'; }
-    else if(same){ tag=''; }
-    else if(want==='coques'){
-      const ps=coqueColorProfile(c, _recById);
-      const commune = (ps && _profilCible) ? _profilCible.colors.find(col=>ps.colors.indexOf(col)>=0) : null;
-      tag = commune ? ` · 🎨 ${coqueCouleurLabel(commune)} (coques compatibles)` : ' · ⚠ parfum différent';
-    } else { tag=' · ⚠ parfum différent'; }
+    // [v1513] Plus d'avertissement « parfum différent » ni de « coques compatibles » : toute combinaison est
+    // permise. Seul repère conservé : le lot issu de la même production.
+    const tag = (c.lotBase && c.lotBase===p.lotBase) ? ' · même lot' : '';
     const capMac = want==='coques' ? Math.floor(round3(+c.qteRestante)/COQUES_PAR_MACARON) : round3(+c.qteRestante);
     const unite = want==='coques' ? `${qty(c.qteRestante)} coques (≈ ${capMac} mac.)` : `${qty(c.qteRestante)} mac.`;
     const typeLbl = (c.garnitureType==='cremeux') ? ' [crémeux]' : (want==='ganache'?' [ganache]':'');
-    return `<option value="${c.id}"${opts.otherId&&+opts.otherId===c.id?' selected':''}>${esc(recName(c))}${typeLbl} — ${esc(c.lotProduction||('#'+c.id))} · ${unite}${tag}</option>`;
+    const _nomAff = want==='coques' ? coqueLotLibelle(c, _recById, recName) : recName(c);   // [v1513] coques = COULEUR d'abord
+    return `<option value="${c.id}"${opts.otherId&&+opts.otherId===c.id?' selected':''}>${esc(_nomAff)}${typeLbl} — ${esc(c.lotProduction||('#'+c.id))} · ${unite}${tag}</option>`;
   }).join('');
 
   // [MODE 3 PARTIES] Sélecteur(s) de COMPOSANT (chantache) : un menu par composant requis,
@@ -15635,70 +15628,28 @@ async function prodAssembleForm(id, opts){
     }
   }
 
-  // [v1413] SECOND LOT DE COQUES — pour les macarons BICOLORES (praliné, chocolat passion…).
-  // Un lot dédié bicolore contient déjà les deux couleurs (30 blanches + 30 marron) : un seul
-  // sélecteur suffit. Mais quand on dépanne avec DEUX lots monochromes d'autres parfums
-  // (vanille = blanc, chocolat au lait = marron foncé), il faut pouvoir désigner les deux.
-  // Le champ est proposé D'OFFICE si la recette montée est bicolore, et reste disponible
-  // (replié) sinon — utile pour les mélanges libres en dégustation.
-  const _recCible = _recById[+p.recipeId] || null;
-  const _bicolore = recEstBicolore(_recCible);
-  const _coulCible = recCoqueColors(_recCible);
-  // Tous les lots de coques en stock, terminés (base des deux sélecteurs de coques).
-  // [v1426] Sur le chemin sans mélange, le 2e lot est lui aussi restreint au parfum monté. Un lot
-  // bicolore dédié contient déjà ses deux couleurs, donc le cas normal reste servi ; ce qui
-  // disparaît, c'est le dépannage avec les coques d'un autre parfum.
+  // [v1513] SECOND LOT DE COQUES — toujours FACULTATIF et LIBRE. Un macaron bicolore = 1 coque de chaque lot ;
+  // plus aucune couleur n'est imposée par la recette (l'ancien filtre `coquesPourCouleur` et le sélecteur forcé des
+  // recettes bicolores tombent). Tous les lots de coques en stock sont proposés, standard avec standard, GF avec GF.
+  const _gfMeme = x => { const rx=_recById[+x.recipeId]; return !!(rx && rx.grandFormat) === !!(_rec && _rec.grandFormat); };
   const _lotsCoques = all.filter(x=>prodComposant(x)==='coques' && round3(+x.qteRestante)>0
-                                    && (x.prodStatut||'termine')==='termine'
-                                    && (!opts.sansMelange || +x.recipeId===+p.recipeId));
+                                    && (x.prodStatut||'termine')==='termine' && _gfMeme(x));
   let coques2Html = '';
   {
-    // Couleur attendue pour le 2e lot : la SECONDE de la recette (la 1re étant servie par le
-    // lot de départ ou par le 1er sélecteur). Sans recette bicolore, on n'impose aucune couleur.
-    // [v1506] LA COULEUR MANQUANTE, PAS TOUJOURS LA 2e DE LA RECETTE. Pour Pistache framboise GF
-    // (rose + vert), démarrer l'assemblage depuis le lot VERT proposait… d'autres lots verts : la
-    // 2e couleur de la recette était prise telle quelle, sans regarder celle du lot de départ.
-    // Depuis la division automatique en 2 lots (v1449), un lot peut porter l'une OU l'autre
-    // couleur : on propose donc celle qui lui manque.
-    const _coul2 = !_bicolore ? ''
-      : ((p.couleur && p.couleur===_coulCible[1]) ? _coulCible[0] : _coulCible[1]);
-    const _lots2 = _bicolore
-      ? coquesPourCouleur(_lotsCoques, _coul2, _recById, _profilCible)
-      : _lotsCoques;
-    // [v1482] LE LOT DEJA CHOISI COMME PREMIER EST EXCLU de cette liste. Il y figurait, et le
-    // selectionner declenchait « Le second lot de coques doit etre different du premier » — un
-    // refus incomprehensible puisque l'app venait de le proposer. C'est le blocage rencontre par
-    // Ben avec ses coques migrees, qui portent DEJA les deux couleurs et n'ont donc besoin
-    // d'aucun second lot : l'option « Aucun » est la bonne pour lui.
-    const _opts2 = _lots2.filter(c=>+c.id !== +p.id).map(c=>{
+    const _opts2 = _lotsCoques.filter(c=>+c.id !== +p.id).map(c=>{
       const capMac = Math.floor(round3(+c.qteRestante)/1);   // 1 coque/macaron quand 2 lots
-      return `<option value="${c.id}">${esc(recName(c))} — ${esc(c.lotProduction||('#'+c.id))} · ${qty(c.qteRestante)} coques (≈ ${capMac} mac.)</option>`;
+      return `<option value="${c.id}">${esc(coqueLotLibelle(c, _recById, recName))} — ${esc(c.lotProduction||('#'+c.id))} · ${qty(c.qteRestante)} coques (≈ ${capMac} mac.)</option>`;
     }).join('');
-    const _labelCoul = _bicolore
-      ? `${coqueCouleurPastille(_coul2)}${esc(coqueCouleurLabel(_coul2))}`
-      : 'autre couleur';
-    // [v1482] Un lot SANS champ `couleur` porte les DEUX couleurs de sa recette (cf.
-    // coqueColorProfile) : c'est le cas des coques migrees de Ben, ou d'un batch produit d'un
-    // seul tenant. Il se suffit a lui-meme — le dire, au lieu de laisser croire qu'un second lot
-    // est obligatoire pour tout macaron bicolore.
-    const _lotDejaBicolore = _bicolore && !p.couleur;
-    const _aide = _lotDejaBicolore
-      ? `<b>${esc(recName(p))}</b> est un macaron <b>bicolore</b> (${_coulCible.map(k=>coqueCouleurPastille(k)+esc(coqueCouleurLabel(k))).join(' + ')}). Ce lot contient <b>déjà les deux couleurs</b> : laisse « Aucun » et chaque macaron prendra ses 2 coques dedans. Un second lot ne sert que si tes coques sont séparées par couleur.`
-      : _bicolore
-      ? `<b>${esc(recName(p))}</b> est un macaron <b>bicolore</b> (${_coulCible.map(k=>coqueCouleurPastille(k)+esc(coqueCouleurLabel(k))).join(' + ')}). Ce lot ne contient qu'<b>une</b> couleur : désigne ici le lot qui fournit l'autre. Chaque macaron prendra alors <b>1 coque de chaque lot</b>.`
-      : `Facultatif — pour un mélange de couleurs (dégustation). Chaque macaron prendra <b>1 coque de chaque lot</b> au lieu de 2 du même.`;
-    coques2Html = _lots2.length ? `
-      <div class="field" style="margin-top:6px;${_bicolore?'border:2px solid #e5d8c8;border-radius:12px;padding:10px;background:#fdfaf6':''}">
-        <label>🎨 2ᵉ lot de coques — ${_labelCoul} ${_bicolore?'':'<span style="color:#9a8a82;font-weight:400">(facultatif)</span>'}</label>
+    const _aide = `Facultatif — pour un macaron <b>bicolore</b> ou un mélange de couleurs : chaque macaron prendra <b>1 coque de chaque lot</b> au lieu de 2 du même. Un lot déjà bicolore (ex. marron foncé + blanc) contient ses deux couleurs : laisse « Aucun ».`;
+    coques2Html = _opts2 ? `
+      <div class="field" style="margin-top:6px">
+        <label>🎨 2ᵉ lot de coques — autre couleur <span style="color:#9a8a82;font-weight:400">(facultatif)</span></label>
         <select id="f_asmCoques2">
           <option value="">— Aucun : les 2 coques viennent du même lot —</option>
           ${_opts2}
         </select>
         <p class="note" style="margin-top:4px">${_aide}</p>
-      </div>` : (_bicolore ? `
-      <div class="banner" style="background:#fdf3f2;border-color:#e5b4ae;margin-top:6px"><div>
-        ⚠ <b>${esc(recName(p))}</b> est bicolore (${_coulCible.map(k=>esc(coqueCouleurLabel(k))).join(' + ')}) mais aucun lot de coques ${esc(coqueCouleurLabel(_coul2))} n'est disponible. Assemble avec un seul lot, ou produis les coques manquantes.
-      </div></div>` : '');
+      </div>` : '';
   }
 
   const maxThisMac = comp==='coques' ? Math.floor(round3(+p.qteRestante)/COQUES_PAR_MACARON) : round3(+p.qteRestante);  const uniteThis = comp==='coques' ? `${qty(p.qteRestante)} coques (≈ ${maxThisMac} macarons)` : `${qty(p.qteRestante)} macarons`;
@@ -15709,14 +15660,10 @@ async function prodAssembleForm(id, opts){
   const _garnIco = _garnMot==='crémeux' ? '🟠' : '🍫';
   const titreParts = mode3
     ? `1 grand format = <b>2 coques + 1 ${_garnMot} + 1 dose de ${esc((_refs[0]&&compById[+_refs[0].componentId]&&compById[+_refs[0].componentId].nom)||'composant')}</b>. Les <b>3 éléments</b> sont obligatoires : choisis-les ci-dessous (assemblage bloqué si l'un manque).`
-    : (opts.sansMelange
-        ? `1 macaron = <b>2 coques + 1 ganache</b>, <b>du même parfum</b>. La case « dégustation » reste disponible (macarons offerts, non vendables) — mais même en dégustation, ce chemin ne mélange pas les parfums.`
-        : `1 macaron = <b>2 coques + 1 ganache</b>. Assemblage <b>normal</b> : coques + ganache du même parfum/lot (vendable). Assemblage <b>dégustation</b> : sans correspondance couleur/parfum (offert, non vendable).`);
+    : `1 macaron = <b>2 coques + 1 garniture</b>. <b>Toutes les couleurs de coques vont avec tous les parfums</b> : le parfum du macaron est celui de la <b>garniture</b>, la couleur vient des coques. Assemblage <b>dégustation</b> : offert, non vendable.`;
   openModal(`<h3>🔗 Assembler ${esc(recName(p))}${mode3?' <span class="tag" style="background:#8a6d3b;color:#fff;font-size:.62rem">grand format</span>':''}</h3>
    <p class="note">${titreParts}</p>
    <div class="sum-box"><span>${comp==='coques'?'🟤 Coques':garnIcon(p)+' '+(garnLabel(p)==='crémeux'?'Crémeux':'Ganache')} (ce lot)</span><b>${esc(p.lotProduction||('#'+p.id))} · ${uniteThis}</b></div>
-   ${opts.sansMelange?`<div class="banner" style="background:#eef5ef;border-color:#bcd8c3"><div>🔒 <b>Un seul parfum</b> — depuis le stock par parfum, seuls les sous-lots de <b>${esc(recName(p))}</b> sont proposés. Pour mélanger les couleurs entre parfums, passe par l'écran <b>Production</b>.</div></div>`:''}
-   <input type="hidden" id="f_asmSansMelange" value="${opts.sansMelange?1:0}">
    <div class="field"><label>${want==='ganache'?(mode3?'🟠 Crémeux à associer':'🍫 Ganache à associer'):'🟤 Coques à associer'}</label>
      <select id="f_asmOther">${optsCand}</select></div>
    ${coques2Html}
@@ -15739,12 +15686,6 @@ function prodAsmDegSwitch(on){
 }
 async function prodAssembleSave(thisId){
   const otherId=+val('f_asmOther');
-  // [v1426] Chemin « sans mélange » (entrée depuis Stock par parfum) : la restriction ne peut pas
-  // rester cosmétique. Un formulaire qui n'OFFRE pas une option mais l'ACCEPTE quand même n'est pas
-  // une règle, c'est une décoration — et le premier lot non vendable fabriqué par accident le
-  // prouverait. On revalide donc à l'enregistrement, dans la transaction, où l'on relit les vrais
-  // sous-lots en base plutôt que ce que le DOM prétend.
-  const _sansMelange = (val('f_asmSansMelange')||'0')==='1';
   // [v1413] 2e lot de coques (bicolore ou mélange dégustation). 0 = les 2 coques viennent
   // du même lot, comportement historique inchangé.
   const coques2Id=+val('f_asmCoques2')||0;
@@ -15791,15 +15732,7 @@ async function prodAssembleSave(thisId){
       if(coques2Id && !_coques2) throw new Error('Second lot de coques introuvable.');
       if(_coques2 && +_coques2.id === +coques.id) throw new Error('Le second lot de coques doit être différent du premier.');
       if(_coques2 && prodComposant(_coques2)!=='coques') throw new Error('Le second lot sélectionné n\'est pas un lot de coques.');
-      // [v1426] La garde du chemin sans mélange, appliquée aux VRAIS lots relus en base.
-      if(_sansMelange){
-        if(+coques.recipeId !== +ganache.recipeId){
-          throw new Error('Ce chemin n\'assemble qu\'un seul parfum : les coques et la garniture doivent venir du même parfum. Passe par l\'écran Production pour mélanger.');
-        }
-        if(_coques2 && +_coques2.recipeId !== +coques.recipeId){
-          throw new Error('Ce chemin n\'assemble qu\'un seul parfum : le second lot de coques doit être du même parfum. Passe par l\'écran Production pour mélanger.');
-        }
-      }
+      // [v1513] La garde « un seul parfum » (v1426) est retirée : toute couleur de coques va avec tout parfum.
       const _rep = repartitionCoques(1, !!_coques2);   // coques consommées pour 1 macaron
       const capCoques = _coques2
         ? Math.min(Math.floor(round3(+coques.qteRestante)/_rep.lot1), Math.floor(round3(+_coques2.qteRestante)/_rep.lot2))
@@ -15811,6 +15744,16 @@ async function prodAssembleSave(thisId){
       // Le lot est celui sélectionné dans le formulaire ; on vérifie statut terminé + quantité,
       // sinon on BLOQUE tout (transaction annulée). Les 3 éléments d'un GF sont obligatoires.
       const _rec = await db.recipes.get(coques.recipeId).catch(()=>null);
+      // [v1513] LE PARFUM DU MACARON EST CELUI DE LA GARNITURE. Avant, le lot assemblé prenait la recette des COQUES :
+      // sans effet tant que coques et garniture venaient du même parfum, FAUX dès qu'on les mélange (un macaron
+      // framboise monté sur des coques « vanille » aurait été enregistré « vanille »). La couleur, elle, est une
+      // propriété des coques, tracée à part (`coquesCouleurs`).
+      const _recGarn = (+ganache.recipeId===+coques.recipeId) ? _rec : await db.recipes.get(ganache.recipeId).catch(()=>null);
+      const _parfumMac = (_recGarn && _recGarn.produitNom) || (_rec ? _rec.produitNom : '');
+      const _recIdMac = (ganache.recipeId!=null) ? ganache.recipeId : coques.recipeId;
+      const _recMap = {}; (await db.recipes.toArray().catch(()=>[])).forEach(r=>{ _recMap[+r.id]=r; });
+      const _couleursCoques = [];
+      [coques, _coques2].forEach(lot=>{ if(!lot) return; const pf=coqueColorProfile(lot,_recMap); if(pf) pf.colors.forEach(k=>{ if(_couleursCoques.indexOf(k)<0) _couleursCoques.push(k); }); });
       // [GF VENDABLE] Le crémeux doit être du MÊME parfum que les coques (sauf dégustation).
       const _estGF = !!(_rec && _rec.grandFormat && Array.isArray(_rec.componentRefs) && _rec.componentRefs.length);
       if(_estGF && !deg && +coques.recipeId !== +ganache.recipeId){
@@ -15865,7 +15808,10 @@ async function prodAssembleSave(thisId){
       // sont volontairement EXCLUES : leur âge propre ne rogne pas la fraîcheur du macaron.
       const _garnitureDlcs = [ganache.dlcProduit, ganache.dlcContrainteOuverture];
       let dlc = computeAssemblyDlc(baseDlc, _destCongelo, _garnitureDlcs);
-      const lotBase = coques.lotBase || ganache.lotBase || lotBaseSansSuffixe(coques.lotProduction||'');
+      // Même parfum des deux côtés : base historique (coques d'abord). Parfums mélangés : la base suit la GARNITURE (le parfum).
+      const lotBase = (+coques.recipeId!==+ganache.recipeId)
+        ? (ganache.lotBase || coques.lotBase || lotBaseSansSuffixe(ganache.lotProduction||''))
+        : (coques.lotBase || ganache.lotBase || lotBaseSansSuffixe(coques.lotProduction||''));
       const suff = deg ? '-DG' : '-AS';
       const lotAsm = lotAvecEmplacement((lotBase||genLotCode(3))+suff, dest);
       // décrémente les composants selon le ratio : 2 coques + 1 garniture par macaron
@@ -15893,7 +15839,8 @@ async function prodAssembleSave(thisId){
       }
       // crée la production assemblée : 'assemble' (vendable) ou 'degustation' (offert, non vendable)
       const _asmId = await db.productions.add({
-        recipeId: coques.recipeId, lotProduction: lotAsm, date: today(),
+        recipeId: _recIdMac, lotProduction: lotAsm, date: today(),
+        coquesCouleurs: _couleursCoques,   // [v1513] couleur(s) des coques utilisées (traçabilité)
         composant: deg ? 'degustation' : 'assemble', lotBase,
         degustation: !!deg,
         qteTheorique:qteAsm, qteReelle:qteAsm, ecart:0,
@@ -15907,12 +15854,12 @@ async function prodAssembleSave(thisId){
         dlcAnchorTs:_dlcAnchorIso,
         emplacement:dest, emplacementMaj:nowIso, venuDuCongelateur:isFreezer(dest),
         histEmplacement:[{lieu:dest, ts:nowIso, motif}],
-        assembleFrom:[{id:coques.id, lot:coques.lotProduction, composant:'coques', qte:coquesUtilisees, parfum:(window._prodRecName?window._prodRecName(coques.recipeId):'')},
-                      ...(_coques2?[{id:_coques2.id, lot:_coques2.lotProduction, composant:'coques', qte:_repFin.lot2, parfum:(window._prodRecName?window._prodRecName(_coques2.recipeId):'')}]:[]),
+        assembleFrom:[{id:coques.id, lot:coques.lotProduction, composant:'coques', qte:coquesUtilisees, parfum:(window._prodRecName?window._prodRecName(coques.recipeId):''), couleur:coqueLotLibelle(coques,_recMap).replace(/^Coques /,'')},
+                      ...(_coques2?[{id:_coques2.id, lot:_coques2.lotProduction, composant:'coques', qte:_repFin.lot2, parfum:(window._prodRecName?window._prodRecName(_coques2.recipeId):''), couleur:coqueLotLibelle(_coques2,_recMap).replace(/^Coques /,'')}]:[]),
                       {id:ganache.id, lot:ganache.lotProduction, composant:'ganache', qte:qteAsm, parfum:(window._prodRecName?window._prodRecName(ganache.recipeId):'')},
                       ..._assembleFromComp]
       });
-      return {asmId:_asmId, lotAsm, dlc, qteAsm, deg, compConsos:_compConsos, recipeId:coques.recipeId, parfumNom:(_rec?_rec.produitNom:''),
+      return {asmId:_asmId, lotAsm, dlc, qteAsm, deg, compConsos:_compConsos, recipeId:_recIdMac, parfumNom:_parfumMac,
         // [JOURNAL STOCK] mouvements de cet assemblage, journalisés hors transaction (stockMoves
         // n'est pas dans la transaction rw). Sortie coques + sortie ganache → entrée macaron.
         _stockMoves:[
@@ -15923,7 +15870,7 @@ async function prodAssembleSave(thisId){
           { parfumNom:(window._prodRecName?window._prodRecName(ganache.recipeId):(_rec?_rec.produitNom:'')),
             composant:'ganache', sens:-1, qte:qteAsm, type:'assemblage', productionId:ganache.id },
           ..._compStockMoves,
-          { parfumNom:(_rec?_rec.produitNom:''), composant:'macaron', sens:+1, qte:qteAsm,
+          { parfumNom:_parfumMac, composant:'macaron', sens:+1, qte:qteAsm,
             type:'assemblage', note: deg?'dégustation':'' }
         ]};
     });
@@ -29783,10 +29730,10 @@ async function stockParfumDetail(nom){
     const _totalLot = _multi ? round3(_soeurs.reduce((s,x)=>s+(+x.qteRestante||0),0)) : 0;
     const action = pret
       ? (_multi
-          ? `<button class="btn gold sm" onclick="event.stopPropagation();closeModal();prodAssembleLotEntier(${p.id},{sansMelange:true})" title="Regroupe les ${_nbBoites} boîtes de ce lot puis assemble le tout">🔗 Assembler tout le lot (${_nbBoites} boîtes)</button>
-             <span style="font-size:.72rem;color:#9a8a82">${qty(_totalLot)} pièces au total · avec ${esc(quoi)} de ${esc(nom)}</span>`
-          : `<button class="btn gold sm" onclick="event.stopPropagation();closeModal();prodAssembleForm(${p.id},{sansMelange:true})" title="Assembler ce sous-lot avec ${esc(quoi)} du même parfum">🔗 Assembler</button>
-             <span style="font-size:.72rem;color:#9a8a82">avec ${esc(quoi)} de ${esc(nom)}</span>`)
+          ? `<button class="btn gold sm" onclick="event.stopPropagation();closeModal();prodAssembleLotEntier(${p.id},{})" title="Regroupe les ${_nbBoites} boîtes de ce lot puis assemble le tout">🔗 Assembler tout le lot (${_nbBoites} boîtes)</button>
+             <span style="font-size:.72rem;color:#9a8a82">${qty(_totalLot)} pièces au total · avec ${esc(quoi)} de ton choix</span>`
+          : `<button class="btn gold sm" onclick="event.stopPropagation();closeModal();prodAssembleForm(${p.id},{})" title="Assembler ce sous-lot avec ${esc(quoi)} de ton choix (toute couleur, tout parfum)">🔗 Assembler</button>
+             <span style="font-size:.72rem;color:#9a8a82">avec ${esc(quoi)} de ton choix</span>`)
       : `<span style="font-size:.74rem;color:#9a8a82">⏳ Production non terminée — à terminer avant d'assembler.</span>`;
     return `<div style="margin-bottom:8px">${_ligneBatchEpure(p)}
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 10px 0">${action}</div>

@@ -158,9 +158,9 @@ async function testCasLimites(){
   const i = APP.indexOf('const _ligneComposantAssemblable');
   const src = APP.slice(i, APP.indexOf('const rows = prods.map', i));
   check('D. le bouton compte les boîtes sœurs du lot', /_soeurs/.test(src) && /etiquetteDe/.test(src));
-  check('D. plusieurs boîtes → prodAssembleLotEntier', /prodAssembleLotEntier\(\$\{p\.id\},\{sansMelange:true\}\)/.test(src));
-  check('D. une seule boîte → prodAssembleForm, comportement v1426 inchangé',
-    /prodAssembleForm\(\$\{p\.id\},\{sansMelange:true\}\)/.test(src));
+  check('D. plusieurs boîtes → prodAssembleLotEntier ([v1513] sans l\'option « un seul parfum », supprimée à la demande de Ben)', /prodAssembleLotEntier\(\$\{p\.id\},\{\}\)/.test(src));
+  check('D. une seule boîte → prodAssembleForm ([v1513] assemblage libre : plus de verrou un-seul-parfum)',
+    /prodAssembleForm\(\$\{p\.id\},\{\}\)/.test(src));
   check('D. le libellé annonce le nombre de boîtes regroupées', /Assembler tout le lot \(\$\{_nbBoites\} boîtes\)/.test(src));
   check('D. le total de pièces du lot est affiché', /_totalLot/.test(src));
 
