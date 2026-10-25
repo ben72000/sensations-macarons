@@ -208,7 +208,9 @@ const SUITES = [
   'v1506-coques-roses-mutualisees.test.js',      // v1506 · Pistache framboise GF bicolore rose + vert, rose mutualisé avec Myrtille framboise GF ; couleur manquante à l'assemblage ; code de lot PFR
   'v1507-etiquettes-client.test.js',  // v1507 · étiquettes de traçabilité client depuis Tracer d'une commande : lot, pièces livrées, fabrication avec heure, DLC prudente ; tout modifiable, mémorisé sur la commande
   'v1508-demarrage-sans-popup.test.js',  // v1508 · zéro popup au démarrage : plus aucune modale ni bannière-rappel au boot (sauvegarde, rupture, cohérence, nettoyages, température) ; fonctions conservées, sauvegarde auto et contrôles toujours actifs ; garde par pattern sur toute fonction de boot
-  'v1509-coffret-nombre-prix.test.js'           // v1509 · coffret = nombre de macarons + prix libre ; case « anciens tarifs » retirée de l'écran (verrou historique caché) ; aucun supplément hors formats standard ; historique protégé au centime
+  'v1509-coffret-nombre-prix.test.js',  // v1509 · coffret = nombre de macarons + prix libre ; case « anciens tarifs » retirée de l'écran (verrou historique caché) ; aucun supplément hors formats standard ; historique protégé au centime
+  'v1510-dupliquer-coffret.test.js',  // v1510 · dupliquer un coffret (x10) en copies indépendantes, cartes repliées, repli jamais persisté, coffrets repliés à l'ouverture dès 3
+  'v1511-coffrets-groupes-documents.test.js'    // v1511 · coffrets identiques résumés sur devis/factures (1 ligne ; détail si différences) — présentation seule, somme exacte, famille = format+montant+remise, 4 rendus via un seul point d'entrée
 ];
 
 let allOk = true;

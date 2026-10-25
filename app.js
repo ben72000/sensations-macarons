@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1509'; // suite : voir tests/v1509-coffret-nombre-prix.test.js
+const APP_VERSION = 'v1511'; // suite : voir tests/v1511-coffrets-groupes-documents.test.js
 const APP_MAJ = '« CHEQUE DE CAUTION » DEVIENT « EMPREINTE BANCAIRE ». Ben : « le cheque de caution doit se transformer en empreinte bancaire. Peux-tu changer la mention partout ou apparait cheque de caution ? » ⚠️ CE N ETAIT PAS UN SIMPLE RENOMMAGE : le texte associe decrivait des gestes propres a un CHEQUE — il est « remis », il « n est pas encaisse », il est « restitue ». Une empreinte bancaire se PREND, se DEBITE et s ANNULE. Renommer sans adapter les verbes aurait laisse des clauses incoherentes dans les CGV, un document juridique transmis aux clients. Les VERBES ONT DONC ETE ADAPTES partout : sur la ligne du devis et de la facture (« empreinte prise le jour de la livraison, non debitee, annulee apres retour du materiel »), et dans les trois clauses concernees des CGV — 7.1 (prise a la mise a disposition, non debitee, annulee), 7.2 (aucune empreinte exigee du particulier) et 7.4 (l empreinte pourra etre DEBITEE, et non encaissee). La logique juridique est inchangee : montants dus, complement exigible, surplus restitue, engagement sur l honneur du particulier. LES IDENTIFIANTS DE CODE SONT CONSERVES (CAUTION_CHEQUE, cautionRowHtml, cautionMention) : les renommer toucherait des dizaines de references et des donnees DEJA ENREGISTREES, pour zero gain visible. Seul le texte vu par le client change. Les documents deja emis gardent leur redaction d origine, puisqu ils memorisent leur rendu. Suite v1493 : 27 assertions, dont la verification que le vocabulaire du cheque a bien disparu ; un renommage NAIF (terme change mais verbes conserves) fait rougir 5 assertions. La suite v1492 a suivi le nouveau libelle, son mecanisme etant inchange.';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
@@ -22325,7 +22325,7 @@ async function cmdForm(id, opts){
   }
   // Préserver les lignes en cours si on rouvre après ajout d'un client
   if(opts.keepLines && Array.isArray(cmdLines)){ /* cmdLines déjà en mémoire, on le garde */ }
-  else { cmdLines = orderToEditLines(o); }   // forme objet, parfums conservés
+  else { cmdLines = cmdReplierCoffretsSiNombreux(orderToEditLines(o)); }   // forme objet, parfums conservés ; [v1510] 3 coffrets ou + → repliés
   // [REMISE GLOBALE] Référence en euros. Si l'enregistrement porte déjà un montant € fixe, on le reprend.
   // Sinon (ancien format % uniquement), on le convertit UNE fois en euros à partir de la base courante,
   // ce qui fige le montant et évite qu'un « −30 % » ne se réapplique sur un sous-total différent.
@@ -22951,11 +22951,61 @@ function addLine(type){
 }
 function removeLine(i){ cmdLines.splice(i,1); drawLines(); }
 
+// [v1510] DUPLIQUER UN COFFRET. Ben : « 10 coffrets de 4 macarons tous identiques : je veux le saisir une seule
+// fois et indiquer x10, tout en pouvant modifier un ou plusieurs coffrets ensuite (variation de parfums sur
+// une partie de la commande) ».
+// CHOIX DE CONCEPTION : des COPIES INDÉPENDANTES (une ligne par coffret), pas une « quantité » portée par la
+// ligne. Totaux, production, stock, étiquettes, documents lisent déjà « une ligne = un coffret » : une quantité
+// aurait touché des dizaines de lecteurs (argent, stock). Chaque copie est une ligne comme les autres :
+// modifiable seule, supprimable seule, re-dupliquable.
+// `total` = nombre TOTAL de coffrets identiques voulu (x10 → 9 copies ajoutées à l'original).
+// `repli` = état d'AFFICHAGE du formulaire seulement : jamais écrit dans la commande (voir _lineToEdit).
+const CMD_DUP_MAX = 50;
+function dupliquerCoffret(i, total){
+  const ln = cmdLines[i];
+  const n = Math.floor(+total);
+  if(!ln || ln.type!=='coffret'){ toast('Seuls les coffrets se dupliquent'); return false; }
+  if(!(n>=2 && n<=CMD_DUP_MAX)){ toast(`Indique le nombre total de coffrets identiques (2 à ${CMD_DUP_MAX})`); return false; }
+  const aDesParfums = Object.values(ln.parfums||{}).some(q=>+q>0) || (+ln.sansParfum||0)>0;
+  if(!aDesParfums){ toast('Compose d\'abord le coffret (parfums), puis duplique-le'); return false; }
+  const copies = [];
+  for(let k=1;k<n;k++){ const c = JSON.parse(JSON.stringify(ln)); c.repli = true; copies.push(c); }
+  cmdLines.splice(i+1, 0, ...copies);
+  drawLines();
+  toast(`${n} coffrets identiques : ${n-1} copie${n-1>1?'s':''} ajoutée${n-1>1?'s':''} (repliée${n-1>1?'s':''}, à toucher pour modifier)`);
+  return true;
+}
+function repliLigne(i, etat){
+  const ln = cmdLines[i]; if(!ln) return;
+  if(etat) ln.repli = true; else delete ln.repli;
+  drawLines();
+}
+// Plusieurs coffrets dans une commande : on les ouvre REPLIÉS (sinon 10 cartes de la hauteur d'un écran).
+function cmdReplierCoffretsSiNombreux(lignes){
+  const nb = (lignes||[]).filter(l=>l && l.type==='coffret').length;
+  if(nb>=3) lignes.forEach(l=>{ if(l.type==='coffret') l.repli = true; });
+  return lignes;
+}
+// Carte REPLIÉE d'un coffret : l'essentiel d'un coup d'œil (format, prix appliqué, complet ou non, parfums).
+function drawCoffretRepliee(ln,i){
+  const t = +ln.taille||0;
+  const pf = Object.entries(ln.parfums||{}).filter(([k,q])=>+q>0);
+  const nb = pf.reduce((a,[k,q])=>a+(+q),0) + (+ln.sansParfum||0);
+  const compo = pf.map(([k,q])=>`${esc(k)}×${q}`).join(', ') + ((+ln.sansParfum||0)>0 ? `${pf.length?' · ':''}${+ln.sansParfum} sans parfum` : '');
+  const pu = coffretUnitPrice(ln);
+  const complet = t>0 && nb===t;
+  return `<div class="cmd-line" style="padding:10px 14px;cursor:pointer" onclick="repliLigne(${i},false)">
+    <div class="line-head" style="margin-bottom:4px"><span class="line-type">Coffret ${t} macarons <span class="line-sub">${pu>0?euro(pu):'⚠ prix ?'} · ${complet?'✓ complet':`⚠ ${nb}/${t}`}</span></span><span class="line-del" onclick="event.stopPropagation();removeLine(${i})">✕ retirer</span></div>
+    <div style="font-size:.82rem;color:#6b5b53">${compo||'<i>aucun parfum</i>'}</div>
+    <div style="font-size:.75rem;color:#9a8a82;margin-top:4px">✎ Toucher pour modifier</div>
+  </div>`;
+}
+
 function drawLines(){
   const wrap=document.getElementById('linesWrap'); if(!wrap)return;
   if(!cmdLines.length){ wrap.innerHTML='<p class="note">Ajoute au moins un produit ci-dessous (coffret, sachet, événement, grand format, prestation ou don).</p>'; cmdRecalc(); return; }
   wrap.innerHTML = cmdLines.map((ln,i)=>{
-    if(ln.type==='coffret') return drawCoffretLine(ln,i);
+    if(ln.type==='coffret') return ln.repli ? drawCoffretRepliee(ln,i) : drawCoffretLine(ln,i);
     if(ln.type==='evenement') return drawEventLine(ln,i);
     if(ln.type==='grand') return drawBigLine(ln,i);
     if(ln.type==='vrac') return drawVracLine(ln,i);
@@ -23034,6 +23084,14 @@ function drawCoffretLine(ln,i){
   </div>`;
   return `<div class="cmd-line">
     <div class="line-head"><span class="line-type">Coffret <span class="line-sub">${_formatLibre ? 'prix final — sans supplément parfum' : `jusqu'à ${limit} parfum(s) inclus`}</span></span><span class="line-del" onclick="removeLine(${i})">✕ retirer</span></div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:-2px 0 10px;font-size:.82rem">
+      <span style="color:#6b5b53">⧉ Dupliquer :</span>
+      <input type="number" id="dupN_${i}" inputmode="numeric" min="2" max="${CMD_DUP_MAX}" placeholder="10" style="width:64px;padding:4px 6px">
+      <span style="color:#9a8a82">coffrets identiques</span>
+      <button type="button" class="btn sm" onclick="dupliquerCoffret(${i}, document.getElementById('dupN_${i}').value)">Dupliquer</button>
+      ${cmdLines.filter(x=>x.type==='coffret').length>=2 ? `<button type="button" class="btn sm" onclick="repliLigne(${i},true)">▴ Replier</button>` : ''}
+      <span style="flex-basis:100%;font-size:.74rem;color:#9a8a82">Crée les copies repliées : touche-en une pour la modifier seule.</span>
+    </div>
     <div style="display:flex;gap:10px;align-items:flex-start">
       <div class="field" style="flex:1;margin-bottom:0"><label>Nombre de macarons</label><select onchange="setCoffretTaille(${i},this.value)">${nbOpts}</select></div>
       <div class="field" style="flex:1;margin-bottom:0"><label>Prix du coffret (€)</label><input type="number" inputmode="decimal" step="0.01" min="0" value="${_pu>0?_pu:''}" placeholder="ex : 8" onchange="setCoffretPrix(${i},this.value)"></div>
@@ -59561,6 +59619,94 @@ function _factPatchRegl(html, total, paye, date, moyen){
   h = h.replace(/(<div class="lg total"><span>Total à payer<\/span><span>[\s\S]*?<\/div>)/, `$1<!--REGL-->${slot}<!--/REGL-->`);
   return h;
 }
+// [v1511] SOUS-LIGNE « remise de ligne » : un seul gabarit, partagé par la ligne simple (factLineRows) et la
+// ligne GROUPÉE (factGroupeCoffretRows). Balisage inchangé au caractère près.
+function factRemiseSubHtml(remEuro){
+  return remEuro>0
+    ? `<tr class="ln-remise"><td class="desc"><span class="ln-sub" style="color:#3f7d52">remise de ligne \u2212${euro(remEuro)}</span></td><td class="mt" style="color:#3f7d52">\u2212${euro(remEuro)}</td></tr>`
+    : '';
+}
+// [v1511] COFFRETS IDENTIQUES RÉSUMÉS SUR LES DEVIS ET FACTURES.
+// Ben : « sur un devis ou une facture, 10 coffrets de 4 macarons composés de 2 chocolat et 2 vanille en UNE ligne ;
+// s'il y a une différence, on détaille : 9 coffrets composés de… / 1 coffret composé de… ».
+// ⚠️ PRÉSENTATION SEULE : les lignes enregistrées (une par coffret) et leurs montants ne sont JAMAIS modifiés ;
+// le total d'un groupe est la SOMME exacte de ses lignes. Un document déjà émis garde son HTML mémorisé.
+// RÈGLES : une FAMILLE = même nombre de macarons ET même montant (brut, net) ET même remise de ligne — on ne
+// fond jamais deux prix différents dans un total. Une famille se résume si elle compte 2 coffrets ou plus ET qu'au
+// moins une composition s'y répète ; sinon (10 coffrets tous différents) les lignes restent détaillées comme avant.
+function factListeFr(a){ return a.length<=1 ? (a[0]||'') : a.slice(0,-1).join(', ')+' et '+a[a.length-1]; }
+function factCoffretFamille(ln){
+  return [+ln.taille||0, money2(lineTotalBrut(ln)), money2(lineTotalStored(ln)), +ln.remisePct||0].join('|');
+}
+function factCoffretCompoCle(ln){
+  const m = {};
+  (ln.parfums||[]).forEach(p=>{ const q=+p.qte||0; if(q>0){ const k=String(p.nom||'').trim().toLowerCase(); m[k]=(m[k]||0)+q; } });
+  const noms = Object.keys(m).sort().map(k=>k+':'+m[k]).join('|');
+  const nb = +ln.sansParfum||0;
+  return noms+'#'+(nb>0 ? `sp${nb}/${ln.spMode||'assortiment'}/${+ln.spNbParfums||0}` : '');
+}
+function factCoffretCompoPhrase(ln){
+  const ordre = [], m = {};
+  (ln.parfums||[]).forEach(p=>{ const q=+p.qte||0; if(q>0){ const nom=String(p.nom||'').trim(), k=nom.toLowerCase(); if(m[k]==null){ m[k]={nom,q:0}; ordre.push(k); } m[k].q+=q; } });
+  const parts = ordre.map(k=>`${m[k].q} ${m[k].nom}`);
+  const nb = +ln.sansParfum||0;
+  if(nb>0){
+    if((ln.spMode||'assortiment')==='adeterminer') parts.push(`${nb} parfum(s) à déterminer`);
+    else { const n=+ln.spNbParfums||0; parts.push(n===1 ? `${nb} en 1 parfum` : (n>1 ? `${nb} en assortiment de ${n} parfums` : `${nb} en assortiment`)); }
+  }
+  return factListeFr(parts);
+}
+// Découpe les lignes en éléments à écrire : {kind:'ligne', ln} ou {kind:'groupe', lignes:[…]}. L'ordre du document
+// est conservé : un groupe prend la place de sa PREMIÈRE ligne.
+function factGrouperCoffrets(lignes){
+  const L = lignes||[];
+  const famille = new Map();
+  L.forEach(ln=>{ if(ln && ln.type==='coffret'){ const k=factCoffretFamille(ln); if(!famille.has(k)) famille.set(k,[]); famille.get(k).push(ln); } });
+  const eligibles = new Map();
+  famille.forEach((arr,k)=>{
+    if(arr.length<2) return;
+    const nbParCompo = {};
+    arr.forEach(l=>{ const c=factCoffretCompoCle(l); nbParCompo[c]=(nbParCompo[c]||0)+1; });
+    if(Object.values(nbParCompo).some(n=>n>=2)) eligibles.set(k,arr);
+  });
+  const dejaEmis = new Set(), out = [];
+  L.forEach(ln=>{
+    if(ln && ln.type==='coffret'){
+      const k = factCoffretFamille(ln);
+      if(eligibles.has(k)){ if(!dejaEmis.has(k)){ dejaEmis.add(k); out.push({kind:'groupe', lignes:eligibles.get(k)}); } return; }
+    }
+    out.push({kind:'ligne', ln});
+  });
+  return out;
+}
+function factGroupeCoffretRows(g, brut){
+  const arr = g.lignes, n = arr.length, taille = +arr[0].taille||0;
+  const sous = [], idx = {};
+  arr.forEach(l=>{ const k=factCoffretCompoCle(l); if(idx[k]==null){ idx[k]=sous.length; sous.push({ln:l, n:0, rang:sous.length}); } sous[idx[k]].n++; });
+  sous.sort((a,b)=> (b.n-a.n) || (a.rang-b.rang));          // la composition la plus fréquente d'abord
+  let subs;
+  if(sous.length===1){
+    const ph = factCoffretCompoPhrase(sous[0].ln);
+    subs = ph ? [`composés de ${ph}`] : [];
+  } else {
+    subs = sous.map(s=>{
+      const ph = factCoffretCompoPhrase(s.ln);
+      return ph ? `${s.n} ${s.n>1?'coffrets composés':'coffret composé'} de ${ph}` : `${s.n} ${s.n>1?'coffrets':'coffret'} (composition non détaillée)`;
+    });
+  }
+  const brutTot = money2(arr.reduce((a,l)=>a+lineTotalBrut(l),0));
+  const netTot  = money2(arr.reduce((a,l)=>a+lineTotalStored(l),0));
+  // Même règle que factLineRows : en mode net, la remise de ligne est montrée sous la ligne (principale au brut).
+  const remTot  = (!brut && typeof lineRemiseEuro==='function') ? money2(arr.reduce((a,l)=>a+money2(lineRemiseEuro(l)),0)) : 0;
+  const montant = brut ? brutTot : netTot;
+  const mtPrincipal = remTot>0 ? brutTot : montant;
+  const desc = `<span class="ln-main">${esc(`${n} coffrets de ${taille} macarons`)}</span>` + subs.map(t=>`<span class="ln-sub">${esc(t)}</span>`).join('');
+  return `<tr><td class="desc">${desc}</td><td class="mt">${euro(mtPrincipal)}</td></tr>${factRemiseSubHtml(remTot)}`;
+}
+// Point d'entrée UNIQUE des devis, devis groupés et factures : remplace `lignes.map(ln=>factLineRows(ln, brut))`.
+function factRowsHtml(lignes, brut){
+  return factGrouperCoffrets(lignes).map(it => it.kind==='groupe' ? factGroupeCoffretRows(it, brut) : factLineRows(it.ln, brut)).join('');
+}
 function factLineRows(ln, brut){
   // brut=true : affiche le montant AVANT remise de ligne (utilisé par le devis, qui montre
   // le prix brut par ligne puis applique la remise une seule fois sur le total).
@@ -59569,9 +59715,7 @@ function factLineRows(ln, brut){
   // Affichée UNIQUEMENT en mode net (brut=false) : en mode brut, la remise est déjà agrégée
   // dans le total « Réductions accordées » en bas, l'afficher par ligne la compterait deux fois.
   const _remLn = (!brut && typeof lineRemiseEuro==='function') ? money2(lineRemiseEuro(ln)) : 0;
-  const remiseSub = _remLn>0
-    ? `<tr class="ln-remise"><td class="desc"><span class="ln-sub" style="color:#3f7d52">remise de ligne \u2212${euro(_remLn)}</span></td><td class="mt" style="color:#3f7d52">\u2212${euro(_remLn)}</td></tr>`
-    : '';
+  const remiseSub = factRemiseSubHtml(_remLn);
   if(ln.type==='evenement' && (+ln.equip||0)>0){
     const nbPyr = +ln.equip||0;
     const partPyr = pyraTotalLigne(ln);                        // part pyramides (location ou vente)
@@ -59722,7 +59866,7 @@ async function genererDevisDoc(docId){
   // Pourcentage de remise à afficher : le % global saisi si présent, sinon le % effectif.
   const reducPct = gpct>0 ? gpct : (totalBrut>0 ? Math.round(reductions/totalBrut*1000)/10 : 0);
 
-  const rows = lignes.map(ln=>factLineRows(ln, false)).join('') + cautionRowHtml(lignes, d);   // false = prix NET par ligne (remise de ligne montrée sous la ligne)
+  const rows = factRowsHtml(lignes, false) + cautionRowHtml(lignes, d);   // false = prix NET par ligne (remise de ligne montrée sous la ligne)
   const section = `
       <div class="cmd-section">
         <div class="cmd-head">
@@ -60056,7 +60200,7 @@ async function devisGroupeGenerate(){
     const lignes = d.lignes||[];
     const total = (d.montant!=null) ? +d.montant : money2(lignes.reduce((s,ln)=>s+lineTotalStored(ln),0));
     grandTotal += total;
-    const rows = lignes.map(ln=>factLineRows(ln, false)).join('') + cautionRowHtml(lignes, o);
+    const rows = factRowsHtml(lignes, false) + cautionRowHtml(lignes, o);
     return `<div class="cmd-section">
       <div class="cmd-head"><span class="cmd-ref">Devis ${esc(d.numero||'brouillon')}${cmdEventBadge(d)}</span><span class="cmd-date">${fmtDate(d.date)||''}</span></div>
       <div class="cmd-body"><table class="cmd-table"><tbody>
@@ -60079,7 +60223,7 @@ async function devisGroupeGenerate(){
     const totalCmd = (o.montant!=null) ? +o.montant : money2(brutCmd - money2(brutCmd*gpct/100) + frais);
     grandTotal += totalCmd;
     const R = docRabaisTotal(lignes, o.persoMacarons, money2(totalCmd - frais), o, o.persoLogoNb, o.forfaitCreationNb);
-    const rows = lignes.map(ln=>factLineRows(ln, true)).join('') + cautionRowHtml(lignes, o);
+    const rows = factRowsHtml(lignes, true) + cautionRowHtml(lignes, o);
     return `<div class="cmd-section">
       <div class="cmd-head"><span class="cmd-ref">Commande ${esc(orderNumber(o))}${cmdEventBadge(o)}</span><span class="cmd-date">${fmtDate(o.date)||''}</span></div>
       <div class="cmd-body"><table class="cmd-table"><tbody>
@@ -60228,7 +60372,7 @@ async function genererFactureMultiple(ids){
     grandNetHorsLiv += money2(totalCmd - frais);
     const R = docRabaisTotal(lignes, o.persoMacarons, money2(totalCmd - frais), o, o.persoLogoNb, o.forfaitCreationNb);   // rabais TOTAL (ligne+perso+global)
     grandBrutAbsolu += R.brutAbsolu; grandRabais += R.rabais; grandFrais += frais;
-    const rows = lignes.map(ln=>factLineRows(ln, true)).join('') + cautionRowHtml(lignes, o);   // true = prix BRUT par ligne ; les réductions sont récapitulées sous le total (plus clair)
+    const rows = factRowsHtml(lignes, true) + cautionRowHtml(lignes, o);   // true = prix BRUT par ligne ; les réductions sont récapitulées sous le total (plus clair)
     return `
       <div class="cmd-section">
         <div class="cmd-head">

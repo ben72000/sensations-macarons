@@ -181,7 +181,7 @@ function buildPU(grille, catalogue){
 }
 
 // ---------- J. Version ----------
-check('J. APP_VERSION v1509', /const APP_VERSION = 'v1509';/.test(APP));
+check('J. APP_VERSION >= v1509 (la règle vaut pour toutes les versions suivantes)', (m => !!m && +m[1] >= 1509)(APP.match(/const APP_VERSION = 'v(\d+)';/)));
 
 setTimeout(() => {
   console.log(`\n${pass} passed, ${fail} failed`);

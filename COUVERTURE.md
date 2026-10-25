@@ -6990,3 +6990,61 @@ Addendum v1509 — suites antérieures alignées sur la nouvelle règle (décisi
   pour que les suites absentes de l'archive (134 sur 192) qui extraient ces fonctions sans le helper ne rougissent pas. Jamais atteint dans l'app ;
   la garde F n'en tolère QUE deux, derrière ce test.
 - ⚠️ À FAIRE dès réception de tests/ complet : ajouter `coffretSupplementParfums` aux dépendances des suites qui extraient lineTotalStored / lineTotalBase.
+
+## v1510 — Dupliquer un coffret « x10 » (tests/v1510-dupliquer-coffret.test.js, 58 assertions)
+
+Demande de Ben : saisir UNE fois 10 coffrets de 4 macarons identiques (« x10 »), puis pouvoir modifier un ou plusieurs
+coffrets (variation de parfums sur une partie de la commande).
+
+CHOIX DE CONCEPTION : des COPIES INDÉPENDANTES — une ligne par coffret — et NON une « quantité » portée par la ligne.
+Totaux, production, stock, étiquettes et documents lisent « une ligne = un coffret » ; une quantité aurait touché des dizaines
+de lecteurs (argent, stock). Chaque copie est une ligne comme les autres : modifiable seule, supprimable seule, re-dupliquable.
+
+- A. `dupliquerCoffret(i, total)` : total = nombre TOTAL voulu (x10 → 9 copies après l'original). Copie PROFONDE (indépendance prouvée :
+  modifier la copie n°4 ne touche ni l'original ni les autres). Bornes 2 à 50, texte « 10 » accepté, 10,9 → 10 ; refus avec message
+  pour 0/1/51/négatif/vide/texte/NaN, pour une ligne non coffret et pour un coffret NON composé (« compose d'abord » : des copies vides
+  forceraient à tout ressaisir). Insertion juste après la ligne dupliquée. Total vérifié : 9 coffrets à 8 € + 1 variante à 10 € = 82 €.
+- B. `repliLigne` : replier pose `repli:true`, déplier SUPPRIME le drapeau.
+- C. `repli` est un état d'AFFICHAGE : jamais écrit dans la commande, jamais relu (`_lineToEdit` l'ignore), c'est la règle d'ouverture qui décide.
+- D. Carte repliée `drawCoffretRepliee` : format, prix RÉELLEMENT appliqué, « ✓ complet » ou « ⚠ 2/4 » (une variation à moitié saisie ne passe pas
+  inaperçue), « ⚠ prix ? » si absent (jamais un 0,00 € muet), parfums échappés, « sans parfum » compté ; toucher la carte la déplie,
+  « retirer » ne la déplie pas (stopPropagation).
+- E. Câblage : `drawLines` route les lignes repliées ; la carte dépliée porte le champ « coffrets identiques » + bouton ; à l'ouverture d'une
+  commande, 3 coffrets ou plus s'ouvrent REPLIÉS (sinon 10 cartes d'un écran chacune), SAUF au retour « keepLines » (ajout d'un client).
+- F. Aller-retour d'une commande de 10 coffrets dont 3 variantes : 10 lignes, prix et composition repris, la variation survit.
+
+Limite connue : sur un devis/facture, 10 coffrets identiques s'impriment sur 10 lignes (une par coffret), pas en « 10 × ». Regroupement
+possible à l'impression si Ben le souhaite (n'altère ni totaux ni lignes enregistrées).
+
+Sensibilité (10 défauts réintroduits, tous attrapés) : copie non profonde (2 rouges) · n copies au lieu de n−1 (9) · copies non repliées (2) ·
+repli relu à la réouverture (1) · coffret non composé accepté (1) · drawLines sans carte repliée (1) · pas de repli à l'ouverture (1) ·
+« retirer » qui déplie (1) · prix manquant masqué (1) · borne haute supprimée (1).
+
+## v1511 — Coffrets identiques résumés sur devis et factures (tests/v1511-coffrets-groupes-documents.test.js, 48 assertions)
+
+Demande de Ben : sur un devis ou une facture, 10 coffrets de 4 macarons de même composition tiennent en UNE ligne
+(« 10 coffrets de 4 macarons composés de 2 chocolat et 2 vanille ») ; s'il y a une différence, elles sont détaillées
+(« 9 coffrets composés de… / 1 coffret composé de… »).
+
+PRÉSENTATION SEULE : les lignes enregistrées (une par coffret) et leurs montants ne changent pas ; le total d'un groupe est la
+SOMME EXACTE de ses lignes. Un document déjà émis garde son HTML mémorisé. `docLignes`/`docData` (PDF canvas) sont du code mort
+depuis v1302 : le PDF est la rasterisation du HTML, donc UN seul rendu à traiter.
+
+- Point d'entrée UNIQUE `factRowsHtml(lignes, brut)` pour les 4 rendus : devis (net), devis groupé (net), devis groupé (brut), facture multiple (brut).
+- FAMILLE = même format + même montant (brut ET net) + même remise de ligne : jamais deux prix fondus dans un total
+  (9 à 8 € + 1 à 10 € → deux blocs). Résumé si la famille compte ≥ 2 coffrets ET si une composition s'y répète ;
+  10 coffrets tous différents restent détaillés ligne à ligne comme avant.
+- Composition comparée sans tenir compte de l'ordre, de la casse ni des espaces ; un parfum saisi deux fois est additionné ;
+  « sans parfum » (assortiment de n parfums / 1 parfum / à déterminer) fait partie de la composition.
+- Détails triés par fréquence décroissante ; singulier/pluriel (« 1 coffret composé » / « 9 coffrets composés ») ; noms échappés ;
+  groupe placé à la position de son 1er coffret ; coffrets sans composition : « (composition non détaillée) ».
+- Remise de ligne : mêmes règles que la ligne simple (net : brut + sous-ligne « remise de ligne −X € » ; brut : rien) ;
+  la sous-ligne est extraite en `factRemiseSubHtml`, balisage identique au caractère près (oracle indépendant).
+- Garde par pattern : plus aucun `lignes.map(ln=>factLineRows(…))` ; exactement 4 appels à factRowsHtml.
+
+Sensibilité (10 défauts réintroduits, tous attrapés) : regroupement sans répétition (1 rouge) · prix fondus (5) · total = 1re ligne (4) ·
+détails non triés (1) · un rendu oublié (3) · remise oubliée (1) · composition sensible à la casse/ordre (2) · noms non échappés (1) ·
+groupe rejeté en fin de document (1) · balisage de remise modifié (1). Mutant « famille de 1 » survivant = ÉQUIVALENT (une famille de 1
+n'a aucune composition répétée : la règle de répétition la rejette déjà), pas un trou de test.
+
+Limite : le regroupement ne s'applique qu'aux coffrets ; l'export texte interne (buildOrderText) et les écrans de saisie restent ligne à ligne.
