@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1511'; // suite : voir tests/v1511-coffrets-groupes-documents.test.js
+const APP_VERSION = 'v1512'; // suite : voir tests/v1512-logo-zero-verrou.test.js
 const APP_MAJ = '« CHEQUE DE CAUTION » DEVIENT « EMPREINTE BANCAIRE ». Ben : « le cheque de caution doit se transformer en empreinte bancaire. Peux-tu changer la mention partout ou apparait cheque de caution ? » ⚠️ CE N ETAIT PAS UN SIMPLE RENOMMAGE : le texte associe decrivait des gestes propres a un CHEQUE — il est « remis », il « n est pas encaisse », il est « restitue ». Une empreinte bancaire se PREND, se DEBITE et s ANNULE. Renommer sans adapter les verbes aurait laisse des clauses incoherentes dans les CGV, un document juridique transmis aux clients. Les VERBES ONT DONC ETE ADAPTES partout : sur la ligne du devis et de la facture (« empreinte prise le jour de la livraison, non debitee, annulee apres retour du materiel »), et dans les trois clauses concernees des CGV — 7.1 (prise a la mise a disposition, non debitee, annulee), 7.2 (aucune empreinte exigee du particulier) et 7.4 (l empreinte pourra etre DEBITEE, et non encaissee). La logique juridique est inchangee : montants dus, complement exigible, surplus restitue, engagement sur l honneur du particulier. LES IDENTIFIANTS DE CODE SONT CONSERVES (CAUTION_CHEQUE, cautionRowHtml, cautionMention) : les renommer toucherait des dizaines de references et des donnees DEJA ENREGISTREES, pour zero gain visible. Seul le texte vu par le client change. Les documents deja emis gardent leur redaction d origine, puisqu ils memorisent leur rendu. Suite v1493 : 27 assertions, dont la verification que le vocabulaire du cheque a bien disparu ; un renommage NAIF (terme change mais verbes conserves) fait rougir 5 assertions. La suite v1492 a suivi le nouveau libelle, son mecanisme etant inchange.';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
@@ -4390,6 +4390,17 @@ function tarifsCourants(){ return tarifsPour(typeof today==='function' ? today()
 // [v1466] Le bandeau ne parle plus de date : la case seule décide, il doit dire exactement ça.
 // Mentionner l'antidatation ici décrirait un comportement qui n'existe plus — pire qu'un bandeau
 // absent, car Ben s'y fierait.
+// [v1512] SORTIE EXPLICITE DU VERROU HISTORIQUE. Ben : « sur le devis, personnalisation logo, je mets 10 et ça
+// affiche 10 × 0 € = 0,00 € ». CAUSE : depuis v1509 la case « anciens tarifs » est cachée ; un devis/une commande
+// verrouillé(e) sur l'ancienne grille (qui ignore le logo) n'offrait plus AUCUN moyen d'en sortir. Ce bouton
+// est ce moyen : un geste volontaire, annoncé, qui bascule la commande en cours sur les tarifs en vigueur.
+function cmdPasserTarifsEnVigueur(){
+  const cb = document.getElementById('f_ancienTarif'); if(!cb) return;
+  cb.checked = false;
+  cmdTarifBandeau();                       // retire le bandeau et redessine les lignes
+  if(typeof cmdRecalc==='function') cmdRecalc();
+  toast('Tarifs en vigueur appliqués à cette commande (le prix saisi sur chaque coffret ne change pas)');
+}
 function cmdTarifBandeau(){
   const z = document.getElementById('f_tarifBandeau'); if(!z) return;
   const g = tarifsSaisie();
@@ -4399,7 +4410,8 @@ function cmdTarifBandeau(){
   // les anciens prix. Les coffrets, eux, se règlent ligne par ligne.
   z.innerHTML = coche
     ? `<p class="note" style="margin:-4px 0 8px;color:#8a6d3b;background:#fdf8ef;border:1px solid #e5d8c8;border-radius:8px;padding:6px 8px">
-         🗓️ <b>${esc(g.libelle)}</b> — commande enregistrée avant la nouvelle grille : ses lignes (hors coffrets) gardent les anciens prix. Le prix d'un coffret se saisit sur sa ligne.</p>`
+         🗓️ <b>${esc(g.libelle)}</b> — commande enregistrée avant la nouvelle grille : ses lignes (hors coffrets) gardent les anciens prix, et les options <b>logo</b> et <b>forfait création</b> (inexistantes à l'époque) y sont à 0 €. Le prix d'un coffret se saisit sur sa ligne.
+         <br><button type="button" class="btn sm" style="margin-top:6px" onclick="cmdPasserTarifsEnVigueur()">Passer aux tarifs en vigueur</button></p>`
     : '';
   if(typeof drawLines==='function') drawLines();
 }
@@ -24679,6 +24691,11 @@ function cmdRecalc(){
   const _lh = document.getElementById('f_logoHint');
   if(_lh){
     const pu = logoPrixUnitPour(logoNb);
+    const _forfaitBloque = forfaitNb>0 && !(forfaitCreationPour(1)>0);
+    // [v1512] Pas de « 10 × 0,00 € = 0,00 € » : un zéro qui a l'air d'un prix. On DIT pourquoi et on propose la sortie.
+    if((logoNb>0 && !(pu>0)) || _forfaitBloque){
+      _lh.innerHTML = `<span style="color:var(--red)">⚠ ${logoNb>0 && !(pu>0)?'Logo':'Forfait création'} indisponible aux anciens tarifs de cette commande (option créée après).</span> <span class="act" onclick="cmdPasserTarifsEnVigueur()">Passer aux tarifs en vigueur →</span>`;
+    } else
     _lh.innerHTML = logoNb>0
       ? `${qty(logoNb)} × ${euro(pu)} = <b>${euro(logoSup)}</b>${forfaitNb>0?` · forfait création ${forfaitNb} × ${euro(forfaitCreationPour(1))} = <b>${euro(forfaitSup)}</b>`:''}`
       : (forfaitNb>0 ? `Forfait création ${forfaitNb} × ${euro(forfaitCreationPour(1))} = <b>${euro(forfaitSup)}</b>` : '');
@@ -25212,6 +25229,12 @@ async function saveCmd(id){
       if(!tot){ toast('Don : indique au moins un macaron offert'); return; }
     }
   }
+  // [v1512] Logo ou forfait création demandé mais tarif à 0 € (commande verrouillée sur l'ancienne grille, qui ne
+  // les connaît pas) : on refuse plutôt que d'enregistrer une option « offerte » sans que personne ne l'ait décidé.
+  { const _lN = Math.max(0, Math.round(+val('f_logoNb')||0)), _fN = Math.max(0, Math.round(+val('f_forfaitNb')||0));
+    if((_lN>0 && !(logoPrixUnitPour(_lN)>0)) || (_fN>0 && !(forfaitCreationPour(1)>0))){
+      toast('Logo / forfait création : indisponibles aux anciens tarifs de cette commande — touche « Passer aux tarifs en vigueur »'); return;
+    } }
   // normaliser les lignes (parfums/items en tableaux pour stockage propre), remise de ligne conservée
   const lignes = cmdLinesToStored();
   // [REMISE GLOBALE EN EUROS FIXES] La référence est le montant €, plafonné à la base imposable

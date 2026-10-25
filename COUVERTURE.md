@@ -7048,3 +7048,26 @@ groupe rejeté en fin de document (1) · balisage de remise modifié (1). Mutant
 n'a aucune composition répétée : la règle de répétition la rejette déjà), pas un trou de test.
 
 Limite : le regroupement ne s'applique qu'aux coffrets ; l'export texte interne (buildOrderText) et les écrans de saisie restent ligne à ligne.
+
+## v1512 — Logo « 10 × 0 € = 0,00 € » : sortie explicite du verrou historique (tests/v1512-logo-zero-verrou.test.js, 33 assertions)
+
+Ben : « pourquoi sur le devis, quand je clique sur personnalisation des logos et que j'indique 10, ça met 10 × 0 € = 0,00 € ? »
+
+CAUSE (reproduite sur le vrai code) : le calcul du logo est JUSTE. La grille tarifaire HISTORIQUE n'a pas de tarif logo
+(`logoPaliers:null`, l'option n'existait pas) ; sur un devis/une commande VERROUILLÉ(E) sur cette grille, 10 logos = 10 × 0 €. Depuis v1509
+la case « anciens tarifs » est cachée : un document verrouillé n'offrait plus AUCUN moyen d'en sortir. C'EST UN DÉFAUT DE MA v1509 :
+j'avais noté la limite « les coffrets se règlent ligne par ligne » sans inventorier ce que la case permettait d'autre — dont l'accès au
+logo et au forfait création, qui n'ont aucun prix dans l'ancienne grille. Leçon : retirer un contrôle exige de lister TOUT ce qu'il permettait.
+
+- Bandeau du document verrouillé : explique que logo et forfait création y sont à 0 € + bouton « Passer aux tarifs en vigueur »
+  (`cmdPasserTarifsEnVigueur` : décoche le verrou, redessine, recalcule, prévient). Geste volontaire, jamais automatique.
+- Indice sous le champ logo : plus de « 10 × 0,00 € = 0,00 € » (un zéro qui a l'air d'un prix) → « ⚠ Logo indisponible aux anciens tarifs de
+  cette commande » + lien de sortie. Même traitement du forfait création.
+- Enregistrement : un logo/forfait demandé mais à 0 € est REFUSÉ (une option « offerte » que personne n'a décidée).
+- INCHANGÉ : le verrou reste le défaut d'une commande déjà enregistrée ; aucune donnée stockée n'est retarifiée ; la grille historique garde
+  `logoPaliers:null` (mutation M7 : y mettre un tarif ferait rougir la suite).
+- Bout en bout sur le vrai code : verrou → 0,00 € ; après le geste du bouton → 10 × 1,00 € = 10,00 €.
+
+Sensibilité (7 défauts réintroduits, tous attrapés) : bouton qui ne décoche plus (3 rouges) · bandeau sans bouton (1) · zéro muet de retour (1,
+après renforcement de l'assertion D — la 1re version ne le voyait pas : elle cherchait une mention, pas la condition exacte) · logo à 0 € de nouveau
+accepté (6) · refus trop large (6) · verrou par défaut supprimé (1) · grille historique qui facture le logo (3).

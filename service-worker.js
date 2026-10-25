@@ -1,3 +1,4 @@
+// [v1512] LOGO « 10 × 0 € = 0,00 € ». Cause : sur un devis/une commande verrouillé(e) sur l'ancienne grille (qui n'a pas de tarif logo), depuis que la case est cachée (v1509) il n'y avait plus de sortie. Ajout : bouton « Passer aux tarifs en vigueur » dans le bandeau, indice honnête sous le champ logo, refus d'enregistrer un logo/forfait à 0 €. Cache v542.
 // [v1511] COFFRETS IDENTIQUES RÉSUMÉS SUR LES DEVIS ET FACTURES. Ben : « 10 coffrets de 4 macarons composés de 2 chocolat et 2 vanille » en UNE ligne ; en cas de différence : « 9 coffrets composés de… / 1 coffret composé de… ». Présentation seule : lignes enregistrées et totaux inchangés, somme exacte du groupe, famille = même format + même montant + même remise. Cache v541.
 // [v1510] DUPLIQUER UN COFFRET (x10). Ben : « 10 coffrets de 4 macarons identiques : je le saisis une fois et j'indique x10, puis je modifie un ou plusieurs coffrets ». Copies INDÉPENDANTES (une ligne par coffret, aucune quantité portée par la ligne : totaux, stock, production et documents inchangés), copies repliées en cartes compactes, coffrets repliés à l'ouverture d'une commande à partir de 3. Cache v540.
 // [v1509] COFFRET : NOMBRE DE MACARONS + PRIX LIBRE. Ben : « au lieu d'une case ancien/nouveau prix, un menu avec le nombre de macarons et en face le prix » (4 macarons à 8 € pour un client, à 10 € pour le suivant ; 3 macarons à 8 €). La case « anciens tarifs » disparaît de l'écran (élément conservé caché : verrou historique des commandes déjà enregistrées). Aucun supplément parfum hors formats standard. Cache v539.
@@ -78,7 +79,7 @@
 // [v1272] Temps de production : le tableau « Par parfum / recette » (qui débordait à droite sur iPhone) est remplacé par un rendu en CARTES. Une carte par parfum : nom + nb de batches en tête, puis Réel / Actif / Moy./batch en grille 3 colonnes. Aucune donnée ni logique changée (garde-fou actif>réel + ⚠ conservés). Tableaux « Par jour » et « Détail par batch » inchangés.
 // [v1271] Assemblage : le bouton « Assembler » ne démarre plus de session/chrono d'atelier (l'assemblage physique est fait en amont, temps déjà compté). Il matérialise seulement l'action (décrément composants + création lot).
 // [v1270] Section Impot sur le revenu dans la Comptabilite : abattement micro (71%/50%) + taux marginal (30% par defaut) -> impot estime et net reel apres URSSAF+impot. Taux reglable dans Parametres.
-const CACHE = 'sm-iphone-v541';
+const CACHE = 'sm-iphone-v542';
 const ASSETS = [
   './',
   './index.html',
