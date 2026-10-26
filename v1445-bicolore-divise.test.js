@@ -169,8 +169,13 @@ check('A. repli algorithmique pour une couleur future, non cataloguée (pas de p
     { id:2, recipeId:1, composant:'coques', prodStatut:'termine', qteRestante:140, couleur:'blanc' },
   ];
   const rAsym = modStock.computeStockPotentiel(prodsAsym, recipesById);
-  check('D. contre-épreuve dissymétrique : assemblable = 100 (limité par la couleur la plus rare, PAS 120)',
-    rAsym.assemblableClassique === 100);
+  // [v1514] SUPERSEDÉ PAR DÉCISION DE BEN : « toute couleur avec tout parfum ». Les coques forment une réserve
+  // COMMUNE : 100 + 140 = 240 coques → 120 macarons, plus aucune limite par « la couleur la plus rare » (la limite
+  // d'origine, 100, n'existe plus puisque rien n'impose qu'un macaron prenne une couleur précise). L'invariant utile de
+  // cette contre-épreuve — un lot DIVISÉ ne compte pas deux fois — est conservé par les assertions de réconciliation D
+  // ci-dessus (diviser en 2 lots donne exactement le même total).
+  check('D. [v1514] coques interchangeables : 100 + 140 coques = 120 macarons assemblables (plus de limite par couleur)',
+    rAsym.assemblableClassique === 120);
 }
 
 // ---- E. RÉCONCILIATION — assemblySuggestions : même principe, sur le moteur des suggestions

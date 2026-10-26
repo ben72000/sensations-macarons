@@ -7101,3 +7101,30 @@ et toute suite qui supposerait `recipeId` du lot assemblé = recette des coques.
 
 Sensibilité (10 défauts réintroduits, tous attrapés) : parfum des coques (6 rouges) · verrou à l'enregistrement (2) · couleurs non tracées (5) · règle GF supprimée (1) ·
 verrou dans le formulaire (1) · bouton avec sansMelange (2) · base de lot (1) · standard/GF mélangés (1) · libellé par parfum (1) · filtre de couleur de retour (1).
+
+## v1514 — Coques lancées par couleur + stock par couleur, phase 2 (tests/v1514-coques-par-couleur.test.js, 75 assertions)
+
+Demande de Ben : « le lancement des coques par couleurs, donc dissocié du parfum, et le stock par couleur qui est à disposition, assemblable librement ».
+(Phase 1 = v1513 : assemblage libre couleur × parfum.) Réponse de Ben avant de coder (v1513) : production par COULEUR directement, sans parfum.
+
+- LANCEMENT : nouveau mode « 🎨 Coques par couleur (sans parfum) » du formulaire de production → `prodFormCouleur` (couleur · recette pour les matières · nombre de
+  coques, pair, 240 par défaut = meringue pleine · date) → `prodLancerCoquesCouleur`. Le lot est écrit `couleur` + `parCouleur:true`, nommé « Coques <couleur> »
+  (`prodNomComplet`, tableau des productions), code de lot JJMMAA + code couleur + « -CO », numéroté (…2, …3) à la 2e fournée du jour. Garde-fous : nombre pair,
+  couleur connue, recette ayant des matières « coque » (sinon le lot ne décompterait rien), même blocage « production ouverte depuis plus de N jours » que les autres lancements.
+- ⚠️ CHOIX ASSUMÉ (annoncé à Ben) : la recette ne sert QU'À décompter les matières (sa partie « coque ») ; la couleur du lot est celle que Ben indique. Aucune recette nouvelle
+  n'est créée (pas de pollution des listes de parfums) ; les recettes de la bonne couleur sont proposées d'abord, une alerte visible apparaît si aucune ne porte la couleur.
+- STOCK PAR COULEUR : `coquesStockByColor` (pure) regroupe TOUTES les coques terminées — y compris les lots lancés par parfum avant v1514 (« convertis » = présentés par
+  leurs couleurs) — par couleur et gabarit (standard / GF) ; lot bicolore non divisé = moitié dans chaque couleur ; couleur inconnue = groupe « non renseignée » ;
+  conservation vérifiée (somme des groupes = coques en stock) ; classement FIFO. Panneau « 🎨 Coques par couleur » sur Stock par parfum (vue liste) avec « 🔗 Assembler »
+  (par couleur et par lot) et « ➕ Lancer ».
+- POTENTIEL (`computeStockPotentiel`) : les coques forment une RÉSERVE COMMUNE : assemblables = min(Σ garniture, coques ÷ 2) par gabarit. Disparaissent : réserves par couleur
+  (v1249) et repli par parfum. Diviseur robuste (`typeof COQUES_PAR_MACARON`) pour les suites qui extraient la fonction sans la constante.
+- MONTAGE DEPUIS LE PLAN (`planLancerMontage`) : n'importe quelles coques du même gabarit (celles du même parfum d'origine d'abord) ; la garniture du parfum reste exigée.
+- NON FAIT (annoncé) : le coût de revient d'un macaron reste porté par la recette du parfum (sa partie coque) ; le plan de production et `assemblySuggestions` (suggestions
+  d'accueil par couleur) ne sont pas refondus.
+- Assertion alignée : v1445 D (dissymétrique) — « limité par la couleur la plus rare » (100) devient 100 + 140 coques = 120 macarons : la limite par couleur n'existe plus.
+  ⚠️ Suites ABSENTES à aligner à réception : toute suite de potentiel de stock qui supposait des réserves par couleur ou un repli par parfum (v1249/v1250).
+
+Sensibilité (12 défauts réintroduits, tous attrapés) : drapeau parCouleur perdu (1) · doublon de lot (2) · impair accepté (2) · recette sans coque acceptée (2) · facteur
+matières faux (1) · coques sans couleur ignorées (1) · bicolore compté en double (3) · standard/GF mélangés (2) · montage limité au même parfum (1) · nom de la recette source (1) ·
+bouton Assembler absent (2) · recettes mal ordonnées (1).
