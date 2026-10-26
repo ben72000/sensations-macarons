@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1514'; // suite : voir tests/v1514-coques-par-couleur.test.js
+const APP_VERSION = 'v1515'; // suite : voir tests/v1515-couleurs-libres.test.js
 const APP_MAJ = '« CHEQUE DE CAUTION » DEVIENT « EMPREINTE BANCAIRE ». Ben : « le cheque de caution doit se transformer en empreinte bancaire. Peux-tu changer la mention partout ou apparait cheque de caution ? » ⚠️ CE N ETAIT PAS UN SIMPLE RENOMMAGE : le texte associe decrivait des gestes propres a un CHEQUE — il est « remis », il « n est pas encaisse », il est « restitue ». Une empreinte bancaire se PREND, se DEBITE et s ANNULE. Renommer sans adapter les verbes aurait laisse des clauses incoherentes dans les CGV, un document juridique transmis aux clients. Les VERBES ONT DONC ETE ADAPTES partout : sur la ligne du devis et de la facture (« empreinte prise le jour de la livraison, non debitee, annulee apres retour du materiel »), et dans les trois clauses concernees des CGV — 7.1 (prise a la mise a disposition, non debitee, annulee), 7.2 (aucune empreinte exigee du particulier) et 7.4 (l empreinte pourra etre DEBITEE, et non encaissee). La logique juridique est inchangee : montants dus, complement exigible, surplus restitue, engagement sur l honneur du particulier. LES IDENTIFIANTS DE CODE SONT CONSERVES (CAUTION_CHEQUE, cautionRowHtml, cautionMention) : les renommer toucherait des dizaines de references et des donnees DEJA ENREGISTREES, pour zero gain visible. Seul le texte vu par le client change. Les documents deja emis gardent leur redaction d origine, puisqu ils memorisent leur rendu. Suite v1493 : 27 assertions, dont la verification que le vocabulaire du cheque a bien disparu ; un renommage NAIF (terme change mais verbes conserves) fait rougir 5 assertions. La suite v1492 a suivi le nouveau libelle, son mecanisme etant inchange.';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
@@ -801,7 +801,8 @@ const KV_METIER = {
   sm_autoPay:          "Encaissement automatique (préférence de gestion)",
   sm_mailSignature:    "Signature e-mail rédigée",
   sm_coursesExtra:     "Articles ajoutés à la main à la liste de courses",
-  sm_deletionLog:      "Motifs de suppression saisis par Ben (traçabilité) — attrapée par la garde A2 à son premier passage : elle vivait hors sauvegarde depuis sa création"
+  sm_deletionLog:      "Motifs de suppression saisis par Ben (traçabilité) — attrapée par la garde A2 à son premier passage : elle vivait hors sauvegarde depuis sa création",
+  sm_couleursPerso:    "Couleurs de coques ajoutées à la main (nom, teinte, code de lot) — [v1515] sans cela une purge de Safari les effacerait et les lots de cette couleur perdraient leur nom"
 };
 // Clés d'APPAREIL : elles décrivent l'état de CE téléphone, pas le métier. Les recopier sur un
 // autre appareil serait au mieux inutile (position de la mascotte), au pire FAUX (marqueurs de
@@ -936,6 +937,7 @@ async function kvBoot(){
       // aussi le signal qu'une purge a eu lieu (et qu'un export récent serait bienvenu).
       try{ setTimeout(() => toast(`${restaurees} réglage(s) métier restauré(s) depuis la base ✓`), 800); }catch(e){ swallow(e,'kvBoot toast'); }
     }
+    try{ couleursPersoRecharger(); }catch(e){ swallow(e,'kvBoot couleursPerso'); }   // [v1515] localStorage vient d'être regarni : la palette suit
   }catch(e){ console.error('kvBoot', e); }
   return { restaurees, semees, divergences };
 }
@@ -951,6 +953,7 @@ async function kvRestaureLSDepuisBase(){
       if(!Object.prototype.hasOwnProperty.call(KV_METIER, r.cle)) return;
       try{ localStorage.setItem(r.cle, r.valeur); n++; }catch(e){ swallow(e,'kvRestaureLS'); }
     });
+    try{ couleursPersoRecharger(); }catch(e){ swallow(e,'kvRestaureLS couleursPerso'); }   // [v1515] la sauvegarde restaurée peut porter d'autres couleurs
   }catch(e){ console.error('kvRestaureLSDepuisBase', e); }
   return n;
 }
@@ -5587,6 +5590,155 @@ function coqueCouleurCode(k){
   const lettres = coqueCouleurLabel(k).toUpperCase().replace(/[^A-Z]/g,'').replace(/[ILO]/g,'');
   return lettres.slice(0,3) || 'CLR';
 }
+
+// [v1515] COULEURS DE COQUES AJOUTÉES À LA MAIN. Ben : « être capable de rajouter de nouvelles couleurs en les tapant
+// librement ; cette nouvelle couleur sera rajoutée au stock et figurera aux côtés des autres comme si elle avait toujours
+// été là ». La palette n'est plus figée : elle se complète d'un REGISTRE persistant (`sm_couleursPerso`, recopié dans `kv`
+// donc sauvegardé et restauré). Chaque couleur ajoutée entre dans COQUE_COULEURS et COQUE_COULEUR_CODES, les deux seules
+// sources que lisent les formulaires de recettes, le lancement de coques, le stock par couleur, les libellés et les lots :
+// elle y est donc partout, sans cas particulier.
+// RÈGLES : clé = « perso_ » + nom normalisé (jamais en collision avec une couleur d'origine) ; un nom déjà connu — même
+// retapé « ROUGE », « rougé » ou « Marron foncé » — RETROUVE la couleur existante au lieu de créer un doublon ; une couleur
+// d'origine ne s'écrase jamais ; la clé ne change JAMAIS (renommer ne casse aucun lot) ; une couleur utilisée ne se supprime pas.
+const COULEURS_PERSO_CLE = 'sm_couleursPerso';
+const COULEUR_PERSO_HEX_DEFAUT = '#c9b8a8';
+const COULEUR_PERSO_LABEL_MAX = 32;
+function couleurNormaliser(txt){
+  return String(txt==null?'':txt).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+}
+function couleurLabelNettoyer(txt){
+  const t = String(txt==null?'':txt).replace(/\s+/g,' ').trim().slice(0, COULEUR_PERSO_LABEL_MAX).trim();
+  return t ? t.charAt(0).toUpperCase() + t.slice(1) : '';
+}
+function couleursPersoLire(){
+  try{
+    const r = JSON.parse(localStorage.getItem(COULEURS_PERSO_CLE) || '[]');
+    if(!Array.isArray(r)) return [];
+    return r.filter(c => c && typeof c.cle==='string' && /^perso_[a-z0-9_]+$/.test(c.cle) && typeof c.label==='string' && c.label.trim());
+  }catch(e){ return []; }
+}
+function couleursPersoEcrire(liste){ localStorage.setItem(COULEURS_PERSO_CLE, JSON.stringify(liste)); }
+// Pose (ou repose) les couleurs enregistrées dans la palette vivante. Appelée au chargement, après la réconciliation kv
+// du démarrage ET après une restauration de sauvegarde : sans cela une purge ferait « oublier » la couleur aux écrans,
+// qui rejettent toute clé absente de COQUE_COULEURS (recCoqueColors, coqueColorProfile).
+function couleursPersoRecharger(){
+  Object.keys(COQUE_COULEURS).forEach(k=>{ if(COQUE_COULEURS[k] && COQUE_COULEURS[k].perso){ delete COQUE_COULEURS[k]; delete COQUE_COULEUR_CODES[k]; } });
+  couleursPersoLire().forEach(c=>{
+    if(COQUE_COULEURS[c.cle]) return;                  // jamais écraser une couleur d'origine ni une doublonne
+    COQUE_COULEURS[c.cle] = { label:c.label, hex:(/^#[0-9a-f]{6}$/i.test(c.hex||'') ? c.hex : COULEUR_PERSO_HEX_DEFAUT), perso:true };
+    if(c.code) COQUE_COULEUR_CODES[c.cle] = c.code;
+  });
+}
+// La couleur déjà connue qui porte ce nom (clé, libellé ou clé retapée avec des espaces), hors `sauf`.
+function couleurExistante(label, sauf){
+  const n = couleurNormaliser(label); if(!n) return null;
+  const cle = n.replace(/ /g,'_');
+  for(const k of Object.keys(COQUE_COULEURS)){
+    if(k===sauf) continue;
+    if(k===cle || couleurNormaliser(COQUE_COULEURS[k].label)===n || couleurNormaliser(k.replace(/_/g,' '))===n) return k;
+  }
+  return null;
+}
+// Code de lot (3 caractères, sans I/L/O ambigus), UNIQUE parmi toutes les couleurs : deux couleurs au même code
+// donneraient des numéros de lot indiscernables.
+function couleurPersoCode(label, utilises){
+  const lettres = couleurNormaliser(label).toUpperCase().replace(/[^A-Z]/g,'').replace(/[ILO]/g,'');
+  const base = (lettres + 'XXX').slice(0,3);
+  const pris = new Set(utilises||[]);
+  if(!pris.has(base)) return base;
+  for(let d=2; d<=9; d++){ const c = base.slice(0,2)+d; if(!pris.has(c)) return c; }
+  for(let n=10; n<100; n++){ const c = base.slice(0,1)+n; if(!pris.has(c)) return c; }
+  return base+'9';
+}
+function couleurPersoCreer(labelBrut, hexBrut){
+  const label = couleurLabelNettoyer(labelBrut);
+  if(!label) throw new Error('Tape le nom de la couleur');
+  const n = couleurNormaliser(label);
+  if(!n) throw new Error('Ce nom ne contient ni lettre ni chiffre : tape un nom de couleur');
+  const deja = couleurExistante(label);
+  if(deja) return { cle:deja, label:coqueCouleurLabel(deja), creee:false };      // jamais de doublon
+  const racine = 'perso_' + n.replace(/ /g,'_'); let cle = racine, i = 2;
+  while(COQUE_COULEURS[cle]) cle = racine + '_' + (i++);
+  const hex = /^#[0-9a-f]{6}$/i.test(String(hexBrut||'')) ? String(hexBrut).toLowerCase() : COULEUR_PERSO_HEX_DEFAUT;
+  const utilises = Object.keys(COQUE_COULEURS).map(k=>coqueCouleurCode(k));
+  const code = couleurPersoCode(label, utilises);
+  const liste = couleursPersoLire(); liste.push({ cle, label, hex, code });
+  couleursPersoEcrire(liste);                                   // d'ABORD le stockage : s'il échoue, la palette reste intacte
+  COQUE_COULEURS[cle] = { label, hex, perso:true }; COQUE_COULEUR_CODES[cle] = code;
+  return { cle, label, creee:true };
+}
+// Renommer / changer la teinte : la CLÉ ne bouge pas, donc lots, recettes et stock suivent tout seuls.
+function couleurPersoModifier(cle, labelBrut, hexBrut){
+  const liste = couleursPersoLire(); const i = liste.findIndex(c=>c.cle===cle);
+  if(i<0) throw new Error('Couleur introuvable (seules les couleurs ajoutées à la main se modifient)');
+  const label = couleurLabelNettoyer(labelBrut);
+  if(!label || !couleurNormaliser(label)) throw new Error('Tape le nom de la couleur');
+  const autre = couleurExistante(label, cle);
+  if(autre) throw new Error(`« ${coqueCouleurLabel(autre)} » existe déjà`);
+  const hex = /^#[0-9a-f]{6}$/i.test(String(hexBrut||'')) ? String(hexBrut).toLowerCase() : liste[i].hex;
+  liste[i] = Object.assign({}, liste[i], { label, hex });
+  couleursPersoEcrire(liste);
+  COQUE_COULEURS[cle] = { label, hex, perso:true };
+  return { cle, label };
+}
+async function couleurPersoUtilisation(cle){
+  const prods = await db.productions.toArray().catch(()=>[]);
+  const recs = await db.recipes.toArray().catch(()=>[]);
+  return { nbLots: prods.filter(p=>p.couleur===cle).length,
+           nbRecettes: recs.filter(r=>Array.isArray(r.coqueColors) && r.coqueColors.indexOf(cle)>=0).length };
+}
+async function couleurPersoSupprimer(cle){
+  const liste = couleursPersoLire();
+  if(!liste.some(c=>c.cle===cle)) throw new Error('Couleur introuvable (seules les couleurs ajoutées à la main se suppriment)');
+  const u = await couleurPersoUtilisation(cle);
+  if(u.nbLots || u.nbRecettes) throw new Error(`« ${coqueCouleurLabel(cle)} » est utilisée (${u.nbLots} lot(s), ${u.nbRecettes} recette(s)) : renomme-la plutôt que de la supprimer`);
+  couleursPersoEcrire(liste.filter(c=>c.cle!==cle));
+  delete COQUE_COULEURS[cle]; delete COQUE_COULEUR_CODES[cle];
+}
+function couleursPersoForm(){
+  const liste = couleursPersoLire();
+  const lignes = liste.map(c=>`<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid #f0e9e2">
+      <span style="flex:1">${coqueCouleurPastille(c.cle)} <b>${esc(coqueCouleurLabel(c.cle))}</b></span>
+      <button class="btn sm" onclick="couleurPersoEditerForm('${c.cle}')">✎ Modifier</button>
+      <button class="btn sm" onclick="couleurPersoSupprimerUI('${c.cle}')">🗑</button></div>`).join('');
+  openModal(`<h3>🎨 Mes couleurs de coques</h3>
+   <p class="note">Tape le nom d'une couleur : elle rejoint les autres <b>partout</b> (lancement de coques, recettes, stock, assemblage).</p>
+   <div class="row2">
+     <div class="field"><label>Nom de la couleur</label><input id="f_cpNom" maxlength="${COULEUR_PERSO_LABEL_MAX}" placeholder="ex : Bleu nuit"></div>
+     <div class="field"><label>Teinte</label><input type="color" id="f_cpHex" value="${COULEUR_PERSO_HEX_DEFAUT}"></div>
+   </div>
+   <div class="modal-actions"><button class="btn gold" onclick="couleurPersoAjouterUI()">Ajouter</button></div>
+   ${liste.length ? `<h4 style="margin:12px 0 4px">Mes couleurs ajoutées</h4>${lignes}` : ''}
+   <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+}
+function couleurPersoAjouterUI(){
+  try{
+    const r = couleurPersoCreer(val('f_cpNom'), val('f_cpHex'));
+    toast(r.creee ? `🎨 « ${r.label} » ajoutée — disponible partout` : `« ${r.label} » existe déjà : rien à ajouter`);
+    couleursPersoForm();
+  }catch(err){ toast(err.message||'Nom de couleur invalide'); }
+}
+function couleurPersoEditerForm(cle){
+  const c = couleursPersoLire().find(x=>x.cle===cle); if(!c){ toast('Couleur introuvable'); return; }
+  openModal(`<h3>✎ Modifier « ${esc(c.label)} »</h3>
+   <p class="note">Le nom et la teinte changent <b>partout</b> ; les lots et recettes qui l'utilisent suivent.</p>
+   <div class="row2">
+     <div class="field"><label>Nom</label><input id="f_cpNom" maxlength="${COULEUR_PERSO_LABEL_MAX}" value="${esc(c.label)}"></div>
+     <div class="field"><label>Teinte</label><input type="color" id="f_cpHex" value="${esc(c.hex||COULEUR_PERSO_HEX_DEFAUT)}"></div>
+   </div>
+   <div class="modal-actions"><button class="btn ghost" onclick="couleursPersoForm()">Annuler</button><button class="btn gold" onclick="couleurPersoEnregistrerUI('${c.cle}')">Enregistrer</button></div>`);
+}
+function couleurPersoEnregistrerUI(cle){
+  try{ const r = couleurPersoModifier(cle, val('f_cpNom'), val('f_cpHex')); toast(`« ${r.label} » enregistrée ✓`); couleursPersoForm(); }
+  catch(err){ toast(err.message||'Modification impossible'); }
+}
+async function couleurPersoSupprimerUI(cle){
+  const c = couleursPersoLire().find(x=>x.cle===cle); if(!c){ toast('Couleur introuvable'); return; }
+  if(!confirm(`Supprimer la couleur « ${c.label} » ?`)) return;
+  try{ await couleurPersoSupprimer(cle); toast(`« ${c.label} » supprimée`); couleursPersoForm(); }
+  catch(err){ toast(err.message||'Suppression impossible'); }
+}
+couleursPersoRecharger();   // la palette vivante est complète dès le chargement du script (avant tout écran)
 
 // Mapping par défaut des 19 parfums → [couleur1, couleur2]. Sert au PRÉ-REMPLISSAGE des recettes
 // existantes (par correspondance de nom normalisé), non destructif. Modifiable ensuite par recette.
@@ -16429,8 +16581,11 @@ function prodCouleurRecettesRefresh(){
   const selC = document.getElementById('f_ccCouleur'), selR = document.getElementById('f_ccRec'), note = document.getElementById('f_ccRecNote');
   if(!selC || !selR) return;
   const couleur = selC.value;
+  // [v1515] « Autre couleur » : on affiche la saisie du nom ; aucune recette ne porte encore cette couleur.
+  const nouvelle = couleur === '__nouvelle__';
+  const blocNouvelle = document.getElementById('f_ccNouvelle'); if(blocNouvelle) blocNouvelle.style.display = nouvelle ? '' : 'none';
   const recettes = (window._allRecipesCache || []).slice().sort((a,b)=>String(a.produitNom||'').localeCompare(String(b.produitNom||''),'fr'));
-  const ok = r => recCoqueColors(r).indexOf(couleur) >= 0;
+  const ok = r => !nouvelle && recCoqueColors(r).indexOf(couleur) >= 0;
   const bonnes = recettes.filter(ok), autres = recettes.filter(r=>!ok(r));
   const garde = selR.value;
   const opt = (r, tag) => `<option value="${r.id}">${esc(r.produitNom||'?')}${r.grandFormat?' (grand format)':''}${tag}</option>`;
@@ -16439,7 +16594,9 @@ function prodCouleurRecettesRefresh(){
   if(garde && selR.querySelector(`option[value="${garde}"]`)) selR.value = garde;
   if(note) note.innerHTML = bonnes.length
     ? `Les matières décomptées sont celles de la partie <b>coque</b> de la recette choisie.`
-    : `<span style="color:#b04a3f">⚠ Aucune recette ne porte cette couleur : choisis celle dont la partie <b>coque</b> convient (le lot sera quand même enregistré en ${esc(coqueCouleurLabel(couleur))}).</span>`;
+    : ((nouvelle || (COQUE_COULEURS[couleur] && COQUE_COULEURS[couleur].perso))
+        ? `Couleur sans recette dédiée : choisis la recette dont la partie <b>coque</b> convient pour les matières.`
+        : `<span style="color:#b04a3f">⚠ Aucune recette ne porte cette couleur : choisis celle dont la partie <b>coque</b> convient (le lot sera quand même enregistré en ${esc(coqueCouleurLabel(couleur))}).</span>`);
 }
 async function prodFormCouleur(prefill){
   prefill = prefill || {};
@@ -16454,10 +16611,15 @@ async function prodFormCouleur(prefill){
   window._allRecipesCache = recipes;
   const cles = Object.keys(COQUE_COULEURS);
   const couleur = (prefill.couleur && COQUE_COULEURS[prefill.couleur]) ? prefill.couleur : cles[0];
-  const couleurOpts = cles.map(k=>`<option value="${k}"${k===couleur?' selected':''}>${esc(coqueCouleurLabel(k))}</option>`).join('');
+  const couleurOpts = cles.map(k=>`<option value="${k}"${k===couleur?' selected':''}>${esc(coqueCouleurLabel(k))}</option>`).join('')
+    + `<option value="__nouvelle__">➕ Autre couleur (je la tape)…</option>`;     // [v1515]
   openModal(`<h3>🎨 Lancer des coques par couleur</h3>
    <p class="note">Ces coques n'ont <b>pas de parfum</b> : elles entrent en stock par <b>couleur</b> et s'assemblent ensuite avec n'importe quelle garniture.</p>
    <div class="field"><label>Couleur des coques</label><select id="f_ccCouleur" onchange="prodCouleurRecettesRefresh()">${couleurOpts}</select></div>
+   <div id="f_ccNouvelle" class="row2" style="display:none">
+     <div class="field"><label>Nom de la nouvelle couleur</label><input id="f_ccNouvelleNom" maxlength="${COULEUR_PERSO_LABEL_MAX}" placeholder="ex : Bleu nuit"></div>
+     <div class="field"><label>Teinte</label><input type="color" id="f_ccNouvelleHex" value="${COULEUR_PERSO_HEX_DEFAUT}"></div>
+   </div>
    <div class="field"><label>Recette pour les matières <span style="color:#9a8a82;font-weight:400">— sa partie « coque » est décomptée</span></label>
      <select id="f_ccRec"></select><p class="note" id="f_ccRecNote" style="margin-top:4px"></p></div>
    <div class="row2">
@@ -16469,7 +16631,15 @@ async function prodFormCouleur(prefill){
   prodCouleurRecettesRefresh();
 }
 async function prodCouleurSave(){
-  const couleur = val('f_ccCouleur'), rid = +val('f_ccRec'), nb = Math.round(+val('f_ccQte')||0), dateD = val('f_ccDate') || today();
+  let couleur = val('f_ccCouleur'); const rid = +val('f_ccRec'), nb = Math.round(+val('f_ccQte')||0), dateD = val('f_ccDate') || today();
+  // [v1515] « Autre couleur » : on la crée (ou on retrouve celle qui porte déjà ce nom) AVANT de lancer.
+  if(couleur === '__nouvelle__'){
+    try{
+      const r = couleurPersoCreer(val('f_ccNouvelleNom'), val('f_ccNouvelleHex'));
+      couleur = r.cle;
+      toast(r.creee ? `🎨 « ${r.label} » ajoutée à tes couleurs` : `« ${r.label} » existe déjà : utilisée telle quelle`);
+    }catch(err){ toast(err.message||'Nom de couleur invalide'); return; }
+  }
   if(!COQUE_COULEURS[couleur]){ toast('Choisis une couleur'); return; }
   if(!rid){ toast('Choisis la recette dont la partie « coque » sera décomptée'); return; }
   if(!(nb>=2) || nb%COQUES_PAR_MACARON){ toast('Nombre de coques invalide : un nombre PAIR, 2 minimum (2 coques = 1 macaron)'); return; }
@@ -44392,6 +44562,7 @@ async function _stockCoquesCouleurHtml(){
   const corps = groupes.length ? groupes.map(ligne).join('') : `<p class="note" style="margin:6px 0">Aucune coque terminée en stock.</p>`;
   return `<div class="panel" style="margin-bottom:12px">
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><h3 style="margin:0;flex:1">🎨 Coques par couleur</h3>
+      <button class="btn sm" onclick="couleursPersoForm()">🎨 Nouvelle couleur</button>
       <button class="btn sm" onclick="prodFormCouleur()">➕ Lancer des coques</button></div>
     <p class="note" style="margin:4px 0 6px">Toute couleur va avec tout parfum : touche <b>Assembler</b>, puis choisis la garniture.</p>${corps}</div>`;
 }

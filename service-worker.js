@@ -1,3 +1,4 @@
+// [v1515] COULEURS DE COQUES SAISIES LIBREMENT. Ben : « rajouter de nouvelles couleurs en les tapant librement ; elle figure aux côtés des autres comme si elle avait toujours été là ». Registre persistant (sm_couleursPerso, sauvegardé via kv) qui complète la palette ; « Autre couleur » au lancement de coques ; bouton « Nouvelle couleur » (ajouter, modifier, supprimer si inutilisée) ; jamais de doublon. Cache v545.
 // [v1514] COQUES LANCÉES PAR COULEUR + STOCK PAR COULEUR (phase 2). Ben : « le lancement des coques par couleurs, dissocié du parfum, et le stock par couleur à disposition, assemblable librement ». Nouveau lancement (couleur + nombre de coques, matières = partie « coque » d'une recette choisie), panneau « Coques par couleur » sur Stock par parfum, potentiel de stock à coques interchangeables, montage depuis le plan avec n'importe quelles coques. Cache v544.
 // [v1513] ASSEMBLAGE LIBRE COULEUR × PARFUM (phase 1). Ben : « toutes les coques définies par leurs couleurs, assembler n'importe quelle couleur avec n'importe quel parfum, on fait sauter les verrous ». Tombent : verrou « un seul parfum » (v1426), filtre de couleur de la mutualisation (v1249), couleur imposée au 2e lot (v1506). Le macaron prend le parfum de la GARNITURE (avant : celui des coques), la couleur des coques est tracée. Cache v543.
 // [v1512] LOGO « 10 × 0 € = 0,00 € ». Cause : sur un devis/une commande verrouillé(e) sur l'ancienne grille (qui n'a pas de tarif logo), depuis que la case est cachée (v1509) il n'y avait plus de sortie. Ajout : bouton « Passer aux tarifs en vigueur » dans le bandeau, indice honnête sous le champ logo, refus d'enregistrer un logo/forfait à 0 €. Cache v542.
@@ -81,7 +82,7 @@
 // [v1272] Temps de production : le tableau « Par parfum / recette » (qui débordait à droite sur iPhone) est remplacé par un rendu en CARTES. Une carte par parfum : nom + nb de batches en tête, puis Réel / Actif / Moy./batch en grille 3 colonnes. Aucune donnée ni logique changée (garde-fou actif>réel + ⚠ conservés). Tableaux « Par jour » et « Détail par batch » inchangés.
 // [v1271] Assemblage : le bouton « Assembler » ne démarre plus de session/chrono d'atelier (l'assemblage physique est fait en amont, temps déjà compté). Il matérialise seulement l'action (décrément composants + création lot).
 // [v1270] Section Impot sur le revenu dans la Comptabilite : abattement micro (71%/50%) + taux marginal (30% par defaut) -> impot estime et net reel apres URSSAF+impot. Taux reglable dans Parametres.
-const CACHE = 'sm-iphone-v544';
+const CACHE = 'sm-iphone-v545';
 const ASSETS = [
   './',
   './index.html',

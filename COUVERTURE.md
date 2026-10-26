@@ -7128,3 +7128,31 @@ Demande de Ben : « le lancement des coques par couleurs, donc dissocié du parf
 Sensibilité (12 défauts réintroduits, tous attrapés) : drapeau parCouleur perdu (1) · doublon de lot (2) · impair accepté (2) · recette sans coque acceptée (2) · facteur
 matières faux (1) · coques sans couleur ignorées (1) · bicolore compté en double (3) · standard/GF mélangés (2) · montage limité au même parfum (1) · nom de la recette source (1) ·
 bouton Assembler absent (2) · recettes mal ordonnées (1).
+
+## v1515 — Couleurs de coques saisies librement (tests/v1515-couleurs-libres.test.js, 90 assertions)
+
+Demande de Ben : « être capable de rajouter de nouvelles couleurs en les tapant librement. Puis cette nouvelle couleur sera rajoutée au stock et figurera
+aux côtés des autres couleurs comme si elle avait toujours été là. »
+
+PRINCIPE : la palette COQUE_COULEURS n'est plus figée ; un REGISTRE persistant `sm_couleursPerso` la complète. Tous les écrans lisent COQUE_COULEURS /
+COQUE_COULEUR_CODES et REJETTENT toute clé absente (recCoqueColors, coqueColorProfile) : la couleur est donc posée dans la palette AU CHARGEMENT, après la
+réconciliation kv du démarrage ET après une restauration de sauvegarde — sans cela une purge de Safari la ferait « oublier » aux écrans.
+- SAUVEGARDE : `sm_couleursPerso` classée MÉTIER dans KV_METIER (recopiée dans `kv` = sauvegardée, restaurable) — la garde v1372 (absente de l'archive) exige que toute clé soit classée.
+- CRÉATION `couleurPersoCreer` : clé « perso_<nom normalisé> », nom mis en forme (1re majuscule, 32 caractères max), teinte (défaut neutre si absente/invalide),
+  code de lot de 3 caractères UNIQUE parmi toutes les couleurs. Écrit d'ABORD le stockage, ensuite la palette (stockage plein = aucune couleur « fantôme »).
+- JAMAIS DE DOUBLON : « rouge », « ROUGE », « Rougé », « Marron foncé », « marron_fonce » retrouvent la couleur EXISTANTE ; trois saisies d'une couleur ajoutée → une seule couleur.
+  Noms vides / symboles / emoji refusés. Une couleur d'origine ne s'écrase jamais (clé stockée au préfixe « perso_ » obligatoire).
+- MODIFIER : nom et teinte changent partout, la CLÉ ne bouge pas (lots, recettes, stock suivent) ; code de lot inchangé ; refus d'un nom déjà pris.
+- SUPPRIMER : refusé si la couleur est utilisée par un lot ou une recette (message chiffré « renomme-la »), confirmation sinon ; les couleurs d'origine ne se suppriment pas.
+- ÉCRANS : « ➕ Autre couleur (je la tape)… » au lancement de coques (la couleur est créée AVANT le lancement, ou réutilisée si le nom existe, avec message) ; bouton
+  « 🎨 Nouvelle couleur » dans le panneau Coques par couleur (ajouter / modifier / supprimer). Noms échappés partout. Note du lancement neutre (pas d'alerte) pour une couleur sans recette dédiée.
+- « COMME SI ELLE AVAIT TOUJOURS ÉTÉ LÀ » prouvé en faisant tourner les VRAIES fonctions sur la nouvelle couleur : recCoqueColors, coqueColorProfile, coquesStockByColor
+  (rangée à côté des autres, classée alphabétiquement), coqueLotLibelle, prodNomComplet.
+- Piège d'outillage trouvé en chemin : une assertion « échappement » passait par un OU laxiste (clé introuvable car le nom est tronqué à 32 caractères) ; resserrée puis revérifiée.
+
+LIMITES : ordre dans les listes déroulantes = couleurs d'origine puis couleurs ajoutées (dans l'ordre de création) ; le formulaire de RECETTE propose les couleurs ajoutées mais n'a pas
+de bouton de création (ouvrir une seconde fenêtre perdrait la saisie de la recette) — on les crée depuis le lancement ou le panneau de stock.
+
+Sensibilité (13 défauts réintroduits, tous attrapés) : doublons (10 rouges) · rechargement inerte (4) · couleur d'origine écrasée (2) · suppression d'une couleur utilisée (4) ·
+codes non uniques (1) · clé hors KV_METIER (1) · kvBoot sans rechargement (1) · restauration sans rechargement (1) · lancement sans création (5) · palette avant stockage (1) ·
+renommage vers un nom pris (2) · nom non mis en forme (6) · nom non échappé (1).

@@ -213,7 +213,8 @@ const SUITES = [
   'v1511-coffrets-groupes-documents.test.js',  // v1511 · coffrets identiques résumés sur devis/factures (1 ligne ; détail si différences) — présentation seule, somme exacte, famille = format+montant+remise, 4 rendus via un seul point d'entrée
   'v1512-logo-zero-verrou.test.js',  // v1512 · logo « 10 × 0 € » : bouton de sortie du verrou historique, indice honnête, refus d'un logo/forfait à 0 €
   'v1513-assemblage-libre-couleur-parfum.test.js',  // v1513 · assemblage libre couleur × parfum : le macaron prend le parfum de la garniture, couleurs des coques tracées, verrous v1426/v1249/v1506 retirés, GF/standard séparés — exécute le vrai prodAssembleSave
-  'v1514-coques-par-couleur.test.js'            // v1514 · coques lancées par couleur (sans parfum) + stock par couleur + potentiel à coques interchangeables + montage avec n'importe quelles coques — exécute le vrai code
+  'v1514-coques-par-couleur.test.js',  // v1514 · coques lancées par couleur (sans parfum) + stock par couleur + potentiel à coques interchangeables + montage avec n'importe quelles coques — exécute le vrai code
+  'v1515-couleurs-libres.test.js'               // v1515 · couleurs de coques saisies librement : registre persistant et sauvegardé, jamais de doublon, palette rechargée au démarrage/restauration, présente partout (stock, libellés, profils), modifier/supprimer
 ];
 
 let allOk = true;

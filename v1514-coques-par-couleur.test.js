@@ -122,7 +122,7 @@ function monde(o){
     function rendre(couleur, recettes){
       const selR = { innerHTML: '', value: '', querySelector: () => null }, note = { innerHTML: '' }, selC = { value: couleur };
       const doc = { getElementById: id => ({ f_ccCouleur: selC, f_ccRec: selR, f_ccRecNote: note })[id] || null };
-      new Function('document','window','recCoqueColors','esc','coqueCouleurLabel', src + '\nprodCouleurRecettesRefresh();')(doc, { _allRecipesCache: recettes }, col.recCoqueColors, x => String(x), L);
+      new Function('document','window','recCoqueColors','esc','coqueCouleurLabel','COQUE_COULEURS', src + '\nprodCouleurRecettesRefresh();')(doc, { _allRecipesCache: recettes }, col.recCoqueColors, x => String(x), L, col.COQUE_COULEURS);   // [v1515] la note distingue les couleurs ajoutées à la main : la palette est une dépendance
       return { selR, note };
     }
     const r1 = rendre('rouge', [{ id: 1, produitNom: 'Vanille', coqueColors: ['blanc', 'blanc'] }, { id: 2, produitNom: 'Framboise', coqueColors: ['rouge', 'rouge'] }, { id: 8, produitNom: 'Fraise GF', grandFormat: true, coqueColors: ['rouge', 'rouge'] }]);
