@@ -60,53 +60,12 @@ const lot = (id, o) => Object.assign({ id, composant: 'coques', prodStatut: 'ter
   check('A. entrée vide / absente sans plantage', stockApi([], RECS).length === 0 && stockApi(null, RECS).length === 0);
 }
 
-// ---------- B. Lancement par couleur : le VRAI code ----------
-const srcLancer = fn('async function prodLancerCoquesCouleur(couleur, rid, nbCoques, dateD){');
-check('B. prodLancerCoquesCouleur retrouvée', srcLancer.length > 1500);
-function monde(o){
-  o = o || {};
-  const recs = o.recs || { 3: { id: 3, produitNom: 'Framboise' }, 7: { id: 7, produitNom: 'Sans coque' } };
-  const items = o.items || { 3: [{ partie: 'coque', materialId: 1 }, { partie: 'ganache', materialId: 2 }], 7: [{ partie: 'ganache', materialId: 2 }, { partie: 'cremeux', materialId: 3 }] };
-  const trace = { enreg: [], taches: [], fiches: [], toasts: [], upd: [] };
-  const prods = o.prods || [];
-  const dbm = { recipes: { get: async id => recs[id] },
-    recipeItems: { where: () => ({ equals: rid => ({ toArray: async () => items[rid] || [] }) }) },
-    productions: { toArray: async () => prods, update: async (id, patch) => { trace.upd.push({ id, patch }); } } };
-  const f = new Function('db','COQUE_COULEURS','COQUES_PAR_MACARON','coqueCouleurLabel','coqueCouleurCode','lotDateJJMMAA','enregistrerProduction','prodTaskStartForBatch','closeModal','renderProductions','toast','qty','ficheRecetteProduction',
-    srcLancer + '\nreturn prodLancerCoquesCouleur;')(
-    dbm, col.COQUE_COULEURS, 2, L, col.coqueCouleurCode, d => '261026',
-    async (...a) => { trace.enreg.push(a); return 500; }, m => { trace.taches.push(m); return 'T9'; }, () => {}, () => {}, t => trace.toasts.push(t), x => String(x),
-    async (...a) => { trace.fiches.push(a); });
-  return { f, trace };
-}
+// ---------- B. [v1516] Lancement par couleur : SUPERSEDÉ ----------
+// `prodLancerCoquesCouleur` (une couleur, formulaire dédié) a disparu : « Coques par couleur (sans parfum) » est retiré du menu
+// « Nouvelle production » à la demande de Ben ; le mode « Coques — 2 à 3 couleurs (meringue commune) » le remplace et accepte
+// 1 à 8 couleurs (`prodLancerCouleurs`). Les assertions de lancement (consommation, numérotation des lots, refus impair, recette
+// sans matière coque, atelier, fiche) sont reprises et étendues dans tests/v1516-meringue-couleurs.test.js.
 (async () => {
-  { const { f, trace } = monde(); const r = await f('rouge', 3, 240, '2026-10-26');
-    const a = trace.enreg[0] || []; const meta = a[7] || {};
-    check('B. production enregistrée sur la recette choisie (id 3), 240 coques théoriques ET réelles', a[0] === 3 && a[1] === 240 && a[2] === 240);
-    check('B. composant « coques », couleur « rouge », drapeau parCouleur', meta.composant === 'coques' && meta.couleur === 'rouge' && meta.parCouleur === true);
-    check('B. facteur matières = 120 macarons-équivalent (240 coques ÷ 2) — les ingrédients décomptés sont ceux de 120 macarons', meta.facteurQte === 120);
-    check('B. lot = JJMMAA + code couleur, suffixe « -CO », base commune cohérente', a[4] === meta.lotBase + '-CO' && meta.lotBase === ('261026' + col.coqueCouleurCode('rouge')).toUpperCase());
-    check('B. emplacement vide au lancement (choisi à la fin de production), comme les autres lancements', a[5] === '' && a[6] === '');
-    check('B. tâche d\'atelier démarrée, nommée « Coques Rouge » et rattachée au lot', trace.taches[0].parfumNom === 'Coques ' + L('rouge') && trace.taches[0].composant === 'coques' && trace.upd[0].patch.atelierTaskId === 'T9');
-    check('B. fiche de recette imprimée pour 120 macarons, composant coques', trace.fiches[0][0] === 3 && trace.fiches[0][1] === 120 && trace.fiches[0][2] === 'coques');
-    check('B. retour exploitable (id de production, lot, nombre de coques)', r.prodId === 500 && r.nbCoques === 240 && /-CO$/.test(r.lot)); }
-  { const base = ('261026' + col.coqueCouleurCode('rouge')).toUpperCase();
-    const { f, trace } = monde({ prods: [{ parCouleur: true, lotBase: base }] }); await f('rouge', 3, 120, '2026-10-26');
-    check('B. 2e fournée du jour, même couleur → base numérotée (…2), jamais un lot en doublon', trace.enreg[0][7].lotBase === base + '2');
-    const m2 = monde({ prods: [{ parCouleur: true, lotBase: base }, { parCouleur: true, lotBase: base + '2' }] }); await m2.f('rouge', 3, 120, '2026-10-26');
-    check('B. 3e fournée → …3', m2.trace.enreg[0][7].lotBase === base + '3');
-    const m3 = monde({ prods: [{ parCouleur: true, lotBase: '261026XXXX' }, { lotBase: base }] }); await m3.f('rouge', 3, 120, '2026-10-26');
-    check('B. un lot lancé par PARFUM la même date ne décale pas la numérotation par couleur', m3.trace.enreg[0][7].lotBase === base); }
-  { const m = monde(); const rej = async (args) => { try{ await m.f(...args); return null; }catch(e){ return e.message; } };
-    check('B. nombre IMPAIR refusé (2 coques = 1 macaron)', /pair/.test(await rej(['rouge', 3, 241, '2026-10-26'])));
-    check('B. 0 coque refusé', /invalide/.test(await rej(['rouge', 3, 0, '2026-10-26'])));
-    check('B. couleur inconnue refusée', /Couleur inconnue/.test(await rej(['fuchsia_inexistant', 3, 240, '2026-10-26'])));
-    check('B. recette introuvable refusée', /Recette introuvable/.test(await rej(['rouge', 99, 240, '2026-10-26'])));
-    check('B. recette SANS matières « coque » refusée (sinon un lot serait créé sans rien décompter)', /pas de matières « coque »/.test(await rej(['rouge', 7, 240, '2026-10-26'])));
-    check('B. aucun refus n\'a enregistré de production', m.trace.enreg.length === 0); }
-  { const m = monde({ items: { 3: [{ materialId: 1 }, { materialId: 2 }] } }); await m.f('blanc', 3, 100, '2026-10-26');
-    check('B. recette ANCIENNE non étiquetée : acceptée (comportement d\'origine : tout est décompté)', m.trace.enreg.length === 1); }
-
   // ---------- C. Nom d'un lot ----------
   { const src = fn('function prodNomComplet(p, recipes){');
     const nom = new Function('coqueCouleurLabel','window', src + '\nreturn prodNomComplet;')(L, { _allRecipesCache: [{ id: 3, produitNom: 'Framboise' }] });
@@ -117,29 +76,7 @@ function monde(o){
   // ---------- D. Le drapeau est écrit en base ----------
   check('D. enregistrerProduction écrit parCouleur (meta.parCouleur)', /parCouleur: meta\.parCouleur\|\|undefined,/.test(stripComments(fn('async function enregistrerProduction('))));
 
-  // ---------- E. Formulaire : menu des recettes ----------
-  { const src = fn('function prodCouleurRecettesRefresh(){');
-    function rendre(couleur, recettes){
-      const selR = { innerHTML: '', value: '', querySelector: () => null }, note = { innerHTML: '' }, selC = { value: couleur };
-      const doc = { getElementById: id => ({ f_ccCouleur: selC, f_ccRec: selR, f_ccRecNote: note })[id] || null };
-      new Function('document','window','recCoqueColors','esc','coqueCouleurLabel','COQUE_COULEURS', src + '\nprodCouleurRecettesRefresh();')(doc, { _allRecipesCache: recettes }, col.recCoqueColors, x => String(x), L, col.COQUE_COULEURS);   // [v1515] la note distingue les couleurs ajoutées à la main : la palette est une dépendance
-      return { selR, note };
-    }
-    const r1 = rendre('rouge', [{ id: 1, produitNom: 'Vanille', coqueColors: ['blanc', 'blanc'] }, { id: 2, produitNom: 'Framboise', coqueColors: ['rouge', 'rouge'] }, { id: 8, produitNom: 'Fraise GF', grandFormat: true, coqueColors: ['rouge', 'rouge'] }]);
-    check('E. les recettes de la BONNE couleur passent en premier (groupe dédié)', /^<optgroup label="Recettes de cette couleur">/.test(r1.selR.innerHTML) && r1.selR.innerHTML.indexOf('Framboise') < r1.selR.innerHTML.indexOf('Vanille'));
-    check('E. les autres recettes restent proposées (groupe « Autres recettes »)', /<optgroup label="Autres recettes"><option value="1">Vanille/.test(r1.selR.innerHTML));
-    check('E. un grand format est signalé', /Fraise GF \(grand format\)/.test(r1.selR.innerHTML));
-    check('E. couleur couverte : note simple, sans alerte', /partie <b>coque<\/b>/.test(r1.note.innerHTML) && !/⚠/.test(r1.note.innerHTML));
-    const r2 = rendre('bleu_inexistant_dans_les_recettes', [{ id: 1, produitNom: 'Vanille', coqueColors: ['blanc', 'blanc'] }]);
-    check('E. aucune recette de cette couleur : ALERTE visible, toutes les recettes restent choisissables', /⚠ Aucune recette ne porte cette couleur/.test(r2.note.innerHTML) && /<optgroup label="Autres recettes">/.test(r2.selR.innerHTML) && !/Recettes de cette couleur/.test(r2.selR.innerHTML)); }
-  { const f = fn('async function prodFormCouleur(prefill){'), sv = fn('async function prodCouleurSave(){');
-    check('E. formulaire : couleur + recette + nombre de coques + date', /id="f_ccCouleur"/.test(f) && /id="f_ccRec"/.test(f) && /id="f_ccQte"[^>]*step="2"/.test(f) && /id="f_ccDate"/.test(f));
-    check('E. formulaire : respecte le garde-fou « production ouverte depuis plus de N jours »', /prodOpenOverdue/.test(f) && /PROD_OPEN_MAX_DAYS/.test(f));
-    check('E. formulaire : valeur par défaut = meringue pleine (240 coques)', /prefill\.nbCoques\|\|240/.test(f));
-    check('E. enregistrement : refuse sans couleur / sans recette / nombre impair', /Choisis une couleur/.test(sv) && /Choisis la recette/.test(sv) && /nombre PAIR/.test(sv)); }
-  { const sw = fn('function prodModeSwitch(mode){'), pf = fn('async function prodForm(prefill){');
-    check('E. le formulaire de production propose « Coques par couleur (sans parfum) »', /<option value="couleur">🎨 Coques par couleur \(sans parfum\)<\/option>/.test(pf));
-    check('E. choisir ce mode ouvre le formulaire dédié, avant tout autre traitement', /^function prodModeSwitch\(mode\)\{\n[^\n]*\n  if\(mode==='couleur'\)\{ prodFormCouleur\(\); return; \}/.test(sw)); }
+  // ---------- E. [v1516] Formulaire de lancement : SUPERSEDÉ (voir tests/v1516-meringue-couleurs.test.js) ----------
 
   // ---------- F. Potentiel de stock : coques FONGIBLES (vrai code) ----------
   { const src = fn('function computeStockPotentiel(prods, recipesById){');
@@ -201,13 +138,13 @@ function monde(o){
     const h = await rendre([lot(1, { recipeId: 1 }), lot(2, { recipeId: 2, couleur: 'rouge', parCouleur: true, qteRestante: 240 }), lot(5, { recipeId: 9, qteRestante: 60 })]);
     check('H. une ligne par couleur avec son total de coques et son équivalent en macarons', new RegExp(L('rouge') + '</b> — 240 coques <span[^>]*>\\(≈ 120 mac\\.\\)').test(h));
     check('H. bouton « Assembler » par couleur (premier lot FIFO) ET par lot', /prodAssembleForm\(2,\{\}\)/.test(h) && /prodAssembleForm\(1,\{\}\)/.test(h) && (h.match(/🔗 Assembler/g) || []).length >= 6);
-    check('H. bouton « Lancer » prérempli sur la couleur', /prodFormCouleur\(\{couleur:'rouge'\}\)/.test(h));
-    check('H. bouton général « Lancer des coques »', /onclick="prodFormCouleur\(\)">➕ Lancer des coques/.test(h));
+    check('H. bouton « Lancer » prérempli sur la couleur (formulaire de production, mode couleurs)', /prodForm\(\{mode:'couleurs',couleur:'rouge'\}\)/.test(h));
+    check('H. bouton général « Lancer des coques »', /onclick="prodForm\(\{mode:'couleurs'\}\)">➕ Lancer des coques/.test(h));
     check('H. l\'origine est dite : « lancées par couleur » ou « issues de « parfum » »', /lancées par couleur/.test(h) && /issues de « Vanille »/.test(h));
     check('H. grand format signalé', /grand format/.test(h));
     check('H. les boutons des lignes repliables n\'ouvrent pas/ne ferment pas le détail (stopPropagation)', /event\.stopPropagation\(\);prodAssembleForm\(/.test(h));
     const vide = await rendre([]);
-    check('H. stock vide : message clair + bouton de lancement conservé', /Aucune coque terminée en stock/.test(vide) && /prodFormCouleur\(\)/.test(vide));
+    check('H. stock vide : message clair + bouton de lancement conservé', /Aucune coque terminée en stock/.test(vide) && /prodForm\(\{mode:'couleurs'\}\)/.test(vide));
     const rs = fn('async function renderStockParfums(){');
     check('H. le panneau n\'apparaît que dans la vue liste (pas dans « Espaces froids »)', /if\(_vue!=='froid'\)\{ try\{ coquesCouleurHtml = await _stockCoquesCouleurHtml\(\)/.test(rs) && /_vue==='froid' \? froidHtml : reserveHtml \+ coquesCouleurHtml \+ listeHtml/.test(rs)); }
 

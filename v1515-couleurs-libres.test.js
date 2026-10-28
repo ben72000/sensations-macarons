@@ -188,50 +188,9 @@ const NB_ORIGINE = Object.keys(monde().COQUE_COULEURS).length;
     new Function('couleursPersoLire','openModal','esc','toast','COULEUR_PERSO_LABEL_MAX','COULEUR_PERSO_HEX_DEFAUT', ed + '\ncouleurPersoEditerForm(' + JSON.stringify(clePirate) + ');')(w.couleursPersoLire, x => h2.push(x), x => String(x).replace(/"/g, '&quot;').replace(/</g, '&lt;'), t => toasts.push(t), 32, '#c9b8a8');
     check('H. le formulaire de modification échappe aussi le nom dans l\'attribut value (aucune balise brute)', h2.length === 1 && !/<img src=x/.test(h2[0]) && /value="&lt;img src=x/.test(h2[0])); }
 
-  // prodCouleurSave : création AVANT lancement (vrai code)
-  { const sv = fn('async function prodCouleurSave(){');
-    check('H. prodCouleurSave retrouvée', sv.length > 600);
-    async function lancer(champs, forceErreur){
-      const w = monde(); const trace = { lancements: [], toasts: [] };
-      if(forceErreur) w.localStorage.plein = true;
-      const val = id => (champs[id] != null ? champs[id] : '');
-      const f = new Function('val','COQUE_COULEURS','COQUES_PAR_MACARON','couleurPersoCreer','prodLancerCoquesCouleur','toast','today', sv + '\nreturn prodCouleurSave;')(
-        val, w.COQUE_COULEURS, 2, w.couleurPersoCreer, async (...a) => { trace.lancements.push(a); }, t => trace.toasts.push(t), () => '2026-10-26');
-      await f(); return Object.assign(trace, { w });
-    }
-    let t = await lancer({ f_ccCouleur: '__nouvelle__', f_ccNouvelleNom: 'bleu nuit', f_ccNouvelleHex: '#1f2a5a', f_ccRec: '3', f_ccQte: '240' });
-    check('H. « Autre couleur » : la couleur est CRÉÉE puis les coques lancées dans cette couleur', t.lancements.length === 1 && (t.lancements[0] || [])[0] === 'perso_bleu_nuit' && (t.lancements[0] || [])[1] === 3 && (t.lancements[0] || [])[2] === 240 && !!t.w.COQUE_COULEURS.perso_bleu_nuit);
-    check('H. message : « Bleu nuit » ajoutée à tes couleurs', t.toasts.some(m => /« Bleu nuit » ajoutée/.test(m)));
-    t = await lancer({ f_ccCouleur: '__nouvelle__', f_ccNouvelleNom: 'ROUGE', f_ccRec: '3', f_ccQte: '240' });
-    check('H. « Autre couleur » = un nom déjà connu : on RÉUTILISE « rouge », rien n\'est créé, et on le dit', (t.lancements[0] || [])[0] === 'rouge' && Object.keys(t.w.COQUE_COULEURS).length === NB_ORIGINE && t.toasts.some(m => /existe déjà/.test(m)));
-    t = await lancer({ f_ccCouleur: '__nouvelle__', f_ccNouvelleNom: '   ', f_ccRec: '3', f_ccQte: '240' });
-    check('H. « Autre couleur » sans nom : message, AUCUN lancement', t.lancements.length === 0 && t.toasts.some(m => /Tape le nom/.test(m)));
-    t = await lancer({ f_ccCouleur: '__nouvelle__', f_ccNouvelleNom: 'Corail', f_ccRec: '3', f_ccQte: '240' }, true);
-    check('H. création impossible (stockage plein) : message, AUCUN lancement (pas de lot dans une couleur fantôme)', t.lancements.length === 0 && t.toasts.length === 1);
-    t = await lancer({ f_ccCouleur: 'blanc', f_ccRec: '3', f_ccQte: '240' });
-    check('H. couleur d\'origine : chemin inchangé', t.lancements.length === 1 && (t.lancements[0] || [])[0] === 'blanc' && t.toasts.length === 0);
-    t = await lancer({ f_ccCouleur: 'perso_inexistante', f_ccRec: '3', f_ccQte: '240' });
-    check('H. clé inconnue : refus « Choisis une couleur »', t.lancements.length === 0 && /Choisis une couleur/.test(t.toasts[0])); }
-
-  // formulaire de lancement : option + note adaptée
-  { const f = fn('async function prodFormCouleur(prefill){');
-    check('H. le lancement propose « ➕ Autre couleur (je la tape)… » (valeur __nouvelle__)', /<option value=\\?"__nouvelle__\\?">➕ Autre couleur \(je la tape\)…<\/option>/.test(f.replace(/\\"/g, '"')));
-    check('H. les champs nom + teinte de la nouvelle couleur existent, masqués par défaut', /id="f_ccNouvelle" class="row2" style="display:none"/.test(f) && /id="f_ccNouvelleNom"/.test(f) && /id="f_ccNouvelleHex"/.test(f));
-    const src = fn('function prodCouleurRecettesRefresh(){'); const w = monde(); const pe = w.couleurPersoCreer('Bleu nuit');
-    function rendre(couleur){
-      const selR = { innerHTML: '', value: '', querySelector: () => null }, note = { innerHTML: '' }, bloc = { style: {} };
-      const doc = { getElementById: id => ({ f_ccCouleur: { value: couleur }, f_ccRec: selR, f_ccRecNote: note, f_ccNouvelle: bloc })[id] || null };
-      new Function('document','window','recCoqueColors','esc','coqueCouleurLabel','COQUE_COULEURS', src + '\nprodCouleurRecettesRefresh();')(doc, { _allRecipesCache: [{ id: 1, produitNom: 'Vanille', coqueColors: ['blanc', 'blanc'] }] }, w.recCoqueColors, x => String(x), w.coqueCouleurLabel, w.COQUE_COULEURS);
-      return { selR, note, bloc };
-    }
-    const a = rendre('__nouvelle__');
-    check('H. « Autre couleur » : le bloc de saisie s\'AFFICHE, note neutre (pas d\'alerte), recettes toutes proposées', a.bloc.style.display === '' && !/⚠/.test(a.note.innerHTML) && /Autres recettes/.test(a.selR.innerHTML) && !/Recettes de cette couleur/.test(a.selR.innerHTML));
-    const b = rendre('blanc');
-    check('H. couleur ordinaire : le bloc de saisie est MASQUÉ', b.bloc.style.display === 'none');
-    const c = rendre(pe.cle);
-    check('H. couleur ajoutée à la main (sans recette) : note neutre, PAS d\'alerte rouge', !/⚠/.test(c.note.innerHTML) && /Couleur sans recette dédiée/.test(c.note.innerHTML));
-    const d = rendre('rouge');
-    check('H. couleur d\'origine sans recette : l\'alerte reste (comportement d\'origine)', /⚠ Aucune recette ne porte cette couleur/.test(d.note.innerHTML)); }
+  // [v1516] Les tests de « création de la couleur AVANT le lancement » et du formulaire de lancement ciblaient prodCouleurSave /
+  // prodFormCouleur, supprimés avec l'option « Coques par couleur (sans parfum) ». Le même comportement vit dans le mode « couleurs »
+  // (`prodLancerCouleurs`, lignes « ➕ Autre couleur ») : voir tests/v1516-meringue-couleurs.test.js.
 
   // gestion des couleurs : suppression avec confirmation
   { const sup = fn('async function couleurPersoSupprimerUI(cle){');

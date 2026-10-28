@@ -153,12 +153,9 @@ const SUITES = [
   'v1439-prodboard-launch.test.js',           // v1439/v1440 · le bouton « ＋ Lancer une tâche » appelait prodTaskPicker(), jamais définie — pointé vers le vrai mécanisme (_atPicker + prodRenderBoard), puis rendu visible à coup sûr (scrollIntoView)
   'v1441-bicolore-rappel.test.js',            // v1441 · rappel de division bicolore (praliné = marron foncé + blanc) dans le formulaire de lancement (mode complet inclus) et la fiche de production toujours affichée après lancement
   'v1442-meringue-fiche-combinee.test.js',    // v1442 · la fiche meringue mutualisée (base commune + détail par parfum) accessible à tout moment via « Voir la recette », pas seulement juste après le lancement du duo
-  'v1443-duo-qte-sync.test.js',               // v1443 · en mode duo, « Macarons Pn » suit désormais le rendement du parfum choisi (ne restait plus bloqué sur l'ancienne valeur au changement de parfum)
   'v1444-ca-graphique-glissant.test.js',      // v1444 · graphique du CA zoomable (jour/semaine/mois/année) et glissant, chaque barre cliquable — avec réconciliation mois par mois contre caDuMois
   'v1445-bicolore-divise.test.js',            // v1445 · un parfum bicolore peut être divisé en 2 lots réels séparés (comme une meringue mutualisée) — couleur explicite prioritaire sur la recette dans les 3 moteurs de couleur, réconciliation dissymétrique contre la double-division
   'v1445b-checkbox-reset.test.js',            // v1445b · la case « diviser en 2 lots » se décochait toute seule dès qu'on touchait la quantité (prodUpdateCoqueHint reconstruisait l'input sans mémoriser son état)
-  'v1448-lot-duo-preview.test.js',            // v1448 · le champ « N° lot de production » était masqué en duo/bicolore-divisé (jamais lu par la sauvegarde réelle, affichait un code d'une autre recette) et remplacé par un aperçu réconcilié avec la vraie formule de lot
-  'v1449-bicolore-duo.test.js',                 // v1449 · un parfum bicolore combiné à d'autres (mode duo/trio) se divise aussi par couleur — moteur partagé _sousLotsCoques, case à cocher supprimée, reproduction exacte du scénario chiffré de Ben (Pistache 120 + Chocolat passion 60/60)
   'v1450-pourcentage-ca.test.js',                // v1450 · pourcentage de CA affiché sous chaque ligne des 3 écrans de détail encaissement (mois, période glissante, catégorie URSSAF) — moteur partagé pctDuTotal, réconciliation à 100%
   'v1451-pourcentage-ca-suite.test.js',         // v1451 · pourcentage de CA étendu à 3 écrans de plus (CA facturé/encaissé par période, journal des avoirs, panier moyen ventilé) — reprises et total officiel gardés séparés
   'v1452-sachet-coffret10.test.js',             // v1452 · sachet (1–3 macarons, 2,50 €/mac.) + coffret de 10 à 22 € : branchement du nouveau type de ligne dans les ~14 points de dispatch, réconciliation prix saisie/stocké, garde « jamais 0 € »
@@ -214,7 +211,8 @@ const SUITES = [
   'v1512-logo-zero-verrou.test.js',  // v1512 · logo « 10 × 0 € » : bouton de sortie du verrou historique, indice honnête, refus d'un logo/forfait à 0 €
   'v1513-assemblage-libre-couleur-parfum.test.js',  // v1513 · assemblage libre couleur × parfum : le macaron prend le parfum de la garniture, couleurs des coques tracées, verrous v1426/v1249/v1506 retirés, GF/standard séparés — exécute le vrai prodAssembleSave
   'v1514-coques-par-couleur.test.js',  // v1514 · coques lancées par couleur (sans parfum) + stock par couleur + potentiel à coques interchangeables + montage avec n'importe quelles coques — exécute le vrai code
-  'v1515-couleurs-libres.test.js'               // v1515 · couleurs de coques saisies librement : registre persistant et sauvegardé, jamais de doublon, palette rechargée au démarrage/restauration, présente partout (stock, libellés, profils), modifier/supprimer
+  'v1515-couleurs-libres.test.js',  // v1515 · couleurs de coques saisies librement : registre persistant et sauvegardé, jamais de doublon, palette rechargée au démarrage/restauration, présente partout (stock, libellés, profils), modifier/supprimer
+  'v1516-meringue-couleurs.test.js'             // v1516 · « Coques — 2 à 3 couleurs (meringue commune) » : N couleurs (1 à 8) sur une production, calcul de la meringue commune ajusté (vrai moteur), aperçu = lancement, validations sans écriture, ancien mode parfums/mono-couleur retirés
 ];
 
 let allOk = true;

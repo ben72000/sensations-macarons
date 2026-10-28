@@ -7156,3 +7156,40 @@ de bouton de création (ouvrir une seconde fenêtre perdrait la saisie de la rec
 Sensibilité (13 défauts réintroduits, tous attrapés) : doublons (10 rouges) · rechargement inerte (4) · couleur d'origine écrasée (2) · suppression d'une couleur utilisée (4) ·
 codes non uniques (1) · clé hors KV_METIER (1) · kvBoot sans rechargement (1) · restauration sans rechargement (1) · lancement sans création (5) · palette avant stockage (1) ·
 renommage vers un nom pris (2) · nom non mis en forme (6) · nom non échappé (1).
+
+## v1516 — « Coques — 2 à 3 couleurs (meringue commune) » : N couleurs sur une production (tests/v1516-meringue-couleurs.test.js, 101 assertions)
+
+Demande de Ben : dans « Nouvelle production », ne plus voir « coques — 2 à 3 parfums (meringue commune) » mais « coques — 2 à 3 couleurs (meringue commune) », enlever l'option
+« coques par couleur (sans parfum) » (dissocier couleurs et parfums = plus de possibilités à la fabrication), pouvoir faire 4 couleurs sur une même production, avec le calcul des
+recettes ajusté en conséquence.
+
+DÉCISIONS : le mode « duo/trio par PARFUMS » est REMPLACÉ (pas doublé) par un mode « couleurs » à lignes libres (1 à 8) ; l'option mono-couleur de v1514 disparaît (une ligne = le même
+résultat). Libellé du menu = celui demandé par Ben mot pour mot, bien que le mode accepte 1 à 8 couleurs (à reformuler s'il préfère).
+- UNE LIGNE = une COULEUR (menu ou « ➕ Autre couleur » saisie libre, v1515) + la RECETTE dont la partie « coque » décompte les matières + un nombre de MACARONS. La recette ne sert QU'À décompter les
+  matières ; sa couleur n'a aucune incidence. Proposée par défaut : celle qui porte la couleur, de format STANDARD de préférence (un grand format seulement s'il est seul).
+- CALCUL AJUSTÉ : le moteur `_meringueCommuneCalc` est INCHANGÉ. Il traite n'importe quel nombre d'entrées : base commune (blanc d'œuf, eau, sucre semoule) mutualisée et dimensionnée sur le total
+  en équivalent-coques standard ; poudre d'amande / sucre glace (« tant pour tant ») et colorants PROPRES à chaque couleur. Prouvé avec le VRAI moteur sur 4 couleurs (blanc d'œuf 180 g mutualisé ;
+  amande 60 g et sucre glace 60 g × 4 ; colorants 1 g chacun) et sur 2 couleurs inégales (90/30 : blanc d'œuf 90 g, amande 90 g / 30 g, colorants 1,5 g / 0,5 g).
+  ⚠️ Pour que les colorants se répartissent PAR couleur, chaque couleur doit pointer vers une recette dont la partie coque porte SON colorant ; une même recette pour toutes les couleurs met tout
+  en base commune (et les mêmes propres sous chaque couleur).
+- LANCEMENT `prodLancerCouleurs` : valide TOUT avant la moindre écriture (≥ 1 ligne, ≤ 8, macarons ≥ 1, recette choisie et existante AVEC matières « coque », couleur connue, nom de nouvelle couleur
+  saisi, aucune couleur en double — y compris « Autre couleur » qui retombe sur une couleur déjà présente) ; crée ensuite les couleurs nouvelles ; puis UN lot par ligne
+  (`couleur` + `parCouleur:true`, « Coques <couleur> », code = date + code couleur + « -CO », numéroté …2/…3 si une fournée de cette couleur existe déjà ce jour-là), tous reliés par un `meringueBatchId`
+  commun dès 2 lignes ; une tâche d'atelier par lot ; fiche de meringue combinée (parts nommées par leur couleur, libellés « couleur ») ; une seule couleur = fiche de recette simple, sans batch.
+  Un refus de validation ne crée AUCUNE couleur (testé). Stockage plein à la création : aucun lot n'est écrit.
+- APERÇU et LANCEMENT passent par la MÊME fonction de plan (`prodCouleursPlan`) : ce que Ben voit (répartition en %, lots, remplissage de meringue, alerte « il en faudrait N », mélange GF/standard,
+  fiche détaillée) est ce qui sera écrit — y compris avec une fournée du jour déjà existante (invariant repris de v1448).
+- FORMULAIRE : lignes dynamiques (➕ Ajouter une couleur, ✕, ⚖ Répartir également à partir d'un total de coques, date dédiée) ; en mode couleurs, la recette unique, la quantité, la quantité réelle et le
+  N° de lot sont masqués (champs trompeurs). Ouverture directe depuis le panneau « Coques par couleur » du stock (➕ Lancer) avec la couleur de départ.
+- RETIRÉ : option « Coques par couleur (sans parfum) », `prodFormCouleur`, `prodCouleurSave`, `prodCouleurRecettesRefresh`, `prodLancerCoquesCouleur` ; toutes les fonctions `prodDuo*` et les champs `f_duo*`.
+  Plan de production « lancer coques » par parfum et lancement de coques d'UN parfum : INCHANGÉS (non demandés).
+- SUITES RETIRÉES (décision de Ben rend leur objet caduc) : v1443 (champ « Macarons Pn » suit le parfum), v1448 (aperçu des lots du duo par parfums), v1449 (parfum bicolore combiné) ; leurs invariants
+  durables sont repris dans v1516 (quantité indépendante de la recette ; aperçu = lancement ; champs trompeurs masqués). Suites alignées : v1514 (sections B et E remplacées par v1516, boutons du panneau de stock),
+  v1515 (tests de « création avant lancement » repris dans v1516). ⚠️ SUITES ABSENTES à aligner à réception si elles supposaient le duo par parfums : références à `prodDuoApercu`, `f_duoRec1`, mode « duo ».
+
+Sensibilité (15 défauts réintroduits, tous attrapés) : menu « parfums » (2 rouges) · option mono-couleur de retour (1) · plus de limite à 8 (2) · couleur en double acceptée (2) · couleurs créées avant validation (2) ·
+batch pour une seule couleur (1) · facteur matières faux (1) · lots non marqués parCouleur (1) · aperçu qui ignore une fournée existante (1) · grand format par défaut (2) · reste de répartition perdu (1) ·
+fiche hors mode couleurs (2) · N° de lot affiché (1) · recette sans matière coque acceptée (2) · saveProd sans aiguillage (1).
+
+Addendum v1517 — libellé du menu « Nouvelle production » : « Coques — 2 couleurs et + » (Ben : « tu l'appelleras coques — 2 couleurs et + »). Remplace « Coques — 2 à 3 couleurs
+(meringue commune) » de v1516, dont le « 2 à 3 » contredisait les 1 à 8 couleurs acceptées. Assertion A de v1516 alignée (libellé exact + aucun « 2 à 3 » dans le menu). Aucun autre changement.
