@@ -38,6 +38,7 @@ const M = new Function('_CASE_COCHEE', `
   ${extractArrayConstMulti('TARIF_GRILLES')}
   ${extractFunction('tarifsPour')}
   ${extractFunction('grilleCourante')}
+  function grilleParId(id){ return TARIF_GRILLES.find(g => g.id===id) || null; }
     ${extractFunction('grilleHistorique')}
     ${extractFunction('tarifsDeLigne')}
   ${extractConstLine('SACHET_PRIX_MACARON')}
@@ -254,6 +255,7 @@ const NEUF = '2026-09-15', VIEUX = '2026-01-20', VEILLE = '2026-08-31', JOUR_J =
     ${extractArrayConstMulti('TARIF_GRILLES')}
     ${extractFunction('tarifsPour')}
     ${extractFunction('grilleCourante')}
+  function grilleParId(id){ return TARIF_GRILLES.find(g => g.id===id) || null; }
     ${extractFunction('grilleHistorique')}
     ${extractFunction('tarifsDeLigne')}
     ${extractConstLine('BOX_PRICES')}

@@ -54,8 +54,8 @@ function monde(coche){
   function lancer(coche, avecRecalc){
     const trace = []; const cb = { checked: coche };
     const doc = { getElementById: id => (id === 'f_ancienTarif' ? cb : null) };
-    new Function('document','cmdTarifBandeau','cmdRecalc','toast', src + '\ncmdPasserTarifsEnVigueur();')(
-      doc, () => trace.push('bandeau'), avecRecalc ? () => trace.push('recalc') : undefined, t => trace.push('toast:' + t));
+    new Function('document','cmdTarifBandeau','cmdRecalc','toast','grilleCourante', src + '\ncmdPasserTarifsEnVigueur();')(
+      doc, () => trace.push('bandeau'), avecRecalc ? () => trace.push('recalc') : undefined, t => trace.push('toast:' + t), () => ({ id: 'nov2026' }));
     return { cb, trace };
   }
   const r = lancer(true, true);
@@ -65,7 +65,7 @@ function monde(coche){
   // BOUT EN BOUT sur le vrai code : verrou → logo à 0 ; geste du bouton → logo à 10 €
   const w = monde(true);
   const avant = w.api.logoMontantPour(10);
-  new Function('document','cmdTarifBandeau','cmdRecalc','toast', src + '\ncmdPasserTarifsEnVigueur();')(w.doc, () => {}, () => {}, () => {});
+  new Function('document','cmdTarifBandeau','cmdRecalc','toast','grilleCourante', src + '\ncmdPasserTarifsEnVigueur();')(w.doc, () => {}, () => {}, () => {}, () => ({ id: 'nov2026' }));
   check('B. BOUT EN BOUT : 10 logos passent de 0,00 € à 10,00 € après « Passer aux tarifs en vigueur »', avant === 0 && w.api.logoMontantPour(10) === 10);
 }
 
@@ -74,9 +74,9 @@ function monde(coche){
   const src = fn('function cmdTarifBandeau(){');
   function rendre(coche){
     const z = { innerHTML: '' }; let redessine = 0;
-    new Function('document','tarifsSaisie','esc','drawLines', src + '\ncmdTarifBandeau();')(
+    new Function('document','tarifsSaisie','esc','drawLines','grilleCourante', src + '\ncmdTarifBandeau();')(
       { getElementById: id => id === 'f_tarifBandeau' ? z : (id === 'f_ancienTarif' ? { checked: coche } : null) },
-      () => ({ libelle: 'Tarifs historiques' }), x => String(x), () => { redessine++; });
+      () => ({ id: coche ? 'hist' : 'nov2026', libelle: 'Tarifs historiques', logoPaliers: null }), x => String(x), () => { redessine++; }, () => ({ id: 'nov2026' }));
     return { html: z.innerHTML, redessine };
   }
   const v = rendre(true), l = rendre(false);
@@ -118,7 +118,7 @@ function monde(coche){
 
 // ---------- F. Ce qui NE change PAS ----------
 {
-  check('F. le verrou par défaut d\'une commande déjà enregistrée est conservé', /\$\{\(o\.ancienTarif \|\| \(o\.id && !o\.tarifRef\)\)\?'checked':''\}/.test(APP));
+  check('F. le verrou par défaut d\'une commande déjà enregistrée AVANT les marqueurs est conservé (v1519 : un document portant grilleId n\'est pas hérité)', /\$\{\(o\.ancienTarif \|\| \(o\.id && !o\.tarifRef && !o\.grilleId\)\)\?'checked':''\}/.test(APP));
   check('F. l\'élément f_ancienTarif reste caché (aucune case visible ne revient)', /<input type="checkbox" id="f_ancienTarif" hidden /.test(APP) && !/Appliquer les <b>anciens tarifs<\/b>/.test(APP));
   check('F. logoPrixUnitPour inchangé : la grille historique garde `logoPaliers:null` (aucune donnée stockée retarifée)', /logoPaliers:null, forfaitCreation:0 \}/.test(APP));
   check('F. une seule définition de cmdPasserTarifsEnVigueur', (stripComments(APP).match(/function cmdPasserTarifsEnVigueur\(/g) || []).length === 1);

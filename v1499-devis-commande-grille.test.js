@@ -50,6 +50,7 @@ function check(label, cond){ if(cond){ pass++; } else { fail++; failures.push(la
     })()}
     ${extractFunction('grilleCourante')}
     ${extractFunction('grilleHistorique')}
+    function grilleParId(id){ return TARIF_GRILLES.find(g => g.id===id) || null; }
     ${extractFunction('grillePourCommande')}
     return grillePourCommande;
   `);

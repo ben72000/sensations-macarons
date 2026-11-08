@@ -212,7 +212,9 @@ const SUITES = [
   'v1513-assemblage-libre-couleur-parfum.test.js',  // v1513 · assemblage libre couleur × parfum : le macaron prend le parfum de la garniture, couleurs des coques tracées, verrous v1426/v1249/v1506 retirés, GF/standard séparés — exécute le vrai prodAssembleSave
   'v1514-coques-par-couleur.test.js',  // v1514 · coques lancées par couleur (sans parfum) + stock par couleur + potentiel à coques interchangeables + montage avec n'importe quelles coques — exécute le vrai code
   'v1515-couleurs-libres.test.js',  // v1515 · couleurs de coques saisies librement : registre persistant et sauvegardé, jamais de doublon, palette rechargée au démarrage/restauration, présente partout (stock, libellés, profils), modifier/supprimer
-  'v1516-meringue-couleurs.test.js'             // v1516 · « Coques — 2 à 3 couleurs (meringue commune) » : N couleurs (1 à 8) sur une production, calcul de la meringue commune ajusté (vrai moteur), aperçu = lancement, validations sans écriture, ancien mode parfums/mono-couleur retirés
+  'v1516-meringue-couleurs.test.js',  // v1516 · « Coques — 2 à 3 couleurs (meringue commune) » : N couleurs (1 à 8) sur une production, calcul de la meringue commune ajusté (vrai moteur), aperçu = lancement, validations sans écriture, ancien mode parfums/mono-couleur retirés
+  'v1518-connexion-base-perdue.test.js',        // v1518 · « The database connection is closing » après des heures de veille (iOS) : reconnexion automatique de dexie.min.js, rejeu unique sans doublon, sonde au réveil, vrai dexie.min.js sur faux IndexedDB persistant, scénario bloquant isolé
+  'v1519-gros-macarons-650-tarif-pro-remise.test.js'  // v1519 · gros macarons 6,50 € (grille du 04/11/2026), fin du tarif pro automatique (gros macarons + vrac), remise « Tarif pro » indépendante en € ou %, documents existants figés sur leurs prix
 ];
 
 let allOk = true;

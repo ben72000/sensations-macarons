@@ -20,10 +20,10 @@ function check(label, cond){ if(cond){ pass++; } else { fail++; failures.push(la
 
 // ---- A. LA RÈGLE : sans marqueur, c'est la grille historique ----
 {
-  const M = new Function('grilleHistorique','grilleCourante', `
+  const M = new Function('grilleHistorique','grilleCourante','grilleParId', `
     ${extractFunction('grillePourCommande')}
     return grillePourCommande;
-  `)(()=>({nom:'historique', logoPaliers:null}), ()=>({nom:'courante', logoPaliers:[{jusqua:99,prix:1}]}));
+  `)(()=>({nom:'historique', logoPaliers:null}), ()=>({nom:'courante', logoPaliers:[{jusqua:99,prix:1}]}), () => null);
 
   check('A. sans marqueur → grille HISTORIQUE (le logo n\'y existe pas)', M({}).nom === 'historique');
   check('A. avec tarifRef → grille courante', M({tarifRef:'2026-08-20'}).nom === 'courante');

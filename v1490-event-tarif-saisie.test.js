@@ -23,13 +23,13 @@ const HISTO    = { event:1.60, eventMin:35, pyramide:20 };
 
 // Les deux résolveurs réels, avec la case du formulaire simulée par `tarifsSaisie`.
 function moteur(caseCochee){
-  return new Function('grilleHistorique','grilleCourante','tarifsSaisie','EVENT_PRICE', `
+  return new Function('grilleHistorique','grilleCourante','tarifsSaisie','EVENT_PRICE','grilleParId', `
     ${extractFunction('tarifsLigneSaisie')}
     ${extractFunction('tarifsDeLigne')}
     ${extractFunction('eventUnitPriceSaisie')}
     ${extractFunction('eventUnitPrice')}
     return { eventUnitPriceSaisie, eventUnitPrice, tarifsLigneSaisie, tarifsDeLigne };
-  `)(()=>HISTO, ()=>COURANTE, ()=> caseCochee ? HISTO : COURANTE, 1.60);
+  `)(()=>HISTO, ()=>COURANTE, ()=> caseCochee ? HISTO : COURANTE, 1.60, () => null);
 }
 
 // ---- A. LE CAS DE BEN : nouvelle commande, ligne pas encore enregistrée ----

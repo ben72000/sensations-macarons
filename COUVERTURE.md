@@ -7193,3 +7193,39 @@ fiche hors mode couleurs (2) · N° de lot affiché (1) · recette sans matière
 
 Addendum v1517 — libellé du menu « Nouvelle production » : « Coques — 2 couleurs et + » (Ben : « tu l'appelleras coques — 2 couleurs et + »). Remplace « Coques — 2 à 3 couleurs
 (meringue commune) » de v1516, dont le « 2 à 3 » contredisait les 1 à 8 couleurs acceptées. Assertion A de v1516 alignée (libellé exact + aucun « 2 à 3 » dans le menu). Aucun autre changement.
+
+## v1518 — « Affichage indisponible : The database connection is closing » après des heures de veille (tests/v1518-connexion-base-perdue.test.js, 52 assertions)
+
+Ben, capture d'écran de la vue « commandes » : « à chaque fois que j'ouvre l'application après un temps de plusieurs heures inactives je suis confronté à ce message. Aide-moi à
+éradiquer ce problème durablement sans casser les fonctions de l'application. »
+
+CAUSE (lue dans dexie.min.js, trace de la capture = `toArray@dexie.min.js:303:50`) : iOS/Safari FERME la connexion IndexedDB d'une app laissée en veille. La couche maison garde la
+connexion ouverte au démarrage (`_idb`) et ne la rouvre JAMAIS : toute opération échoue jusqu'à la fermeture complète de l'app. Le filet de v1503 (« rejouer une lecture avec une transaction
+fraîche ») retombait sur la MÊME connexion morte — c'est précisément la ligne 303 de la trace. Le bouton « Réessayer » relançait le même rendu sur la même connexion morte.
+DÉFAUTS ASSOCIÉS trouvés : `_ready()` bouclait SANS FIN (boucle de microtâches qui affame aussi les chronomètres) si la base était fermée après une première ouverture ; un échec d'ouverture
+restait collé pour toutes les opérations suivantes.
+
+CORRECTIF (fichiers modifiés : dexie.min.js, app.js, service-worker.js — à remplacer ENSEMBLE ; le cache passe à v548 pour que dexie.min.js soit rechargé) :
+- `_connexionMorte(e)` : reconnaît « InvalidStateError : connection is closing/closed » et la variante WebKit « UnknownError : Connection to Indexed Database server lost ». RIEN d'autre n'est jamais rejoué.
+- `_executer(fn)` enveloppe toutes les opérations de Table et `Collection._all` : si l'opération échoue pour cette raison, la base est rouverte UNE fois et l'opération rejouée UNE fois. L'erreur est levée
+  à la CRÉATION de la transaction, avant tout effet : un rejeu ne peut pas dupliquer une écriture (prouvé : add, bulkAdd, put, update, delete… exécutés une seule fois).
+- `_reouvrir(idbMort)` : réouverture UNIQUE même si 7 opérations échouent ensemble (single-flight) ; ne referme pas une connexion déjà remplacée.
+- `db.transaction()` : création rejouée une fois ; JAMAIS de rejeu pendant une transaction explicite (atomicité) ni pour une autre erreur (transaction finished, quota, autre UnknownError).
+- `onclose` du navigateur branché ; `_ready()` rouvre une base fermée (plus d'attente infinie) sans doubler la toute première ouverture ; un échec d'ouverture n'est plus définitif ; connexion « oubliée » = erreur
+  rattrapable (`_idbOuErreur`), plus jamais un TypeError `null.transaction` ; rejections non gérées parasites éliminées.
+- `db.verifierConnexion()` + `dbReveil()` dans l'app : sonde légère (transaction de lecture vide) à `visibilitychange` (visible), `pageshow`, `focus` ; rouvre au besoin AVANT que les écrans ne s'en aperçoivent.
+- Suite : le VRAI dexie.min.js sur un faux IndexedDB PERSISTANT (les données survivent à une réouverture) avec une connexion « tuée » comme iOS ; 15 types d'opérations ; concurrence ; réouverture impossible ; le scénario qui
+  BLOQUE en cas de régression tourne dans un processus isolé chronométré (un blocage de microtâches ne peut pas être détecté de l'intérieur).
+
+LIMITE : une écriture déjà en cours au moment précis où iOS coupe la connexion (erreur d'abandon de transaction, pas de création) n'est volontairement PAS rejouée (on ne sait pas si elle a abouti) : elle remonte comme aujourd'hui.
+
+Sensibilité (mutations du vrai dexie.min.js, toutes détectées) : connexion perdue non reconnue · plus de rejeu · réouverture non unique · attente infinie de retour (BLOCAGE détecté) · onclose non branché · transaction non rejouée ·
+sonde inopérante · échec d'ouverture définitif · TOUT rejoué · TypeError null (couche 1) · deux protections retirées · cache SW non incrémenté · listeners de réveil retirés.
+Mutant ÉQUIVALENT assumé : retirer SEULE la boucle `while(!this._idb) await this._ready()` de `_executer` (la couche 1 `_idbOuErreur` rattrape alors la même course) — défense en profondeur ; retirer les DEUX est détecté.
+
+## v1519 — Gros macarons à 6,50 €, fin du tarif pro automatique, remise « Tarif pro » indépendante
+Suite `v1519-gros-macarons-650-tarif-pro-remise.test.js` (50 assertions, code réel d'app.js : grilles, résolveurs, `lineTotalStored`, `cmdLinesToStored`, `_lineToEdit`). Demande de Ben : gros macarons à 6,50 € au lieu de 7 € ; plus de tarif pro automatique (gros macarons ET vrac pro) ; « Tarif pro » devient une mention indépendante dans la remise (€ ou %), sur toute la commande ; commandes/devis existants gardent leurs prix, même rouverts.
+Couvre : nouvelle grille `nov2026` (6,50 €, `proActif:false`) ; grilles de septembre et historique intouchées ; prix par marqueur (`grilleId` > `tarifRef` gelé sur septembre > historique) ; aller-retour d'un document antérieur (reste à 7 € / pro 3,80 € / vrac pro 1,75 et 1,60) ; enregistrement (grilleId sur chaque ligne, gros macaron « pro » et vrac pro neutralisés) ; grille de saisie mémorisée par le formulaire ; libellé `libelleRemise` ; drapeau `remiseTarifPro` écrit ET relu partout (commande, devis, conversions, régénération, export) ; assistant sans ligne pro ; écrans sans boutons pro.
+Mutations (9 testées, 9 détectées après ajout d'une assertion) : prix 7 € · `tarifRef` seul → grille courante · vrac pro réactivé · grilleId non écrit · gros macaron pro non neutralisé · libellé tarif pro ignoré · assistant qui recrée du pro · grilleId du devis non relu · repli du prix pro retiré.
+Suites alignées (bac à sable, pas de règle changée) : v1463, v1489, v1490, v1499 (nouveau résolveur `grilleParId`), v1512 (bandeau ouvert aux grilles non courantes ; `!o.grilleId` dans le verrou caché).
+Limite honnête : la remise « Tarif pro » est un LIBELLÉ sur la remise globale existante ; elle ne s'applique jamais seule. Rien n'est calculé automatiquement selon le type de client.
