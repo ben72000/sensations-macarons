@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1522'; // suite : voir tests/v1522-facture-annulee-statut.test.js
+const APP_VERSION = 'v1523'; // suite : voir tests/v1523-vrac-prix-libre.test.js
 const APP_MAJ = '« CHEQUE DE CAUTION » DEVIENT « EMPREINTE BANCAIRE ». Ben : « le cheque de caution doit se transformer en empreinte bancaire. Peux-tu changer la mention partout ou apparait cheque de caution ? » ⚠️ CE N ETAIT PAS UN SIMPLE RENOMMAGE : le texte associe decrivait des gestes propres a un CHEQUE — il est « remis », il « n est pas encaisse », il est « restitue ». Une empreinte bancaire se PREND, se DEBITE et s ANNULE. Renommer sans adapter les verbes aurait laisse des clauses incoherentes dans les CGV, un document juridique transmis aux clients. Les VERBES ONT DONC ETE ADAPTES partout : sur la ligne du devis et de la facture (« empreinte prise le jour de la livraison, non debitee, annulee apres retour du materiel »), et dans les trois clauses concernees des CGV — 7.1 (prise a la mise a disposition, non debitee, annulee), 7.2 (aucune empreinte exigee du particulier) et 7.4 (l empreinte pourra etre DEBITEE, et non encaissee). La logique juridique est inchangee : montants dus, complement exigible, surplus restitue, engagement sur l honneur du particulier. LES IDENTIFIANTS DE CODE SONT CONSERVES (CAUTION_CHEQUE, cautionRowHtml, cautionMention) : les renommer toucherait des dizaines de references et des donnees DEJA ENREGISTREES, pour zero gain visible. Seul le texte vu par le client change. Les documents deja emis gardent leur redaction d origine, puisqu ils memorisent leur rendu. Suite v1493 : 27 assertions, dont la verification que le vocabulaire du cheque a bien disparu ; un renommage NAIF (terme change mais verbes conserves) fait rougir 5 assertions. La suite v1492 a suivi le nouveau libelle, son mecanisme etant inchange.';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
@@ -4501,6 +4501,24 @@ const BOX_PRICES = { 6: 12, 8: 16, 10: 22, 16: 28, 25: 42 }; // repli historique
 // Avant le 01/09/2026, il n'existait qu'UN tarif pro, réglable dans Paramètres : les lignes de
 // cette époque continuent donc de le lire là — c'est ce qui garantit qu'une commande pro déjà
 // passée garde exactement son prix, même si Ben modifie ses réglages ensuite.
+// [v1523] VRAC AU PRIX LIBRE — même logique que les coffrets. Ben : « on arrête les prix préenregistrés,
+// on arrête les tarifs pro et non pro : un menu déroulant avec la quantité, un champ libre avec le prix ».
+// `prixVrac` = PRIX TOTAL de la ligne pour la quantité choisie (avant remise de ligne), saisi à la main
+// et scellé dans la commande. Tant qu'une ligne (ancienne) n'a pas de `prixVrac`, l'ancienne formule
+// quantité × tarif au macaron s'applique, À L'IDENTIQUE : les commandes passées gardent leur total.
+function vracEstLibre(ln){ return !!ln && ln.prixVrac!=null && ln.prixVrac!=='' && isFinite(+ln.prixVrac) && +ln.prixVrac>=0; }
+function vracNbPieces(ln){
+  const P=ln&&ln.parfums; let n=0;
+  if(Array.isArray(P)) n=P.reduce((a,p)=>a+(+p.qte||0),0);
+  else if(P&&typeof P==='object') n=Object.values(P).reduce((a,q)=>a+(+q||0),0);
+  return n + (+(ln&&ln.sansParfum)||0);
+}
+// Prix favoris (€ AU MACARON) proposés en bulles : un raccourci qui remplit le prix total, rien de plus.
+function vracFavorisListe(){
+  const brut = String((getSettings()||{}).vracFavoris!=null ? getSettings().vracFavoris : '1.60, 1.75, 2.00');
+  const out=[]; brut.split(/[;\s]+/).forEach(t=>{ const n=parseFloat(String(t).replace(',','.')); if(isFinite(n)&&n>0&&!out.includes(money2(n))) out.push(money2(n)); });
+  return out.slice(0,6);
+}
 function vracPrixMacaron(ln, grille){
   const g = grille || tarifsDeLigne(ln);
   // [v1519] Grille sans tarif pro automatique : tout le vrac se facture au tarif non pro.
@@ -5091,6 +5109,8 @@ const SETTINGS_DEFAULTS = {
   prixVenteUnitaire: 2.00,
   // Tarif PRO au macaron STANDARD (vrac en boîte réutilisable, non facturée). Évolutif.
   prixMacaronProStd: 1.40,
+  // [v1523] Prix favoris du vrac (€ au macaron) : simples bulles-raccourcis dans la ligne vrac.
+  vracFavoris: '1.60, 1.75, 2.00',
   // Tarif PRO au macaron GRAND FORMAT. Évolutif (le tarif particulier reste à 6,00 €).
   prixGrandFormatPro: 3.20,
   // Types d'emballage pour le comptage avant/après marché (delta) :
@@ -5119,6 +5139,7 @@ function getSettings(){
       prixParFormat: Object.assign({}, SETTINGS_DEFAULTS.prixParFormat, s.prixParFormat||{}),
       prixVenteUnitaire: s.prixVenteUnitaire!=null?+s.prixVenteUnitaire:SETTINGS_DEFAULTS.prixVenteUnitaire,
       prixMacaronProStd: s.prixMacaronProStd!=null?+s.prixMacaronProStd:SETTINGS_DEFAULTS.prixMacaronProStd,
+      vracFavoris: s.vracFavoris!=null?String(s.vracFavoris):SETTINGS_DEFAULTS.vracFavoris,
       prixGrandFormatPro: s.prixGrandFormatPro!=null?+s.prixGrandFormatPro:SETTINGS_DEFAULTS.prixGrandFormatPro,
       packaging: Object.assign({}, SETTINGS_DEFAULTS.packaging, s.packaging||{}),
       packagingDate: s.packagingDate || SETTINGS_DEFAULTS.packagingDate,
@@ -21487,7 +21508,7 @@ async function renderCmd(){
   const lineLabel = ln => {
     if(ln.type==='evenement') return `Événement ${ln.evQte||0} mac. +${ln.equip||0} pyr.`;
     if(ln.type==='grand'){ const n=(ln.items||[]).reduce((s,b)=>s+(+b.qte||0),0); return `Grand format ×${n}`; }
-    if(ln.type==='vrac'){ const n=(ln.parfums||[]).reduce((s,b)=>s+(+b.qte||0),0); return `Vrac ${ln.proMode==='nonpro'?'':(ln.proMode==='prorec'?'pro réc. ':'pro ')}×${n}`; }
+    if(ln.type==='vrac'){ const n=(ln.parfums||[]).reduce((s,b)=>s+(+b.qte||0),0); return vracEstLibre(ln) ? `Vrac ×${vracNbPieces(ln)}` : `Vrac ${ln.proMode==='nonpro'?'':(ln.proMode==='prorec'?'pro réc. ':'pro ')}×${n}`; }
     if(ln.type==='sachet'){ const n=(ln.parfums||[]).reduce((s,b)=>s+(+b.qte||0),0)+(+ln.sansParfum||0); return `Sachet ×${n}`; }
     if(ln.type==='don'){ const n=(ln.parfums||[]).reduce((s,b)=>s+(+b.qte||0),0)+(ln.items||[]).reduce((s,b)=>s+(+b.qte||0),0); return `Don ×${n} (offert)`; }
     if(ln.type==='prestation'){
@@ -22238,7 +22259,7 @@ async function cmdView(id){
     }
     if(ln.type==='vrac'){
       const parfums=(ln.parfums||[]).filter(p=>p.qte>0);
-      return `<div class="cmd-line"><div class="line-type">Vrac pro <span class="line-sub">boîte réutilisable, non facturée</span></div>
+      return `<div class="cmd-line"><div class="line-type">Vrac${vracEstLibre(ln)?'':' pro'} <span class="line-sub">boîte réutilisable, non facturée</span></div>
         ${parfums.length?`<div style="margin-top:6px">${parfums.map(p=>`<span class="pill">${esc(p.nom)} × ${p.qte}</span>`).join('')}</div>`:'<p class="note">Aucun.</p>'}
         <div class="sum-box" style="margin-top:8px"><span>Sous-total</span><b>${euro(lineTotalStored(ln))}</b></div></div>`;
     }
@@ -22440,7 +22461,7 @@ function lineTotalStored(ln){
   }
   else if(ln.type==='evenement') base = money2((ln.evQte||0)*eventUnitPrice(ln) + pyraTotalLigne(ln) + accessoireDecoTotal(ln));
   else if(ln.type==='grand'){ const pu=bigPrice(ln.tarif, ln); const tot=(ln.items||[]).reduce((s,p)=>s+(+p.qte||0),0); base = money2(tot*pu); }
-  else if(ln.type==='vrac'){ const pu=vracPrixMacaron(ln); const tot=(ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0) + (+ln.sansParfum||0); base = money2(tot*pu); }
+  else if(ln.type==='vrac'){ if(vracEstLibre(ln)) base = money2(+ln.prixVrac); else { const pu=vracPrixMacaron(ln); const tot=(ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0) + (+ln.sansParfum||0); base = money2(tot*pu); } }
   else if(ln.type==='sachet'){ const tot=(ln.parfums||[]).reduce((s,p)=>s+(+p.qte||0),0) + (+ln.sansParfum||0); base = sachetPrixPour(tot, tarifsDeLigne(ln)); }
   else if(ln.type==='don') return 0; // toujours gratuit, pas de remise à appliquer
   else if(ln.type==='prestation'){
@@ -22519,7 +22540,12 @@ function _lineToEdit(ln){
   if(t==='coffret') return {type:'coffret', tarifRef: ln.tarifRef||null, grilleId: ln.grilleId||null, ancienTarif: !!ln.ancienTarif, taille:ln.taille||6, parfums:_parfumsToObj(ln.parfums), sansParfum:(+ln.sansParfum||0), spMode:ln.spMode||'assortiment', spNbParfums:(+ln.spNbParfums||0), remisePct:+ln.remisePct||0, prixUnitaireApplique: (ln.prixUnitaireApplique!=null?+ln.prixUnitaireApplique:null), embMode:ln.embMode||'standard', embMatId:ln.embMatId||null, prixLibre:(ln.prixLibre===true)};
   if(t==='evenement') return {type:'evenement', tarifRef: ln.tarifRef||null, grilleId: ln.grilleId||null, ancienTarif: !!ln.ancienTarif, evQte:ln.evQte||EVENT_MIN, equip:(ln.equip!=null?ln.equip:EVENT_MIN_EQUIP), evFiltrePyr:(ln.evFiltrePyr!=null?ln.evFiltrePyr:null), parfums:_parfumsToObj(ln.parfums), sansParfum:(+ln.sansParfum||0), spMode:ln.spMode||'assortiment', spNbParfums:(+ln.spNbParfums||0), remisePct:+ln.remisePct||0, pyraVendue:!!ln.pyraVendue, pyraPrixVente:(ln.pyraPrixVente!=null?+ln.pyraPrixVente:null), pyraCoutAchat:(ln.pyraCoutAchat!=null?+ln.pyraCoutAchat:null), accessoireDeco:!!ln.accessoireDeco, _configChoisie:!!ln._configChoisie};
   if(t==='grand') return {type:'grand', tarifRef: ln.tarifRef||null, grilleId: ln.grilleId||null, ancienTarif: !!ln.ancienTarif, tarif:ln.tarif||'particulier', items:_parfumsToObj(ln.items), remisePct:+ln.remisePct||0, embMode:ln.embMode||'reutilisable', embMatId:ln.embMatId||null};
-  if(t==='vrac') return {type:'vrac', tarifRef: ln.tarifRef||null, grilleId: ln.grilleId||null, ancienTarif: !!ln.ancienTarif, proMode:(ln.proMode==='nonpro'||ln.proMode==='prorec')?ln.proMode:'pro', parfums:_parfumsToObj(ln.parfums), sansParfum:(+ln.sansParfum||0), spMode:ln.spMode||'assortiment', spNbParfums:(+ln.spNbParfums||0), remisePct:+ln.remisePct||0};
+  if(t==='vrac'){
+    // [v1523] Rouvrir = scellé. Une ligne ancienne (sans prixVrac) est convertie avec son total EXACT
+    // d'origine (quantité × tarif de SA grille) : aucun prix ne bouge en rouvrant une commande.
+    const _P=_parfumsToObj(ln.parfums), _nb=vracNbPieces(ln);
+    return {type:'vrac', tarifRef: ln.tarifRef||null, grilleId: ln.grilleId||null, ancienTarif: !!ln.ancienTarif, parfums:_P, sansParfum:(+ln.sansParfum||0), spMode:ln.spMode||'assortiment', spNbParfums:(+ln.spNbParfums||0), remisePct:+ln.remisePct||0, nbMacarons:_nb, prixVrac:(vracEstLibre(ln)?money2(+ln.prixVrac):money2(_nb*vracPrixMacaron(ln))), prixMacaronVrac:((ln.prixMacaronVrac!=null&&isFinite(+ln.prixMacaronVrac))?+ln.prixMacaronVrac:(vracEstLibre(ln)?(_nb>0?+ln.prixVrac/_nb:null):vracPrixMacaron(ln)))};
+  }
   if(t==='sachet') return {type:'sachet', tarifRef: ln.tarifRef||null, grilleId: ln.grilleId||null, ancienTarif: !!ln.ancienTarif, parfums:_parfumsToObj(ln.parfums), sansParfum:(+ln.sansParfum||0), spMode:ln.spMode||'assortiment', spNbParfums:(+ln.spNbParfums||0), remisePct:+ln.remisePct||0};
   if(t==='don') return {type:'don', parfums:_parfumsToObj(ln.parfums), items:_parfumsToObj(ln.items), donEmbMode:ln.donEmbMode||'sans', embMatId:(ln.donEmbMode==='autre'?(ln.embMatId||null):null), sacMatId:(+ln.sacMatId>0?+ln.sacMatId:null), sacNb:(+ln.sacNb>0?+ln.sacNb:0)};
   if(t==='prestation') return {type:'prestation', presta:ln.presta||'', libelle:ln.libelle||'', montantHT:+ln.montantHT||0, dureeH:+ln.dureeH||0, mode:ln.mode||'', detail:ln.detail||'', remiseType:ln.remiseType||'pct', remisePct:+ln.remisePct||0, remiseEuro:+ln.remiseEuro||0, ...(ln.isLivraison?{isLivraison:true}:{})};
@@ -23203,7 +23229,7 @@ function addLine(type){
   if(type==='coffret') cmdLines.push({type:'coffret', taille:6, parfums:{}});
   else if(type==='evenement') cmdLines.push({type:'evenement', evQte:EVENT_MIN, equip:0, evFiltrePyr:0, parfums:{}});
   else if(type==='grand') cmdLines.push({type:'grand', tarif:'particulier', items:{}});
-  else if(type==='vrac') cmdLines.push({type:'vrac', parfums:{}});
+  else if(type==='vrac') cmdLines.push({type:'vrac', parfums:{}, nbMacarons:0, prixVrac:null, prixMacaronVrac:null});
   else if(type==='sachet') cmdLines.push({type:'sachet', parfums:{}});
   else if(type==='don') cmdLines.push({type:'don', parfums:{}, items:{}});
   else if(type==='prestation') cmdLines.push({type:'prestation', libelle:'', montantHT:0, remiseType:'pct', remisePct:0, remiseEuro:0});
@@ -24219,58 +24245,82 @@ function fermerGrandFormatModale(){ cmdForm(_cmdEditingId||0, {keepLines:true});
 
 // Ligne VRAC PRO : macarons standards en boîte réutilisable (non facturée), au tarif pro/macaron.
 function drawVracLine(ln,i){
-  // [v1463] Référence de tarif pour les prix AFFICHÉS sur les 3 boutons : celle de la ligne si
-  // elle est déjà enregistrée, sinon la date saisie dans le formulaire. Antidater une commande
-  // fait donc apparaître les anciens tarifs sur les boutons eux-mêmes.
-  const _vTarifRef = (typeof val==='function') ? (val('f_date')||'') : '';
+  // [v1523] VRAC AU PRIX LIBRE (comme les coffrets) : à gauche la QUANTITÉ (menu), à droite le PRIX TOTAL
+  // (champ libre). Plus de tarif pro / non pro, plus de prix préenregistré. Les bulles ne sont que des
+  // raccourcis (prix au macaron favori × quantité) : elles remplissent le champ, qui reste modifiable.
   if(!ln.parfums) ln.parfums={};
-  if(!ln.proMode) ln.proMode='pro';
-  const pu=vracPrixMacaron(ln);
+  const _nb = Math.max(0,Math.round(+ln.nbMacarons||0));
+  const _opts=[]; for(let n=1;n<=50;n++) _opts.push(n); for(let n=55;n<=100;n+=5) _opts.push(n); for(let n=110;n<=300;n+=10) _opts.push(n);
+  if(_nb>0 && !_opts.includes(_nb)){ _opts.push(_nb); _opts.sort((a,b)=>a-b); }
+  const nbOpts = `<option value="0" ${_nb===0?'selected':''}>Quantité…</option>` + _opts.map(n=>`<option value="${n}" ${_nb===n?'selected':''}>${n} macaron${n>1?'s':''}</option>`).join('');
+  // [v1523b] Ben : quantité d'un côté, PRIX PAR PIÈCE de l'autre, et juste dessous l'aperçu du prix global.
+  const _pu = (ln.prixMacaronVrac!=null && ln.prixMacaronVrac!=='') ? +ln.prixMacaronVrac : null;
+  const prixTxt = (_pu!=null && isFinite(_pu)) ? String(_pu).replace('.',',') : '';
+  const apercu = `<div class="sum-box" style="margin-top:6px"><span>${_nb>0?_nb:'…'} macaron${_nb>1?'s':''} × ${prixTxt?euro(_pu):'…'}</span><b id="vracTot_${i}">${euro(lineTotal(ln))}</b></div>`;
+  const parPiece = '';
+  const favs = vracFavorisListe();
+  const bulles = (favs.length && _nb>0)
+    ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">${favs.map(f=>`<button type="button" class="btn sm" style="font-size:.78rem;padding:4px 9px" onclick="setVracPrixUnit(${i},${f})">${euro(f)} <span style="color:#9a8a82">/ macaron</span></button>`).join('')}</div>`
+    : '';
   const rows = FLAVORS.map((f,fi)=>{
     const q=ln.parfums[f]||0;
-    return flavorPickRow(f, q, `setVracParfum(${i},${fi},VAL)`, 120);
+    return flavorPickRow(f, q, `setVracParfum(${i},${fi},VAL)`, _nb||200);
   }).join('');
-  const tot=Object.values(ln.parfums).reduce((s,q)=>s+(+q||0),0);
-  const sansParfum=+ln.sansParfum||0;
-  const spOn=sansParfum>0;
-  const sansParfumRow=`<div onclick="setVracSansParfum(${i}, ${spOn?0:1})"
-      style="display:flex;align-items:center;gap:12px;padding:12px 14px;margin:4px 0;cursor:pointer;
-      border:1px solid var(--hair);border-radius:12px;
-      background:${spOn?'#f0ece4':'#fbf8f3'};${spOn?'border-color:#cdbfa8':''}">
-    <span style="width:22px;height:22px;border-radius:50%;background:repeating-linear-gradient(45deg,#cbb,#cbb 3px,#ddd 3px,#ddd 6px);flex:none;box-shadow:inset 0 0 0 1px rgba(0,0,0,.06);${spOn?'outline:2px solid #8a7a62;outline-offset:1px':''}"></span>
-    <span style="flex:1;font-size:1rem;color:${spOn?'var(--bordeaux)':'#6a5a52'};font-weight:${spOn?'600':'400'}">Sans parfum déterminé <span style="font-size:.72rem;color:#9a8a82;font-weight:400">— à définir plus tard</span></span>
-    ${spOn
-      ? `<input type="number" min="1" step="1" onclick="event.stopPropagation()" value="${sansParfum}" oninput="setVracSansParfumLive(${i},this.value)" onchange="setVracSansParfum(${i},this.value)" style="max-width:90px;font-size:1rem;padding:4px 8px" placeholder="nb">`
-      : `<span style="color:#9a8a82;font-size:.9rem">+ ajouter</span>`}
-  </div>`;
-  const _vSansPro = tarifsLigneSaisie(ln).proActif === false;   // [v1519]
-  const proSel = _vSansPro
-    ? `<div class="note" style="margin:6px 0">Tarif au macaron : <b>${euro(vracPrixMacaron({proMode:'nonpro'}, tarifsLigneSaisie(ln)))}</b>. Pas de tarif pro automatique : pour un client pro, utilise <b>Remise → « Tarif pro »</b> en bas de la commande.</div>`
-    : `<div class="seg" style="display:flex;gap:6px;margin:6px 0">
-    <button type="button" class="btn ${(!ln.proMode||ln.proMode==='pro')?'gold':'ghost'} sm" style="flex:1" onclick="setVracMode(${i},'pro')">Pro occasionnel (${euro(vracPrixMacaron({proMode:'pro', tarifRef:ln.tarifRef||_vTarifRef}))})</button>
-    <button type="button" class="btn ${ln.proMode==='prorec'?'gold':'ghost'} sm" style="flex:1" onclick="setVracMode(${i},'prorec')">Pro récurrent (${euro(vracPrixMacaron({proMode:'prorec', tarifRef:ln.tarifRef||_vTarifRef}))})</button>
-    <button type="button" class="btn ${ln.proMode==='nonpro'?'gold':'ghost'} sm" style="flex:1" onclick="setVracMode(${i},'nonpro')">Non pro (${euro(vracPrixMacaron({proMode:'nonpro', tarifRef:ln.tarifRef||_vTarifRef}))})</button>
-  </div>`;
+  const sumP = Object.values(ln.parfums).reduce((s,q)=>s+(+q||0),0);
+  const reste = _nb>0 ? _nb-sumP : 0;
+  const col = (_nb>0 && sumP>_nb) ? '#b3261e' : (_nb>0 && sumP===_nb ? '#2e7d32' : '#7a6a62');
+  const compteur = _nb>0
+    ? `<div class="sum-box"><span>Parfums répartis</span><b style="color:${col}">${sumP}/${_nb}${sumP>_nb?` — dépasse de ${sumP-_nb} !`:''}</b></div>`
+    : '';
+  const spBloc = reste>0
+    ? `<p class="note" style="margin:6px 0 2px;color:#9a7d3a">🎯 ${reste} macaron${reste>1?'s':''} sans parfum déterminé (à choisir plus tard).</p>${cmdSpModeBlock({...ln, sansParfum:reste},i)}`
+    : '';
   return `<div class="cmd-line">
     <div class="line-head"><span class="line-type">Vrac <span class="line-sub">boîte réutilisable, non facturée</span></span><span class="line-del" onclick="removeLine(${i})">✕ retirer</span></div>
-    ${proSel}
-    <div class="sum-box"><span>Tarif ${ln.proMode==='nonpro'?'particulier (prix coffret)':(ln.proMode==='prorec'?'pro récurrent':'pro occasionnel')}</span><b>${euro(pu)}/macaron</b></div>
-    <label style="font-size:.78rem;color:#7a6a62">Parfums (quantité)</label>
-    <div class="flav-grid">${rows}${sansParfumRow}</div>
-    ${sansParfum>0 ? `<p class="note" style="margin:6px 0 2px;color:#9a7d3a">🎯 Les ${sansParfum} macaron${sansParfum>1?'s':''} sans parfum seront à déterminer au démarrage de la production.</p>
-    ${cmdSpModeBlock(ln,i)}` : ''}
-    <div class="sum-box"><span>${tot}${sansParfum?` + ${sansParfum} sans parfum`:''} macaron(s) × ${euro(pu)}</span><b>${euro((tot+sansParfum)*pu)}</b></div>
+    <div class="row2" style="margin-top:6px">
+      <div class="field"><label>Quantité de macarons</label><select onchange="setVracNb(${i},this.value)">${nbOpts}</select></div>
+      <div class="field"><label>Prix par pièce (€)</label><input type="text" inputmode="decimal" value="${prixTxt}" placeholder="ex : 1,75" onchange="setVracPrix(${i},this.value)" oninput="setVracPrixLive(${i},this.value)"></div>
+    </div>
+    ${apercu}${bulles}
+    <label style="font-size:.78rem;color:#7a6a62;display:block;margin-top:8px">Parfums (quantité)</label>
+    <div class="flav-grid">${rows}</div>
+    ${compteur}${spBloc}
     ${lineRemiseRow(ln,i)}
   </div>`;
 }
-// Bascule le mode tarifaire d'une ligne vrac (pro / non pro) et rafraîchit le formulaire.
-function setVracMode(i, mode){
-  if(!cmdLines[i]) return;
-  // [v1463] 3 modes désormais : 'nonpro', 'pro' (occasionnel) et 'prorec' (récurrent).
-  // Tout autre valeur retombe sur 'pro' — le mode par défaut historique.
-  cmdLines[i].proMode = (mode==='nonpro'||mode==='prorec') ? mode : 'pro';
-  if(typeof drawLines==='function') drawLines();
-  else if(typeof renderCmdForm==='function') renderCmdForm();
+// [v1523] Quantité du vrac (menu). Purge les parfums au-delà du nouveau total, comme pour un coffret.
+function setVracNb(i,v){
+  const ln=cmdLines[i]; if(!ln) return;
+  const n=Math.max(0,Math.round(+v||0));
+  ln.nbMacarons=n;
+  if(n>0){ Object.keys(ln.parfums||{}).forEach(k=>{ if(ln.parfums[k]>n) ln.parfums[k]=n; }); }
+  delete ln.sansParfum;
+  _vracRecalcPrix(ln);
+  drawLines();
+}
+// Le prix global = quantité × prix par pièce (arrondi au centime). Sans prix par pièce : pas de prix.
+function _vracRecalcPrix(ln){
+  const pu=(ln.prixMacaronVrac!=null && isFinite(+ln.prixMacaronVrac)) ? +ln.prixMacaronVrac : null;
+  ln.prixVrac = (pu!=null) ? money2((Math.max(0,Math.round(+ln.nbMacarons||0)))*pu) : null;
+}
+function _vracPrixDepuisTexte(v){
+  const txt=String(v==null?'':v).replace(',', '.').trim();
+  const n=(txt==='')?NaN:parseFloat(txt);
+  return (isFinite(n)&&n>=0) ? n : null;
+}
+function setVracPrix(i,v){ const ln=cmdLines[i]; if(!ln) return; ln.prixMacaronVrac=_vracPrixDepuisTexte(v); _vracRecalcPrix(ln); drawLines(); }
+// Pendant la frappe : met à jour la donnée et l'aperçu du total SANS redessiner (le champ garde le focus).
+function setVracPrixLive(i,v){
+  const ln=cmdLines[i]; if(!ln) return;
+  ln.prixMacaronVrac=_vracPrixDepuisTexte(v); _vracRecalcPrix(ln);
+  const el=(typeof document!=='undefined' && document.getElementById) ? document.getElementById('vracTot_'+i) : null;
+  if(el) el.textContent=euro(lineTotal(ln));
+  if(typeof cmdRecalc==='function') cmdRecalc();
+}
+// Bulle « prix favori » : prix par pièce.
+function setVracPrixUnit(i,pu){
+  const ln=cmdLines[i]; if(!ln) return;
+  ln.prixMacaronVrac=money2(+pu||0); _vracRecalcPrix(ln); drawLines();
 }
 function setVracParfum(i,fi,v){ const f=FLAVORS[fi]; const q=+v||0; if(q>0)cmdLines[i].parfums[f]=q; else delete cmdLines[i].parfums[f]; drawLines(); }
 function setVracSansParfum(i,v){ if(!cmdLines[i]) return; const q=Math.max(0,Math.round(+v||0)); if(q>0) cmdLines[i].sansParfum=q; else delete cmdLines[i].sansParfum; drawLines(); }
@@ -24452,7 +24502,7 @@ function lineTotalBase(ln){
   }
   if(ln.type==='evenement') return addMoney(addMoney(mulMoney(ln.evQte||0,eventUnitPriceSaisie(ln)), pyraTotalLigne(ln)), accessoireDecoTotal(ln));
   if(ln.type==='grand'){ const pu=bigPrice(ln.tarif, {__grille:tarifsLigneSaisie(ln)}); const tot=Object.values(ln.items||{}).reduce((s,q)=>s+(+q||0),0); return mulMoney(tot,pu); }
-  if(ln.type==='vrac'){ const pu=vracPrixMacaron(ln, tarifsLigneSaisie(ln)); const tot=Object.values(ln.parfums||{}).reduce((s,q)=>s+(+q||0),0) + (+ln.sansParfum||0); return mulMoney(tot,pu); }
+  if(ln.type==='vrac'){ if(vracEstLibre(ln)) return money2(+ln.prixVrac); if(ln.nbMacarons!=null) return 0; const pu=vracPrixMacaron(ln, tarifsLigneSaisie(ln)); const tot=Object.values(ln.parfums||{}).reduce((s,q)=>s+(+q||0),0) + (+ln.sansParfum||0); return mulMoney(tot,pu); }
   if(ln.type==='sachet'){ const tot=Object.values(ln.parfums||{}).reduce((s,q)=>s+(+q||0),0) + (+ln.sansParfum||0); return sachetPrixPour(tot, tarifsLigneSaisie(ln)); }
   if(ln.type==='don') return 0;
   if(ln.type==='prestation') return money2(+ln.montantHT||0);
@@ -24582,7 +24632,14 @@ function cmdLinesToStored(){
     if(ln.type==='coffret') return {type:'coffret', taille:ln.taille, remisePct:rp, tarifRef, grilleId:(_ancien?undefined:_gid), ancienTarif:ancienTarif||undefined, prixUnitaireApplique: coffretUnitPrice(ln), prixLibre: (ln.prixLibre===true)||undefined, embMode:ln.embMode||'standard', embMatId:ln.embMatId||null, sansParfum:(+ln.sansParfum||0)||undefined, spMode:((+ln.sansParfum||0)>0?(ln.spMode||'assortiment'):undefined), spNbParfums:((+ln.sansParfum||0)>0&&ln.spMode!=='adeterminer'&&+ln.spNbParfums>0?+ln.spNbParfums:undefined), parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
     if(ln.type==='evenement') return {type:'evenement', evQte:ln.evQte, equip:ln.equip, remisePct:rp, tarifRef, grilleId:(_ancien?undefined:_gid), ancienTarif:ancienTarif||undefined, sansParfum:(+ln.sansParfum||0)||undefined, spMode:((+ln.sansParfum||0)>0?(ln.spMode||'assortiment'):undefined), spNbParfums:((+ln.sansParfum||0)>0&&ln.spMode!=='adeterminer'&&+ln.spNbParfums>0?+ln.spNbParfums:undefined), pyraVendue:!!ln.pyraVendue, pyraPrixVente:(ln.pyraPrixVente!=null?+ln.pyraPrixVente:null), pyraCoutAchat:(ln.pyraCoutAchat!=null?+ln.pyraCoutAchat:null), accessoireDeco:(ln.accessoireDeco?true:undefined), parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
     if(ln.type==='grand') return {type:'grand', tarif:(_sansPro?'particulier':ln.tarif), remisePct:rp, tarifRef, grilleId:(_ancien?undefined:_gid), ancienTarif:ancienTarif||undefined, embMode:ln.embMode||'reutilisable', embMatId:ln.embMatId||null, items:Object.keys(ln.items).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
-    if(ln.type==='vrac') return {type:'vrac', proMode:_sansPro?'nonpro':((ln.proMode==='nonpro'||ln.proMode==='prorec')?ln.proMode:'pro'), remisePct:rp, tarifRef, grilleId:(_ancien?undefined:_gid), ancienTarif:ancienTarif||undefined, sansParfum:(+ln.sansParfum||0)||undefined, spMode:((+ln.sansParfum||0)>0?(ln.spMode||'assortiment'):undefined), spNbParfums:((+ln.sansParfum||0)>0&&ln.spMode!=='adeterminer'&&+ln.spNbParfums>0?+ln.spNbParfums:undefined), parfums:Object.keys(ln.parfums||{}).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
+    if(ln.type==='vrac'){
+      // [v1523] Quantité (menu) + prix total libre. Le reste non réparti entre parfums devient « sans parfum
+      // déterminé » : tous les compteurs (pièces, production, coûts) continuent de lire parfums + sansParfum.
+      const _sumP=Object.values(ln.parfums||{}).reduce((a,q)=>a+(+q||0),0);
+      const _nb=Math.max(0,Math.round(+ln.nbMacarons||0));
+      const _sp=Math.max(0,_nb-_sumP);
+      return {type:'vrac', nbMacarons:_nb||undefined, prixVrac:money2(+ln.prixVrac||0), prixMacaronVrac:((ln.prixMacaronVrac!=null&&isFinite(+ln.prixMacaronVrac))?+ln.prixMacaronVrac:undefined), remisePct:rp, tarifRef, grilleId:(_ancien?undefined:_gid), ancienTarif:ancienTarif||undefined, sansParfum:_sp||undefined, spMode:(_sp>0?(ln.spMode||'assortiment'):undefined), spNbParfums:(_sp>0&&ln.spMode!=='adeterminer'&&+ln.spNbParfums>0?+ln.spNbParfums:undefined), parfums:Object.keys(ln.parfums||{}).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
+    }
     if(ln.type==='sachet') return {type:'sachet', remisePct:rp, tarifRef, grilleId:(_ancien?undefined:_gid), ancienTarif:ancienTarif||undefined, sansParfum:(+ln.sansParfum||0)||undefined, spMode:((+ln.sansParfum||0)>0?(ln.spMode||'assortiment'):undefined), spNbParfums:((+ln.sansParfum||0)>0&&ln.spMode!=='adeterminer'&&+ln.spNbParfums>0?+ln.spNbParfums:undefined), parfums:Object.keys(ln.parfums||{}).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
     if(ln.type==='don') return {type:'don', donEmbMode:ln.donEmbMode||'sans', embMatId:(ln.donEmbMode==='autre'?(ln.embMatId||null):null), sacMatId:(+ln.sacMatId>0?+ln.sacMatId:null), sacNb:(+ln.sacMatId>0?Math.max(0,Math.round(+ln.sacNb||0)):0), parfums:Object.keys(ln.parfums||{}).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]})), items:Object.keys(ln.items||{}).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
     if(ln.type==='prestation') return {type:'prestation', libelle:ln.libelle||'', montantHT:money2(+ln.montantHT||0), remiseType:ln.remiseType||'pct', remisePct:Math.max(0,Math.min(100,+ln.remisePct||0)), remiseEuro:money2(+ln.remiseEuro||0), ...(ln.isLivraison?{isLivraison:true}:{})};
@@ -25481,6 +25538,14 @@ async function saveCmd(id){
       const tot=Object.values(ln.parfums||{}).reduce((s,q)=>s+(+q||0),0) + (+ln.sansParfum||0);
       if(!tot){ toast('Sachet : indique au moins 1 macaron'); return; }
       if(tot>SACHET_MAX){ toast(`Sachet : maximum ${SACHET_MAX} macarons (${tot} indiqués)`); return; }
+    }
+    if(ln.type==='vrac'){
+      // [v1523] Quantité (menu) et prix libre obligatoires ; les parfums ne peuvent pas dépasser la quantité.
+      const nb=Math.max(0,Math.round(+ln.nbMacarons||0));
+      const sumP=Object.values(ln.parfums||{}).reduce((a,q)=>a+(+q||0),0);
+      if(!(nb>0)){ toast('Vrac : choisis la quantité de macarons'); return; }
+      if(sumP>nb){ toast(`Vrac : ${sumP} macarons répartis pour ${nb} (dépasse de ${sumP-nb})`); return; }
+      if(!(vracEstLibre(ln) && +ln.prixVrac>0)){ toast(`Vrac de ${nb} macarons : indique le prix par pièce`); return; }
     }
     if(ln.type==='don'){
       const tot=Object.values(ln.parfums||{}).reduce((s,q)=>s+(+q||0),0)+Object.values(ln.items||{}).reduce((s,q)=>s+(+q||0),0);
@@ -39211,8 +39276,10 @@ function parfumSettingsForm(){
       ${fmtKeys.map(k=>`<div class="field"><label>Coffret ${k} macarons</label><input type="number" step="0.01" min="0" id="ps_pf_${k}" value="${grid[k]!=null?grid[k]:''}" placeholder="€/pièce"></div>`).join('')}
     </div>
     <input type="hidden" id="ps_pf_keys" value="${fmtKeys.join(',')}">
-    <div class="field" style="margin-top:8px"><label>Tarif PRO — macaron standard (€ / macaron) <span style="color:#9a8a82;font-weight:400">— vrac en boîte réutilisable</span></label>
+    <div class="field" style="margin-top:8px"><label>Ancien tarif PRO vrac (€ / macaron) <span style="color:#9a8a82;font-weight:400">— uniquement pour relire les anciennes commandes vrac d'avant le 01/09/2026</span></label>
       <input type="number" step="0.01" min="0" id="ps_propstd" value="${s.prixMacaronProStd!=null?s.prixMacaronProStd:1.40}" placeholder="1.40"></div>
+    <div class="field"><label>Prix favoris du vrac (€ / macaron) <span style="color:#9a8a82;font-weight:400">— bulles-raccourcis dans la ligne vrac, séparées par des espaces</span></label>
+      <input type="text" id="ps_vracfav" value="${esc(s.vracFavoris!=null?s.vracFavoris:'1.60, 1.75, 2.00')}" placeholder="1.60 1.75 2.00"></div>
     <div class="field"><label>Tarif PRO — macaron grand format (€ / pièce)</label>
       <input type="number" step="0.01" min="0" id="ps_progf" value="${s.prixGrandFormatPro!=null?s.prixGrandFormatPro:3.20}" placeholder="3.20"></div>
     <hr style="border:none;border-top:1px solid #ece2d4;margin:12px 0">
@@ -39240,6 +39307,7 @@ function parfumSettingsSave(){
   const vals=Object.values(s.prixParFormat||{}).map(Number).filter(x=>x>0);
   if(vals.length) s.prixVenteUnitaire=money2(vals.reduce((a,b)=>a+b,0)/vals.length);
   { const pp=+val('ps_propstd'); if(pp>0) s.prixMacaronProStd=money2(pp); }
+  { const fv=document.getElementById('ps_vracfav'); if(fv) s.vracFavoris=String(fv.value||'').trim(); }
   { const pg=+val('ps_progf'); if(pg>0) s.prixGrandFormatPro=money2(pg); }
   s.laborEnabled=document.getElementById('ps_labor')?.checked||false;
   s.laborRate=Math.max(0,+val('ps_rate')||0);
@@ -52029,7 +52097,7 @@ function aiRenderOrderDraft(){
     ${rows}
     ${(D.noteOpts&&D.noteOpts.length)?`<div class="sum-box"><span>À ne pas oublier</span><b>${D.noteOpts.map(esc).join(' · ')}</b></div>`:''}
     ${D.items.some(it=>it.flavor && it.format!=='grand')?`<div class="sum-box"><span>Conditionnement standard</span><b>${condit}</b></div>`:''}
-    <p class="note">${D.client?(estPro?'Client pro détecté → vrac sans coffret, prix standard : ajoute la remise « Tarif pro » dans la commande si besoin.':'Client particulier → coffret.'):'Type de client inconnu : coffret par défaut (précise le client pour le tarif pro).'} Je pré-remplis le formulaire ; tu vérifies et enregistres.</p>
+    <p class="note">${D.client?(estPro?'Client pro détecté → vrac sans coffret : indique le prix à la main (ajoute la remise « Tarif pro » si besoin).':'Client particulier → coffret.'):'Type de client inconnu : coffret par défaut (précise le client pour le tarif pro).'} Je pré-remplis le formulaire ; tu vérifies et enregistres.</p>
     <div class="flex" style="gap:8px;margin-top:10px"><button class="btn ghost" onclick="_aiOrderDraft=null;document.getElementById('aiOut').innerHTML=''">Annuler</button>
       <button class="btn" onclick="aiExecuteOrderDraft()">Ouvrir le formulaire pré-rempli</button></div>`);
 }
@@ -52057,7 +52125,7 @@ async function aiExecuteOrderDraft(){
       if(standards.length){
         const parfums={}; standards.forEach(it=>{ parfums[it.flavor]=(parfums[it.flavor]||0)+it.qte; });
         if(estPro){
-          cmdLines.push({type:'vrac', proMode:'nonpro', parfums});   // [v1519] pro : vrac SANS tarif pro automatique (remise « Tarif pro » à ajouter à la main)
+          cmdLines.push({type:'vrac', parfums, nbMacarons:Object.values(parfums).reduce((a,q)=>a+q,0), prixVrac:null, prixMacaronVrac:null});   // [v1523] vrac au prix libre : quantité pré-remplie, PRIX à saisir à la main
         } else {
           const total=Object.values(parfums).reduce((s,q)=>s+q,0);
           const taille=D.taille || (BOX_SIZES.find(t=>t>=total) || BOX_SIZES[BOX_SIZES.length-1]);
@@ -52071,7 +52139,7 @@ async function aiExecuteOrderDraft(){
       if(typeof drawLines==='function') drawLines();
       else if(typeof cmdRecalc==='function') cmdRecalc();
     }
-    toast(estPro?'Client pro : macarons en vrac (prix standard) — ajoute la remise « Tarif pro » si besoin, puis enregistre':'Commande pré-remplie — vérifie le prix puis enregistre');
+    toast(estPro?'Client pro : macarons en vrac — indique le prix, puis enregistre':'Commande pré-remplie — vérifie le prix puis enregistre');
   },150);
   _aiOrderDraft=null;
 }
@@ -61143,7 +61211,7 @@ async function buildOrderText(orderId){
       const parfums=(ln.parfums||[]).filter(p=>p.qte>0);
       const totQ=parfums.reduce((s,p)=>s+(+p.qte||0),0);
       const _rem=Math.max(0,Math.min(100,+ln.remisePct||0));
-      L.push('  - Vrac pro'+(totQ?' — '+totQ+' macaron'+(totQ>1?'s':''):'')+(_rem>0?' [remise −'+_rem+'%]':'')+' — '+euro(lineTotalStored(ln)));
+      L.push('  - Vrac'+(vracEstLibre(ln)?'':' pro')+(totQ?' — '+totQ+' macaron'+(totQ>1?'s':''):'')+(_rem>0?' [remise −'+_rem+'%]':'')+' — '+euro(lineTotalStored(ln)));
       parfums.forEach(p=>L.push('      • '+p.nom+' × '+p.qte));
     } else if(ln.type==='sachet'){
       const parfums=(ln.parfums||[]).filter(p=>p.qte>0);
