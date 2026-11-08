@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1520'; // suite : voir tests/v1520-audit-prune-erreur-interne.test.js
+const APP_VERSION = 'v1521'; // suite : voir tests/v1521-date-emission-facture-brouillon.test.js
 const APP_MAJ = '« CHEQUE DE CAUTION » DEVIENT « EMPREINTE BANCAIRE ». Ben : « le cheque de caution doit se transformer en empreinte bancaire. Peux-tu changer la mention partout ou apparait cheque de caution ? » ⚠️ CE N ETAIT PAS UN SIMPLE RENOMMAGE : le texte associe decrivait des gestes propres a un CHEQUE — il est « remis », il « n est pas encaisse », il est « restitue ». Une empreinte bancaire se PREND, se DEBITE et s ANNULE. Renommer sans adapter les verbes aurait laisse des clauses incoherentes dans les CGV, un document juridique transmis aux clients. Les VERBES ONT DONC ETE ADAPTES partout : sur la ligne du devis et de la facture (« empreinte prise le jour de la livraison, non debitee, annulee apres retour du materiel »), et dans les trois clauses concernees des CGV — 7.1 (prise a la mise a disposition, non debitee, annulee), 7.2 (aucune empreinte exigee du particulier) et 7.4 (l empreinte pourra etre DEBITEE, et non encaissee). La logique juridique est inchangee : montants dus, complement exigible, surplus restitue, engagement sur l honneur du particulier. LES IDENTIFIANTS DE CODE SONT CONSERVES (CAUTION_CHEQUE, cautionRowHtml, cautionMention) : les renommer toucherait des dizaines de references et des donnees DEJA ENREGISTREES, pour zero gain visible. Seul le texte vu par le client change. Les documents deja emis gardent leur redaction d origine, puisqu ils memorisent leur rendu. Suite v1493 : 27 assertions, dont la verification que le vocabulaire du cheque a bien disparu ; un renommage NAIF (terme change mais verbes conserves) fait rougir 5 assertions. La suite v1492 a suivi le nouveau libelle, son mecanisme etant inchange.';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
@@ -11990,10 +11990,26 @@ async function docOpen(id){
     </div>`);
 }
 // Modifie la date d'un brouillon de facture (refusée si dans le futur).
+// [v1521] Ben : « quand je génère une facture depuis les commandes puis que je l'ouvre dans devis/facture, je peux modifier la date
+// d'émission, ça semble fonctionner, mais en ouvrant la facture la date d'émission reste la date initiale ».
+// CAUSE (deux défauts qui se cumulaient) : ① `docSetFactDate` ne changeait que le champ `date` du document, JAMAIS la date écrite dans son HTML
+// mémorisé (`<span id="factDate">`) — or l'envoi par mail relit ce HTML ; ② surtout, « Aperçu complet » d'un brouillon le REGÉNÈRE depuis ses
+// commandes (`genererFactureMultiple`), qui réécrivait la date avec `today()` — dans le HTML ET dans le champ `date` du brouillon : la date
+// choisie était donc écrasée à l'ouverture de l'aperçu, et l'écran suivant affichait de nouveau la date du jour.
+// CORRECTIFS : la date d'un brouillon existant est REPRISE par la régénération (HTML et enregistrement) ; changer la date réécrit aussi le HTML
+// mémorisé. Une facture VALIDÉE n'est pas concernée (figée). Une date dans le futur reste refusée.
+function docHtmlAvecDate(html, iso){
+  if(!html) return html;
+  return String(html).replace(/<span id="factDate">[\s\S]*?<\/span>/, `<span id="factDate">${esc(fmtDate(iso))}</span>`);
+}
 async function docSetFactDate(id, v){
   const auj=today();
-  if(v>auj){ toast('⛔ Date dans le futur interdite'); const el=document.getElementById('docFactDate'); if(el) el.value=auj; await db.documents.update(id,{date:auj}); return; }
-  await db.documents.update(id,{date:v});
+  if(!v){ toast('Date invalide'); const el0=document.getElementById('docFactDate'); const d0=await db.documents.get(id); if(el0&&d0) el0.value=d0.date||auj; return; }
+  if(v>auj){ toast('⛔ Date dans le futur interdite'); const el=document.getElementById('docFactDate'); if(el) el.value=auj; v=auj; }
+  const d=await db.documents.get(id);
+  if(!d || docEstDefinitif(d)) return;   // une facture validée ne change jamais de date
+  await db.documents.update(id, d.html ? { date:v, html:docHtmlAvecDate(d.html, v) } : { date:v });
+  if(typeof markUnsaved==='function') markUnsaved();
 }
 // [v1362] Le MOYEN de l'acompte, saisi séparément de son MONTANT.
 async function docSetAcompteMoyen(id, v){
@@ -60624,7 +60640,17 @@ async function genererFactureMultiple(ids){
   // renseignée, sinon la date de la commande. Si toutes les commandes partagent UNE même date
   // de livraison et qu'elle diffère de l'émission, on l'affiche explicitement dans les détails.
   // Si les dates diffèrent entre commandes, chaque section porte déjà sa propre date/événement.
-  const _emissionISO = today();
+  // [v1521] La date d'émission d'un BROUILLON déjà existant (éventuellement modifiée par Ben) est reprise telle quelle ; sinon la date du jour.
+  let _dateBrouillon = '';
+  try{
+    if(!_factRegenCtx){
+      const _wantedD = ids.slice().map(Number).sort((a,b)=>a-b).join(',');
+      const _fd = (await db.documents.where('type').equals('facture').toArray()).find(f => f.statut==='brouillon'
+        && (f.orderIds||(f.orderId?[f.orderId]:[])).slice().sort((a,b)=>a-b).join(',')===_wantedD);
+      if(_fd && _fd.date && _fd.date<=today()) _dateBrouillon = _fd.date;
+    }
+  }catch(_e){ _dateBrouillon=''; }
+  const _emissionISO = _factRegenCtx ? _factRegenCtx.date : (_dateBrouillon || today());
   const _livDates = [...new Set(orders.map(o => o.dateEvenement || o.date || '').filter(Boolean))];
   const _dateLivUnique = (_livDates.length === 1 && _livDates[0] !== _emissionISO) ? _livDates[0] : '';
 
@@ -60662,7 +60688,7 @@ async function genererFactureMultiple(ids){
          <div class="bloc" style="text-align:right">
            <div class="lbl">Détails</div>
            Facture n° : <b><span id="factNumero">${esc(numFact)}</span></b><br>
-           Date d'émission : <span id="factDate">${fmtDate(_factRegenCtx ? _factRegenCtx.date : today())}</span><br>
+           Date d'émission : <span id="factDate">${fmtDate(_emissionISO)}</span><br>
            ${_dateLivUnique ? `Date de livraison : ${fmtDate(_dateLivUnique)}<br>` : ''}
            ${orders.length>1 ? orders.length+' commande(s) regroupée(s)' : ''}
          </div>
@@ -60742,7 +60768,7 @@ async function genererFactureMultiple(ids){
       numero:null,                       // pas de numéro légal tant que brouillon
       refInterne:numFact,                // référence interne lisible (basée sur la commande)
       clientId:(client&&client.id)||orders[0].clientId||0,
-      date:today(),
+      date:_emissionISO,                 // [v1521] jamais écrasée par today() quand un brouillon porte déjà sa date
       montant:money2(grandTotal),
       totalPaye:money2(totalPaye),
       orderIds, orderId:orderIds[0]||null,
