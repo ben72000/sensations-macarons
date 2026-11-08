@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1521'; // suite : voir tests/v1521-date-emission-facture-brouillon.test.js
+const APP_VERSION = 'v1522'; // suite : voir tests/v1522-facture-annulee-statut.test.js
 const APP_MAJ = '« CHEQUE DE CAUTION » DEVIENT « EMPREINTE BANCAIRE ». Ben : « le cheque de caution doit se transformer en empreinte bancaire. Peux-tu changer la mention partout ou apparait cheque de caution ? » ⚠️ CE N ETAIT PAS UN SIMPLE RENOMMAGE : le texte associe decrivait des gestes propres a un CHEQUE — il est « remis », il « n est pas encaisse », il est « restitue ». Une empreinte bancaire se PREND, se DEBITE et s ANNULE. Renommer sans adapter les verbes aurait laisse des clauses incoherentes dans les CGV, un document juridique transmis aux clients. Les VERBES ONT DONC ETE ADAPTES partout : sur la ligne du devis et de la facture (« empreinte prise le jour de la livraison, non debitee, annulee apres retour du materiel »), et dans les trois clauses concernees des CGV — 7.1 (prise a la mise a disposition, non debitee, annulee), 7.2 (aucune empreinte exigee du particulier) et 7.4 (l empreinte pourra etre DEBITEE, et non encaissee). La logique juridique est inchangee : montants dus, complement exigible, surplus restitue, engagement sur l honneur du particulier. LES IDENTIFIANTS DE CODE SONT CONSERVES (CAUTION_CHEQUE, cautionRowHtml, cautionMention) : les renommer toucherait des dizaines de references et des donnees DEJA ENREGISTREES, pour zero gain visible. Seul le texte vu par le client change. Les documents deja emis gardent leur redaction d origine, puisqu ils memorisent leur rendu. Suite v1493 : 27 assertions, dont la verification que le vocabulaire du cheque a bien disparu ; un renommage NAIF (terme change mais verbes conserves) fait rougir 5 assertions. La suite v1492 a suivi le nouveau libelle, son mecanisme etant inchange.';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
@@ -11538,14 +11538,54 @@ function docStatutLabel(d){
   if(d.type==='devis'){
     return {en_attente:'⏳ En attente', accepte:'✓ Accepté', refuse:'✕ Refusé', expire:'⌛ Expiré'}[d.statut]||d.statut;
   }
+  if(d._annulee) return '↩︎ Annulée par avoir';   // [v1522] état dérivé : la facture reste « validée » légalement, mais plus due
   return {brouillon:'📝 Brouillon (à valider)', emise:'🔒 Validée', payee:'🔒 Validée · payée'}[d.statut]||d.statut;
 }
 function docStatutColor(d){
   const map={en_attente:'#d98324', accepte:'#3f7d52', refuse:'#b3261e', expire:'#9a8a82', brouillon:'#b08a3a', emise:'#7a4b82', payee:'#3f7d52'};
+  if(d._annulee) return '#7a4a88';   // [v1522] facture annulée par avoir
   return map[d.statut]||'#9a8a82';
 }
 // Une facture est-elle définitive (gravée, inaltérable) ?
 function docEstDefinitif(d){ return d && d.type==='facture' && (d.statut==='emise' || d.statut==='payee'); }
+// [v1522] FACTURE ANNULÉE PUIS RECRÉÉE. Ben : « une facture qui a été annulée puis recréée a été enregistrée comme payée alors que le statut
+// devrait être annulée […] il ne semble pas que cela ait provoqué un double comptage de chiffre d'affaires, mais cela mériterait d'être contrôlé
+// et sécurisé pour les prochaines fois ».
+// CAUSES (lues dans le code) : ① aucun état « annulée » n'existait : une facture annulée par avoir restait « 🔒 Validée » ou « Validée · payée » ;
+// ② le suivi de règlement se resynchronise sur les PAIEMENTS DE LA COMMANDE : dès que la facture recréée était réglée, la facture ANNULÉE
+// (même commande) devenait « payée » à son tour ; ③ les avoirs étaient rattachés à une facture par la COMMANDE, donc à toutes les factures de la
+// commande ; ④ à la recréation, « Annuler » et « Facturer » retrouvaient la PREMIÈRE facture de la commande (l'annulée) au lieu de la vivante.
+// CA : le chiffre d'affaires se calcule sur les COMMANDES et leurs paiements, jamais sur le statut des factures ; il n'y a donc pas de double
+// comptage par cette voie (vérifié par l'audit ci-dessous, qui le contrôle à chaque lancement).
+// RÈGLE : un avoir ne vise QUE la facture dont il porte l'identifiant (`factureId`) ; un avoir ancien sans identifiant reste rattaché par la commande.
+function docOrderIdsDe(f){ return Array.isArray(f&&f.orderIds) && f.orderIds.length ? f.orderIds : (f && f.orderId ? [f.orderId] : []); }
+function docAvoirsDeFacture(f, avoirs){
+  const ids = docOrderIdsDe(f);
+  return (avoirs||[]).filter(a => a && a.type==='avoir' && (a.statut==='emis'||a.statut==='enregistre')
+    && (a.factureId!=null ? a.factureId===f.id : ids.includes(a.orderId)));
+}
+function docFactureAnnulee(f, avoirs){
+  if(!f || f.type!=='facture' || !docEstDefinitif(f)) return false;
+  const tot = money2(docAvoirsDeFacture(f, avoirs).reduce((s,a)=>s+(+a.montant||0),0));
+  return tot>0 && tot>=money2(+f.montant||0)-0.009;
+}
+// La facture « vivante » d'une commande : la plus récente qui n'est PAS annulée ; à défaut, la plus récente.
+function docFactureVivante(factures, avoirs, oid){
+  const c = (factures||[]).filter(f => f && f.type==='facture' && docOrderIdsDe(f).includes(oid)).sort((a,b)=>(+a.id||0)-(+b.id||0));
+  if(!c.length) return null;
+  const vivantes = c.filter(f => !docFactureAnnulee(f, avoirs));
+  return (vivantes.length ? vivantes : c)[ (vivantes.length ? vivantes : c).length-1 ];
+}
+// Remise en état d'une facture annulée dont le statut a été polluée par les paiements de la commande : valable UNIQUEMENT quand tous ses avoirs
+// sont des ANNULATIONS (rien n'a jamais été encaissé sur elle). Un avoir de remboursement suppose un vrai encaissement : on n'y touche pas.
+function docPatchFactureAnnulee(f, avoirs){
+  const av = docAvoirsDeFacture(f, avoirs);
+  if(!av.length || !av.every(a => a.nature==='annulation')) return null;
+  if(f.statut!=='payee' && !(+f.totalPaye>0)) return null;
+  const patch = { statut:'emise', totalPaye:0 };
+  if(f.html && typeof _factPatchRegl==='function'){ const h=_factPatchRegl(f.html, +f.montant||0, 0, '', ''); if(h!==f.html) patch.html=h; }
+  return patch;
+}
 // [COMPTEUR LÉGAL DE FACTURES] Numéro au format AAAAMM-N.
 // PRINCIPE LÉGAL (art. 242 nonies A CGI) : la séquence est CONTINUE, SANS TROU, et un numéro
 // attribué n'est JAMAIS réutilisé ni recalculé. On NE déduit donc PAS le prochain numéro en
@@ -11602,7 +11642,11 @@ async function avoirForm(orderId){
   const o = await db.orders.get(orderId); if(!o){ toast('Commande introuvable'); return; }
   const dejaEncaisse = orderPaid(o);
   const docs = await db.documents.toArray().catch(()=>[]);
-  const facture = docs.find(x=>x.type==='facture' && Array.isArray(x.orderIds) && x.orderIds.includes(orderId) && docEstDefinitif(x));
+  // [v1522] la facture VIVANTE de la commande (jamais une facture déjà annulée par un avoir précédent, même si elle est la plus ancienne)
+  const _avoirsAF = docs.filter(x=>x.type==='avoir');
+  const _defs = docs.filter(x=>x.type==='facture' && Array.isArray(x.orderIds) && x.orderIds.includes(orderId) && docEstDefinitif(x));
+  const _vivantesAF = _defs.filter(x=>!docFactureAnnulee(x, _avoirsAF)).sort((a,b)=>(+a.id||0)-(+b.id||0));
+  const facture = _vivantesAF.length ? _vivantesAF[_vivantesAF.length-1] : (_defs.length ? _defs.sort((a,b)=>(+a.id||0)-(+b.id||0))[_defs.length-1] : undefined);
   // [v1499] AVOIR D'ANNULATION : Ben a validé une facture erronée AVANT tout encaissement, et se
   // retrouvait sans issue — facture verrouillée (inaltérabilité légale), avoir refusé par le
   // garde-fou « Rien n'a été encaissé sur cette commande », aucun chemin d'annulation ailleurs.
@@ -11614,7 +11658,7 @@ async function avoirForm(orderId){
   //     la base URSSAF — une erreur symétrique de celle que l'avoir corrige.
   // Le montant annulable est donc borné par la FACTURE (ce qui a été facturé), et non par
   // l'encaissement. Sans facture définitive ET sans encaissement, il n'y a rien à annuler.
-  const avoirsExistants = docs.filter(x=>x.type==='avoir' && x.orderId===orderId && x.statut==='emis');
+  const avoirsExistants = docs.filter(x=>x.type==='avoir' && x.orderId===orderId && x.statut==='emis' && (facture ? (x.factureId==null || x.factureId===facture.id) : true));   // [v1522] seulement ceux de CETTE facture
   const dejaRembourse = money2(avoirsExistants.reduce((s,a)=>s+(+a.montant||0),0));
   const estAnnulation = (dejaEncaisse<=0);
   const baseMax = estAnnulation ? money2(+((facture&&facture.montant)||0)) : dejaEncaisse;
@@ -11744,8 +11788,22 @@ async function renderDocuments(){
   // pour décider du statut puis le jetait, laissant totalPaye (donc le HTML imprimé,
   // « déjà réglé / reste à payer ») figé sur un paiement fantôme. On persiste maintenant
   // ce même chiffre recalculé dans totalPaye + on rafraîchit les lignes du HTML mémorisé.
+  // [v1522] Les factures ANNULÉES par avoir sont marquées (état dérivé, non stocké) et SORTENT de la resynchronisation : leur statut ne doit jamais
+  // suivre les paiements de la commande, qui appartiennent à la facture vivante. Si une annulation pure (rien encaissé) a été polluée par le passé,
+  // on la remet en état ici (statut « validée », réglé 0 €).
+  const _avoirsRD = docs.filter(x=>x.type==='avoir');
+  let _nbRepare = 0;
   for(const f of docs){
-    if(f.type==='facture' && (f.statut==='emise' || f.statut==='payee')){
+    if(f.type!=='facture') continue;
+    f._annulee = docFactureAnnulee(f, _avoirsRD);
+    if(f._annulee){
+      const pt = docPatchFactureAnnulee(f, _avoirsRD);
+      if(pt){ try{ await db.documents.update(f.id, pt); Object.assign(f, pt); _nbRepare++; }catch(e){ swallow(e,'réparation facture annulée'); } }
+    }
+  }
+  if(_nbRepare>0 && typeof toast==='function') toast(_nbRepare+' facture(s) annulée(s) remise(s) en état (plus « payée »)');
+  for(const f of docs){
+    if(f.type==='facture' && !f._annulee && (f.statut==='emise' || f.statut==='payee')){
       const oids=f.orderIds||(f.orderId?[f.orderId]:[]);
       let encaisse=0, total=0, nbVivantes=0, lastD='', lastM='';
       for(const oid of oids){
@@ -11779,7 +11837,7 @@ async function renderDocuments(){
 
   // --- Répartition actifs / archivés (repliables sous chevron) ---
   const factParOrder = {};
-  factures.forEach(f=>{ (f.orderIds||(f.orderId?[f.orderId]:[])).forEach(oid=>{ factParOrder[oid]=f; }); });
+  factures.forEach(f=>{ (f.orderIds||(f.orderId?[f.orderId]:[])).forEach(oid=>{ if(!f._annulee || !factParOrder[oid]) factParOrder[oid]=f; }); });   // [v1522] une facture annulée ne masque jamais la vivante
   const devisArchive = d => { if(!d.orderId) return false; const f=factParOrder[d.orderId]; return !!(f && docEstDefinitif(f)); };
   const moisMs = 31*24*3600*1000;
   const dernierPaiement = async f => {
@@ -11811,7 +11869,7 @@ async function renderDocuments(){
         <span style="color:#9a8a82">${fmtDate(d.date)}</span>
         <b style="color:var(--bordeaux)">${euro(d.montant||0)}</b>
       </div>
-      ${d.type==='facture' && d.statut==='emise' ? `<div style="margin-top:8px"><button class="btn gold sm" style="width:100%" onclick="event.stopPropagation();docMarkPaid(${d.id},1)">💳 Marquer payée</button></div>` : ''}
+      ${d.type==='facture' && d.statut==='emise' && !d._annulee ? `<div style="margin-top:8px"><button class="btn gold sm" style="width:100%" onclick="event.stopPropagation();docMarkPaid(${d.id},1)">💳 Marquer payée</button></div>` : ''}
       </div>
     </div>`;
   // Bloc repliable (chevron) pour les documents archivés.
@@ -11828,6 +11886,7 @@ async function renderDocuments(){
      <button class="btn ghost" onclick="diagDevis()" title="Montre ce qui est reellement enregistre dans le dernier devis">🔎 Diagnostic</button>
      <button class="btn ghost" onclick="devisGroupeStart()" title="Récapituler plusieurs devis et/ou commandes dans un seul document">📋 Devis groupé</button>
      <button class="btn ghost" onclick="docAuditPaiementsFantomesUI()" title="Vérifie la cohérence du suivi de règlement des factures validées">🔍 Audit règlements</button>
+     <button class="btn ghost" onclick="docAuditAnnulationsUI()" title="Contrôle les factures annulées / recréées, les avoirs et le chiffre d'affaires">↩︎ Contrôle annulations</button>
    </div>
    <div id="docSelBar" class="sel-bar" style="display:none">
      <span id="docSelCount">0 sélectionné(s)</span>
@@ -11873,13 +11932,17 @@ async function docNewDevis(){
 // Ouverture d'un document (détail) — étape suivante : édition + conversion. Pour l'instant, aperçu.
 async function docOpen(id){
   let d=await db.documents.get(id); if(!d) return;
+  // [v1522] annulée par avoir ? (état dérivé) — jamais resynchronisée sur les paiements de la commande
+  const _avAll = await db.documents.where('type').equals('avoir').toArray().catch(()=>[]);
+  d._annulee = (d.type==='facture') && docFactureAnnulee(d, _avAll);
+  if(d._annulee){ const _pt = docPatchFactureAnnulee(d, _avAll); if(_pt){ await db.documents.update(id,_pt).catch(()=>{}); Object.assign(d,_pt); } }
   // Resync paiement si facture validée (reflète l'encaissement réel des commandes liées).
-  if(d.type==='facture' && (d.statut==='emise'||d.statut==='payee')){
+  if(d.type==='facture' && !d._annulee && (d.statut==='emise'||d.statut==='payee')){
     const oids=d.orderIds||(d.orderId?[d.orderId]:[]);
     let enc=0,tot=0;
     for(const oid of oids){ const o=await db.orders.get(oid).catch(()=>null); if(o){ tot+=(+o.montant||0); enc+=paiementsDe(o).reduce((a,p)=>a+(+p.montant||0),0); } } // [v1194] paiementsDe : legacy inclus
     const cible=(tot>0&&enc>=tot-0.01)?'payee':'emise';
-    if(cible!==d.statut){ await db.documents.update(id,{statut:cible}); d=await db.documents.get(id); }
+    if(cible!==d.statut){ await db.documents.update(id,{statut:cible}); d=await db.documents.get(id); d._annulee=false; }
   }
   const clients=await db.clients.toArray().catch(()=>[]);
   const clName=(clients.find(c=>c.id===d.clientId)||{}).nom||'—';
@@ -11900,11 +11963,11 @@ async function docOpen(id){
   // (une facture validée reste ce qu'elle est, inaltérable) : c'est un affichage DÉRIVÉ, construit
   // ici à la lecture, qui vient s'ajouter sans toucher à la pièce elle-même.
   const avoirsDeCetteFacture = (d.type==='facture')
-    ? allDocs.filter(x=>x.type==='avoir' && (x.statut==='emis'||x.statut==='enregistre')
-        && (x.factureId===d.id || orderIds.includes(x.orderId)))
+    ? docAvoirsDeFacture(d, allDocs)   // [v1522] un avoir ne vise que SA facture (factureId), plus toutes celles de la commande
     : [];
   const totalAvoirsFacture = money2(avoirsDeCetteFacture.reduce((s,a)=>s+(+a.montant||0),0));
   const factureAnnuleeParAvoir = (d.type==='facture' && totalAvoirsFacture>0 && totalAvoirsFacture>=money2(+d.montant||0)-0.009);
+  d._annulee = !!factureAnnuleeParAvoir;
   // Commande(s) liée(s) à ce document
   for(const oid of orderIds){
     const o=await db.orders.get(oid).catch(()=>null);
@@ -11914,7 +11977,7 @@ async function docOpen(id){
   avoirsDeCetteFacture.forEach(a=>liens.push({label:`Avoir ${a.numero||'—'} (${euro(a.montant)})`, fn:`docOpen(${a.id})`}));
   // Si je suis un DEVIS : retrouver la facture née de ma commande
   if(d.type==='devis' && d.orderId){
-    const fact=allDocs.find(x=>x.type==='facture' && Array.isArray(x.orderIds) && x.orderIds.includes(d.orderId));
+    const fact=docFactureVivante(allDocs.filter(x=>x.type==='facture'), allDocs.filter(x=>x.type==='avoir'), d.orderId);   // [v1522]
     if(fact) liens.push({label:'Facture '+fact.numero, fn:`docOpen(${fact.id})`});
   }
   // Si je suis une FACTURE : retrouver le devis d'origine de ma commande
@@ -11970,7 +12033,7 @@ async function docOpen(id){
         </div>
       `:`
         <div class="banner" style="background:#f0ecf3;border-color:#cdbcd6;margin-top:10px">🔒 <div><b>Facture validée</b> — inaltérable. Ni modification ni suppression possibles (obligation légale).${d.dateValidation?` Validée le ${fmtDate(d.dateValidation)}.`:''}</div></div>
-        ${_reglInfo.reste<=0.009
+        ${factureAnnuleeParAvoir ? `<div class="sum-box" style="margin-top:8px;border:1px solid #caa6d8;background:#f3eef7"><span>↩︎ Facture annulée par avoir — plus rien à encaisser sur elle</span><b>${euro(0)}</b></div>` : _reglInfo.reste<=0.009
           ? `<div class="sum-box" style="border:1px solid #cde8cd;background:#eef6ee;margin-top:8px"><span>💳 Réglée${_reglInfo.lastDate?` le ${fmtDate(_reglInfo.lastDate)}`:''}${_reglInfo.lastMoyen?` · ${esc(_reglInfo.lastMoyen)}`:''}</span><b style="color:#2e7d32">${euro(_reglInfo.paye)}</b></div>`
           : `<div class="sum-box" style="margin-top:8px"><span><b>Reste à encaisser</b></span><b style="color:#b3261e">${euro(_reglInfo.reste)}</b></div>
              <button class="btn gold" style="width:100%;margin-top:6px" onclick="docMarkPaid(${d.id})">💳 Marquer payée <span style="font-weight:400;opacity:.85">· date + moyen</span></button>`}
@@ -12446,6 +12509,8 @@ async function docMarkPaid(id, fromList){
   const d = await db.documents.get(id);
   if(!d || d.type!=='facture'){ toast('Facture introuvable'); return; }
   if(d.statut==='brouillon'){ toast('Valide d\'abord la facture, puis marque-la payée'); return; }
+  // [v1522] Une facture annulée par avoir ne se règle jamais : le paiement irait sur la commande, que la facture recréée partage.
+  if(docFactureAnnulee(d, await db.documents.where('type').equals('avoir').toArray().catch(()=>[]))){ toast('↩︎ Cette facture est annulée par avoir : enregistre le règlement sur la facture en vigueur.'); return; }
   const r = await _factReglement(d);
   if(r.reste<=0.009){ toast('Facture déjà réglée ✓'); if(view==='documents') renderDocuments(); return; }
   openModal(`<h3>💳 Marquer la facture payée</h3>
@@ -12475,6 +12540,7 @@ async function docMarkPaidConfirm(id, fromList){
   const auj=today();
   if(date>auj){ toast('⛔ Date dans le futur interdite'); return; }
   const d = await db.documents.get(id); if(!d){ toast('Facture introuvable'); return; }
+  if(docFactureAnnulee(d, await db.documents.where('type').equals('avoir').toArray().catch(()=>[]))){ toast('↩︎ Facture annulée par avoir : aucun règlement possible dessus.'); return; }   // [v1522]
   const r = await _factReglement(d);
   let aRepartir = Math.min(mt, r.reste>0?r.reste:mt);
   if(r.oids.length){
@@ -12607,6 +12673,57 @@ async function docAuditPaiementsFantomes(){
 }
 // UI : rapport d'audit, purement informatif (aucun bouton de correction directe sur
 // une facture verrouillée — l'inaltérabilité légale est respectée).
+// [v1522] CONTRÔLE DES ANNULATIONS ET DU CA — fonction pure sur des tableaux (testable) : repère ce qui a mal tourné ou pourrait mal tourner.
+//  ① facture annulée marquée payée / réglée (réparable automatiquement) ;
+//  ② commande portée par PLUSIEURS factures vivantes (double facturation) ;
+//  ③ avoir dont la facture n'existe pas ;
+//  ④ DOUBLE COMPTAGE DU CA : on recalcule le CA facturé des commandes une fois, puis on ajoute les factures vivantes ; une commande ne doit jamais
+//    peser plus que son montant (et le CA ne lit jamais le statut des factures).
+function docControleAnnulations(factures, avoirs, orders){
+  const out = { payeesAnnulees:[], doubleFacturation:[], avoirsOrphelins:[], caDouble:[], caFactureCommandes:0, caFacturesVivantes:0 };
+  const defs = (factures||[]).filter(f=>docEstDefinitif(f));
+  defs.forEach(f=>{
+    if(docFactureAnnulee(f, avoirs) && (f.statut==='payee' || +f.totalPaye>0)) out.payeesAnnulees.push({ id:f.id, numero:f.numero||('#'+f.id), reparable: !!docPatchFactureAnnulee(f, avoirs) });
+  });
+  const vivantes = defs.filter(f=>!docFactureAnnulee(f, avoirs));
+  const parCmd = {};
+  vivantes.forEach(f=>docOrderIdsDe(f).forEach(oid=>{ (parCmd[oid]=parCmd[oid]||[]).push(f); }));
+  Object.keys(parCmd).forEach(k=>{ if(parCmd[k].length>1) out.doubleFacturation.push({ orderId:+k, numeros:parCmd[k].map(f=>f.numero||('#'+f.id)) }); });
+  (avoirs||[]).forEach(a=>{ if(a.factureId!=null && !(factures||[]).some(f=>f.id===a.factureId)) out.avoirsOrphelins.push({ id:a.id, numero:a.numero||('#'+a.id) }); });
+  const mt = {}; (orders||[]).forEach(o=>{ mt[o.id]=money2(+o.montant||0); out.caFactureCommandes = money2(out.caFactureCommandes + mt[o.id]); });
+  vivantes.forEach(f=>{
+    const ids = docOrderIdsDe(f).filter(oid=>mt[oid]!=null);
+    if(ids.length===1 && money2(+f.montant||0) > mt[ids[0]] + 0.01) out.caDouble.push({ numero:f.numero||('#'+f.id), facture:money2(+f.montant||0), commande:mt[ids[0]] });
+    out.caFacturesVivantes = money2(out.caFacturesVivantes + money2(+f.montant||0));
+  });
+  Object.keys(parCmd).forEach(k=>{ if(parCmd[k].length>1 && mt[k]!=null){ const s2 = money2(parCmd[k].reduce((s,f)=>s+(+f.montant||0),0)); if(s2 > mt[k] + 0.01) out.caDouble.push({ numero:parCmd[k].map(f=>f.numero||('#'+f.id)).join(' + '), facture:s2, commande:mt[k] }); } });
+  return out;
+}
+async function docAuditAnnulationsUI(){
+  const docs = await db.documents.toArray().catch(()=>[]);
+  const orders = await db.orders.toArray().catch(()=>[]);
+  const factures = docs.filter(d=>d.type==='facture'), avoirs = docs.filter(d=>d.type==='avoir');
+  let r = docControleAnnulations(factures, avoirs, orders);
+  let repare = 0;
+  for(const x of r.payeesAnnulees.filter(y=>y.reparable)){
+    const f = factures.find(z=>z.id===x.id); const pt = f && docPatchFactureAnnulee(f, avoirs);
+    if(pt){ try{ await db.documents.update(f.id, pt); Object.assign(f, pt); repare++; }catch(e){ swallow(e,'audit annulations réparation'); } }
+  }
+  if(repare) r = docControleAnnulations(factures, avoirs, orders);
+  const ok = !r.payeesAnnulees.length && !r.doubleFacturation.length && !r.avoirsOrphelins.length && !r.caDouble.length;
+  const ligne = (t, c) => `<div class="sum-box"><span>${t}</span><b style="color:${c}">`;
+  openModal(`<h3>↩︎ Contrôle des annulations et du CA</h3>
+    ${repare?`<p class="note" style="margin:8px 0;color:#3f7d52">${repare} facture(s) annulée(s) étaient marquées « payée » : remises en état (statut validée, réglé 0 €).</p>`:''}
+    ${ok?`<p class="note" style="margin:8px 0;color:#3f7d52">✓ Aucune anomalie : aucune facture annulée n'est marquée payée, aucune commande n'a deux factures vivantes, aucun avoir sans facture, aucun double comptage de CA détecté.</p>`:''}
+    ${r.payeesAnnulees.map(x=>`${ligne('Facture annulée encore marquée payée : '+esc(x.numero),'#b3261e')}${x.reparable?'réparable':'à vérifier'}</b></div>`).join('')}
+    ${r.doubleFacturation.map(x=>`${ligne('Commande #'+x.orderId+' : plusieurs factures vivantes','#b3261e')}${esc(x.numeros.join(' · '))}</b></div>`).join('')}
+    ${r.avoirsOrphelins.map(x=>`${ligne('Avoir sans facture : '+esc(x.numero),'#b3261e')}à vérifier</b></div>`).join('')}
+    ${r.caDouble.map(x=>`${ligne('Double comptage possible : '+esc(x.numero),'#b3261e')}${euro(x.facture)} facturé pour ${euro(x.commande)} de commande</b></div>`).join('')}
+    <div class="sum-box"><span>CA facturé des commandes (référence du CA)</span><b>${euro(r.caFactureCommandes)}</b></div>
+    <div class="sum-box"><span>Factures vivantes (contrôle)</span><b>${euro(r.caFacturesVivantes)}</b></div>
+    <p class="note" style="margin-top:6px">Le CA se calcule sur les commandes et leurs encaissements, jamais sur le statut des factures : une facture annulée ou recréée ne peut pas le doubler.</p>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Fermer</button></div>`);
+}
 async function docAuditPaiementsFantomesUI(){
   const ecarts = await docAuditPaiementsFantomes();
   if(!ecarts.length){
@@ -22017,7 +22134,7 @@ async function cmdView(id){
   // Documents liés : devis d'origine + facture(s) émise(s) pour cette commande
   const _docs = await db.documents.toArray().catch(()=>[]);
   const _devisOrig = _docs.find(x=>x.type==='devis' && x.orderId===id);
-  const _factOrig = _docs.find(x=>x.type==='facture' && Array.isArray(x.orderIds) && x.orderIds.includes(id));
+  const _factOrig = docFactureVivante(_docs.filter(x=>x.type==='facture'), _docs.filter(x=>x.type==='avoir'), id);   // [v1522] la facture en vigueur, pas la première
   // [v1501] Même trou que sur la fiche facture : un avoir émis depuis cette commande n'y
   // apparaissait ensuite nulle part. Ajouté ici pour la même raison — Ben, après avoir cliqué
   // « Annuler la facture » depuis une commande, doit pouvoir revenir vérifier ce qu'il a fait.
@@ -60732,10 +60849,15 @@ async function genererFactureMultiple(ids){
     try{
       const wanted = [...orderIds].sort((a,b)=>a-b).join(',');
       const facts = await db.documents.where('type').equals('facture').toArray();
-      existing = facts.find(f=>{
+      // [v1522] plusieurs factures peuvent porter sur le même lot (annulée puis recréée) : on retient la VIVANTE, la plus récente — jamais la
+      // première trouvée, qui est l'annulée (sinon « Facturer » rouvrait l'annulée ou empilait un doublon à chaque clic).
+      const _avG = await db.documents.where('type').equals('avoir').toArray().catch(()=>[]);
+      const _lot = facts.filter(f=>{
         const oids = (f.orderIds||(f.orderId?[f.orderId]:[])).slice().sort((a,b)=>a-b).join(',');
         return oids===wanted;
-      }) || null;
+      }).sort((a,b)=>(+a.id||0)-(+b.id||0));
+      const _vivLot = _lot.filter(f=>!docFactureAnnulee(f, _avG));
+      existing = (_vivLot.length ? _vivLot[_vivLot.length-1] : (_lot.length ? _lot[_lot.length-1] : null)) || null;
     }catch(_e){ existing = null; }
 
     // [v1502] Ben, après avoir annulé une facture erronée par avoir : « je clique sur facturer
@@ -60747,14 +60869,7 @@ async function genererFactureMultiple(ids){
     // percevait comme un blocage silencieux. Une facture définitive ANNULÉE PAR UN AVOIR ne doit
     // plus faire obstacle : on ignore ce cas comme s'il n'y avait pas de facture existante,
     // SANS JAMAIS la modifier (elle reste, elle, intouchée — inaltérabilité toujours respectée).
-    const existingAnnulee = existing ? await (async()=>{
-      if(!docEstDefinitif(existing)) return false;
-      const _avoirsExisting = await db.documents.where('type').equals('avoir').toArray().catch(()=>[]);
-      const _tot = money2(_avoirsExisting
-        .filter(a=>(a.statut==='emis'||a.statut==='enregistre') && (a.factureId===existing.id || orderIds.includes(a.orderId)))
-        .reduce((s,a)=>s+(+a.montant||0),0));
-      return _tot>0 && _tot>=money2(+existing.montant||0)-0.009;
-    })() : false;
+    const existingAnnulee = existing ? docFactureAnnulee(existing, await db.documents.where('type').equals('avoir').toArray().catch(()=>[])) : false;   // [v1522] règle unique (factureId)
 
     if(existing && docEstDefinitif(existing) && !existingAnnulee){
       if(view==="documents") renderDocuments();
