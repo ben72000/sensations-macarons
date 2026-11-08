@@ -2003,6 +2003,32 @@ body.pal-lock{overflow:hidden}
 <div id="timeTracker" aria-live="polite"></div>
 <div id="ttWhisks" aria-live="polite"></div>
 
+<script>
+/* [v1524] FILET DE DÉMARRAGE — si l'écran reste BLANC (seuls les boutons du bas s'affichent), on le dit au lieu de
+   laisser une page vide : message d'erreur lisible + « Réparer » (vide le cache de l'app, GARDE toutes tes données). */
+window.smFiletErreurs = [];
+window.addEventListener('error', function(e){ try{ window.smFiletErreurs.push(String(e.message||e.error||'erreur')+(e.filename?' ('+String(e.filename).split('/').pop()+':'+e.lineno+')':'')); }catch(_){ } });
+window.addEventListener('unhandledrejection', function(e){ try{ window.smFiletErreurs.push('promesse : '+String((e.reason&&e.reason.message)||e.reason||'')); }catch(_){ } });
+window.smFiletVerifier = function(doc, now){
+  var main = doc.getElementById('main'); if(!main) return false;
+  if((main.innerText||main.textContent||'').trim().length >= 20) return false;       // l'écran a du contenu : tout va bien
+  if(doc.getElementById('smFilet')) return true;
+  var p = doc.createElement('div'); p.id='smFilet';
+  p.style.cssText='position:fixed;left:12px;right:12px;top:70px;z-index:99999;background:#fff;border:2px solid #b3261e;border-radius:14px;padding:16px;font:15px/1.4 -apple-system,sans-serif;color:#222;box-shadow:0 8px 30px rgba(0,0,0,.25)';
+  var t = doc.createElement('b'); t.textContent = "L'écran ne s'est pas affiché"; p.appendChild(t);
+  var d = doc.createElement('div'); d.style.cssText='margin:8px 0;font-size:.85rem;color:#555;word-break:break-word';
+  d.textContent = (window.smFiletErreurs.length ? window.smFiletErreurs.slice(-3).join(' · ') : 'Aucune erreur détectée (chargement incomplet ?)'); p.appendChild(d);
+  var b1 = doc.createElement('button'); b1.textContent='Recharger'; b1.style.cssText='margin-right:8px;padding:10px 16px;border-radius:999px;border:0;background:#6E2B3A;color:#fff;font-size:1rem';
+  b1.onclick=function(){ location.reload(); };
+  var b2 = doc.createElement('button'); b2.textContent='Réparer (tes données restent)'; b2.style.cssText='padding:10px 16px;border-radius:999px;border:1.5px solid #6E2B3A;background:#fff;color:#6E2B3A;font-size:1rem';
+  b2.onclick=function(){ b2.textContent='Réparation…'; var f=function(){ location.reload(); };
+    Promise.resolve().then(function(){ return navigator.serviceWorker ? navigator.serviceWorker.getRegistrations().then(function(rs){ return Promise.all(rs.map(function(r){ return r.unregister(); })); }) : 0; })
+      .then(function(){ return window.caches ? caches.keys().then(function(ks){ return Promise.all(ks.map(function(k){ return caches.delete(k); })); }) : 0; })
+      .then(f, f); };
+  p.appendChild(b1); p.appendChild(b2); doc.body.appendChild(p); return true;
+};
+window.addEventListener('load', function(){ setTimeout(function(){ window.smFiletVerifier(document); }, 6000); setTimeout(function(){ window.smFiletVerifier(document); }, 15000); });
+</script>
 <script src="dexie.min.js"></script>
 <script src="html5-qrcode.min.js" onerror="window._h5qrMissing=true"></script>
 <script src="qr_min.js"></script>
