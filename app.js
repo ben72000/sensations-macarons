@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1524'; // suite : voir tests/v1524-stock-actifs-filet-demarrage.test.js
+const APP_VERSION = 'v1527'; // suite : voir tests/v1525-parfums-a-determiner-traces.test.js
 const APP_MAJ = '« CHEQUE DE CAUTION » DEVIENT « EMPREINTE BANCAIRE ». Ben : « le cheque de caution doit se transformer en empreinte bancaire. Peux-tu changer la mention partout ou apparait cheque de caution ? » ⚠️ CE N ETAIT PAS UN SIMPLE RENOMMAGE : le texte associe decrivait des gestes propres a un CHEQUE — il est « remis », il « n est pas encaisse », il est « restitue ». Une empreinte bancaire se PREND, se DEBITE et s ANNULE. Renommer sans adapter les verbes aurait laisse des clauses incoherentes dans les CGV, un document juridique transmis aux clients. Les VERBES ONT DONC ETE ADAPTES partout : sur la ligne du devis et de la facture (« empreinte prise le jour de la livraison, non debitee, annulee apres retour du materiel »), et dans les trois clauses concernees des CGV — 7.1 (prise a la mise a disposition, non debitee, annulee), 7.2 (aucune empreinte exigee du particulier) et 7.4 (l empreinte pourra etre DEBITEE, et non encaissee). La logique juridique est inchangee : montants dus, complement exigible, surplus restitue, engagement sur l honneur du particulier. LES IDENTIFIANTS DE CODE SONT CONSERVES (CAUTION_CHEQUE, cautionRowHtml, cautionMention) : les renommer toucherait des dizaines de references et des donnees DEJA ENREGISTREES, pour zero gain visible. Seul le texte vu par le client change. Les documents deja emis gardent leur redaction d origine, puisqu ils memorisent leur rendu. Suite v1493 : 27 assertions, dont la verification que le vocabulaire du cheque a bien disparu ; un renommage NAIF (terme change mais verbes conserves) fait rougir 5 assertions. La suite v1492 a suivi le nouveau libelle, son mecanisme etant inchange.';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
@@ -8271,6 +8271,7 @@ document.addEventListener('scroll', (e)=>{
 
 
 function render(){
+  try{ majLiensTrace(); }catch(_){}   // [v1525] liens commande↔lots à jour pour les classements par parfum (sans attendre)
   const fn = VIEWS[view] || renderDash;
   const main=document.getElementById('main');
   // Joue l'animation de transition APRÈS que le contenu est prêt (les vues sont async).
@@ -8870,6 +8871,7 @@ async function renderDash(){
   // Calcul protégé : en cas d'erreur ou d'absence de ventes, on n'affiche rien plutôt que de fausser.
   let margeNetteParMacaron = null;
   let coutDons = null, margeApresDons = null, piecesDon = 0;
+  let margeParTaille = null;   // [v1527] { standard:{pieces,margeParPiece}, grand:{…} }
   let _piecesReprise = 0;   // [v1433] pièces de reprise d'historique, volontairement hors du €/macaron
   let livBeneficeNet = null, coutLivraisonBrut = 0, nbLivraisons = 0, margeApresLivraison = null;   // [A5]
   try {
@@ -8898,6 +8900,7 @@ async function renderDash(){
       margeNetteParMacaron = _piecesBase>0 ? money2(_baseMarge / _piecesBase) : null;
     }
     if(_An && _An.totals){
+      margeParTaille = _An.totals.parTaille || null;
       _piecesReprise = _An.totals.piecesReprise||0;   // [v1433] volume écarté du calcul
       coutDons = _An.totals.coutDons||0;
       margeApresDons = _An.totals.margeApresDons;
@@ -8909,6 +8912,9 @@ async function renderDash(){
       margeApresLivraison = (_An.totals.margeApresLivraison!=null) ? _An.totals.margeApresLivraison : null;
     }
   } catch(e){ console.error('margeNetteParMacaron', e); }
+  // [v1527] Deux chiffres : macaron standard et gros macaron. Repli sur le chiffre global si le détail par taille manque.
+  const _mStd = margeParTaille ? margeParTaille.standard.margeParPiece : margeNetteParMacaron;
+  const _mGros = margeParTaille ? margeParTaille.grand.margeParPiece : null;
   // [v1508] Le rappel « relevé de température non fait » et la bannière « non sauvegardé sur iCloud »
   // ne s'affichent plus sur l'accueil (zéro rappel au démarrage). Les relevés restent saisissables dans PMS.
   // CA des marchés clôturés (pour les compteurs annexes _nbEncMois / caTotal).
@@ -9068,7 +9074,12 @@ async function renderDash(){
    <div class="cards">
      <div class="card clickable accent" style="--card-accent:#3f7d52" onclick="caMonthDetail()" title="Voir le détail des encaissements du mois"><div class="corner">€</div><div class="lbl">CA ${esc(_moisCourantLbl)} ${kpiI('ca_mois')}</div><div class="val">${euro(caMonth)}</div><div class="sub">${_nbEncMois} rentrée(s) d'argent · voir le détail ›</div>
        <div class="sub" style="margin-top:2px;border-top:1px solid rgba(0,0,0,.07);padding-top:4px">🍬 <b>${qtyP(macVendusMois)}</b> macaron(s) vendu(s)${_macMarches>0?` <span style="color:#9a8a82">dont ${qtyP(_macMarches)} en marché</span>`:''}${_mkSansMvt>0?`<br><span style="color:#b3261e;font-size:.9em">⚠ ${_mkSansMvt} marché(s) sans comptage saisi — leurs macarons manquent</span>`:''}</div></div>
-     <div class="card clickable accent" style="--card-accent:#c9a227" onclick="goView('rentabilite')" title="Voir la rentabilité par parfum"><div class="corner">📈</div><div class="lbl">Marge nette / macaron ${kpiI('marge_nette')}</div><div class="val">${privacyModeEnabled()?'•••':(margeNetteParMacaron!=null?euro(margeNetteParMacaron):'—')}</div><div class="sub">${margeNetteParMacaron!=null?(_piecesReprise>0?`hors ${qty(_piecesReprise)} pc de reprise ›`:'après coûts, charges & dons ›'):'pas encore de ventes ›'}</div></div>
+     <div class="card clickable accent" style="--card-accent:#c9a227;grid-column:1/-1" onclick="goView('rentabilite')" title="Voir la rentabilité par parfum"><div class="corner">📈</div>
+       <div style="display:flex;gap:18px;align-items:flex-start">
+         <div style="flex:1;min-width:0"><div class="lbl">Marge nette / macaron ${kpiI('marge_nette')}</div><div class="val">${privacyModeEnabled()?'•••':(_mStd!=null?euro(_mStd):'—')}</div></div>
+         <div style="flex:1;min-width:0"><div class="lbl">Marge nette / gros macaron</div><div class="val">${privacyModeEnabled()?'•••':(_mGros!=null?euro(_mGros):'—')}</div></div>
+       </div>
+       <div class="sub">${(_mStd!=null||_mGros!=null)?(_piecesReprise>0?`hors ${qty(_piecesReprise)} pc de reprise ›`:'après coûts, charges & dons ›'):'pas encore de ventes ›'}</div></div>
      <div class="card clickable accent" style="--card-accent:#d98324" onclick="goView('rentabilite')" title="Impact des dons sur la marge"><div class="corner">🎁</div><div class="lbl">Coût des dons ${kpiI('cout_dons')}</div><div class="val">${privacyModeEnabled()?'•••':(coutDons!=null?euro(coutDons):'—')}</div><div class="sub">${(coutDons!=null&&piecesDon>0)?`${qty(piecesDon)} offert(s) · marge après dons ${euro(margeApresDons)} ›`:'aucun don enregistré ›'}</div></div>
      ${(nbLivraisons>0)?`<div class="card clickable accent" style="--card-accent:${livBeneficeNet>=0?'#3f7d52':'#b3261e'}" onclick="goView('rentabilite')" title="Impact des livraisons sur la marge"><div class="corner">🚚</div><div class="lbl">Impact livraisons</div><div class="val">${privacyModeEnabled()?'•••':`${livBeneficeNet>=0?'+':''}${euro(livBeneficeNet)}`}</div><div class="sub">${nbLivraisons} tournée(s) · coût ${euro(coutLivraisonBrut)} ›</div></div>`:''}
      <div class="card clickable accent" style="--card-accent:#7a4b82" onclick="goView('stockparfums')" title="Finis + potentiel à assembler (min coques/ganache par parfum)"><div class="corner">🍬</div><div class="lbl">Macarons en stock ${kpiI('macarons_stock')}</div><div class="val">${qtyP(stockPot.total)}</div><div class="sub" style="line-height:1.5">
@@ -14824,6 +14835,7 @@ async function pickMarkReady(orderId){
   }
   // [JOURNAL STOCK] Journalise les sorties de stock fini de cette livraison (hors transaction).
   for(const mv of stockMovesLog){ await logStockMove(mv); }
+  await majLiensTrace();   // [v1525] traçabilité établie : les parfums « à déterminer » se comptent dès maintenant
   if(pkgManques.length) toast('Commande prête ✓ — stock emballage insuffisant : '+pkgManques.join(', '));
   else toast(dejaLie>0?'Commande prête ✓':'Commande prête ✓ — batchs & emballages décomptés');
   pickRenderOrders();
@@ -16042,7 +16054,7 @@ async function prodAssembleSave(thisId){
     return;
   }
   try{
-    const res = await db.transaction('rw', db.productions, db.prodConsumption, db.recipes, db.components, async ()=>{
+    const res = await db.transaction('rw', db.productions, db.prodConsumption, db.recipes, db.components, db.materialLots, async ()=>{
       const a=await db.productions.get(thisId); const b=await db.productions.get(otherId);
       if(!a||!b) throw new Error('Sous-lot introuvable');
       const coques = prodComposant(a)==='coques' ? a : (prodComposant(b)==='coques'?b:null);
@@ -16170,10 +16182,19 @@ async function prodAssembleSave(thisId){
                                  type:'assemblage', productionId:pv.prodId, componentId:cc.componentId });
         }
       }
+      // [v1526] COÛT DES COQUES → PARFUM DE LA GANACHE, figé à l'association (prix des matières au moment où les coques sont montées).
+      const _assembleFromFin = [{id:coques.id, lot:coques.lotProduction, composant:'coques', qte:coquesUtilisees, couleur:coqueLotLibelle(coques,_recMap).replace(/^Coques /,'')},
+        ...(_coques2?[{id:_coques2.id, lot:_coques2.lotProduction, composant:'coques', qte:_repFin.lot2, couleur:coqueLotLibelle(_coques2,_recMap).replace(/^Coques /,'')}]:[])];
+      const _cq = await coutCoquesAssemblageDepuisBase(_assembleFromFin);
       // crée la production assemblée : 'assemble' (vendable) ou 'degustation' (offert, non vendable)
       const _asmId = await db.productions.add({
         recipeId: _recIdMac, lotProduction: lotAsm, date: today(),
         coquesCouleurs: _couleursCoques,   // [v1513] couleur(s) des coques utilisées (traçabilité)
+        // [v1526] coût des coques de CE lot assemblé (total, par macaron, détail par lot de coques, et si tout est chiffré)
+        coutCoques: _cq ? _cq.total : null,
+        coutCoquesParMac: (_cq && qteAsm>0) ? _arr4(_cq.total/qteAsm) : null,
+        coutCoquesComplet: !!(_cq && _cq.complet),
+        coutCoquesDetail: _cq ? _cq.detail : [],
         composant: deg ? 'degustation' : 'assemble', lotBase,
         degustation: !!deg,
         qteTheorique:qteAsm, qteReelle:qteAsm, ecart:0,
@@ -16192,7 +16213,7 @@ async function prodAssembleSave(thisId){
                       {id:ganache.id, lot:ganache.lotProduction, composant:'ganache', qte:qteAsm, parfum:(window._prodRecName?window._prodRecName(ganache.recipeId):'')},
                       ..._assembleFromComp]
       });
-      return {asmId:_asmId, lotAsm, dlc, qteAsm, deg, compConsos:_compConsos, recipeId:_recIdMac, parfumNom:_parfumMac,
+      return {asmId:_asmId, lotAsm, dlc, qteAsm, deg, compConsos:_compConsos, recipeId:_recIdMac, parfumNom:_parfumMac, coutCoques:_cq, 
         // [JOURNAL STOCK] mouvements de cet assemblage, journalisés hors transaction (stockMoves
         // n'est pas dans la transaction rw). Sortie coques + sortie ganache → entrée macaron.
         _stockMoves:[
@@ -16213,9 +16234,12 @@ async function prodAssembleSave(thisId){
     const _compTxt = (res.compConsos && res.compConsos.length)
       ? ' · ' + res.compConsos.map(c=>`${qty(res.qteAsm)} ${c.nom}`).join(', ') + ' décompté(s)'
       : '';
+    const _cqTxt = (res.coutCoques && res.coutCoques.complet && res.coutCoques.total>0)
+      ? ` · coques ${res.coutCoques.total.toFixed(2).replace('.',',')} € rattachées à ${res.parfumNom||'ce parfum'}`
+      : ((res.coutCoques && res.coutCoques.detail.length) ? ' · coût des coques incomplet (matières sans prix)' : '');
     toast(res.deg
       ? `🥄 Dégustation assemblée ✓ ${qty(res.qteAsm)} · lot ${res.lotAsm} (non vendable)${_compTxt}`
-      : `Assemblé ✓ ${qty(res.qteAsm)} · lot ${res.lotAsm}${res.dlc?` · DLC ${fmtDate(res.dlc)}`:''}${_compTxt}`);
+      : `Assemblé ✓ ${qty(res.qteAsm)} · lot ${res.lotAsm}${res.dlc?` · DLC ${fmtDate(res.dlc)}`:''}${_compTxt}${_cqTxt}`);
     // [ASSEMBLAGE D'UN BATCH — CHRONO DÉSACTIVÉ v1271]
     // Auparavant, le bouton « Assembler » démarrait automatiquement une tâche d'atelier
     // chronométrée (prodTaskStartForBatch) → une session s'ouvrait et le temps se mettait
@@ -16637,6 +16661,23 @@ function prodCouleursRecetteDefaut(couleur){
   const m = prodCouleursRecetteDeCouleur(couleur);
   return (m || _prodCouleursRecettes()[0] || {}).id || 0;
 }
+// [v1526] PLUS DE PARFUM SUR UNE COULEUR. Ben : « enlève le parfum associé à la couleur ». Une ligne = une COULEUR + une TAILLE
+// (standard ou grand format) + un nombre de macarons. La recette qui dimensionne les matières « coque » (base meringue + colorant)
+// est choisie EN SILENCE : jamais affichée comme un parfum, jamais rattachée à un parfum — le lot s'appelle « Coques <couleur> »
+// et son coût suivra le parfum au moment de l'assemblage (voir coutCoquesAssemblage). Ordre des candidats : les recettes de la
+// couleur d'abord, puis toutes les autres de la même TAILLE (jamais de mélange standard / grand format).
+function prodCouleursCandidats(couleur, gf){
+  const recs = _prodCouleursRecettes().filter(r=>!!r.grandFormat===!!gf);
+  const porte = r => couleur!=='__nouvelle__' && recCoqueColors(r).indexOf(couleur)>=0;
+  return recs.filter(porte).concat(recs.filter(r=>!porte(r)));
+}
+function prodCouleursRecetteAuto(couleur, gf){
+  const c = prodCouleursCandidats(couleur, !!gf)[0];
+  return c ? c.id : (prodCouleursRecetteDefaut(couleur) || 0);
+}
+function prodCouleursGrandFormatDispo(){
+  return _prodCouleursRecettes().some(r=>!!r.grandFormat);
+}
 function prodCouleursRecetteOptions(couleur, rid){
   const recs = _prodCouleursRecettes();
   const ok = r => couleur!=='__nouvelle__' && recCoqueColors(r).indexOf(couleur)>=0;
@@ -16649,12 +16690,13 @@ function prodCouleursInit(couleurInit){
   const cles = Object.keys(COQUE_COULEURS);
   const c1 = (couleurInit && COQUE_COULEURS[couleurInit]) ? couleurInit : cles[0];
   const c2 = cles.find(k=>k!==c1) || c1;
-  _prodCouleursRows = [c1, c2].map(c=>({ couleur:c, rid:prodCouleursRecetteDefaut(c), q:60, nouvelleNom:'', nouvelleHex:COULEUR_PERSO_HEX_DEFAUT }));
+  _prodCouleursRows = [c1, c2].map(c=>({ couleur:c, gf:false, rid:prodCouleursRecetteAuto(c,false), ridAuto:true, q:60, nouvelleNom:'', nouvelleHex:COULEUR_PERSO_HEX_DEFAUT }));
   prodCouleursRender();
 }
 function prodCouleursRender(){
   const z = document.getElementById('f_couleursRows'); if(!z) return;
   const cles = Object.keys(COQUE_COULEURS);
+  const gfDispo = prodCouleursGrandFormatDispo();
   z.innerHTML = _prodCouleursRows.map((r,i)=>{
     const opts = cles.map(k=>`<option value="${k}"${k===r.couleur?' selected':''}>${esc(coqueCouleurLabel(k))}</option>`).join('')
                + `<option value="__nouvelle__"${r.couleur==='__nouvelle__'?' selected':''}>➕ Autre couleur (je la tape)…</option>`;
@@ -16667,7 +16709,7 @@ function prodCouleursRender(){
         <div class="field" style="width:92px;margin:0"><label>Macarons</label><input type="number" min="0" inputmode="numeric" value="${r.q}" oninput="prodCouleursSet(${i},'q',this.value)"></div>
         ${_prodCouleursRows.length>1 ? `<button type="button" class="btn sm" onclick="prodCouleursRetirer(${i})" title="Retirer cette couleur">✕</button>` : ''}
       </div>${nouv}
-      <div class="field" style="margin:6px 0 0"><label style="font-size:.78rem">Recette — matières de sa partie « coque »</label><select onchange="prodCouleursSet(${i},'rid',this.value)">${prodCouleursRecetteOptions(r.couleur, r.rid)}</select></div>
+      ${gfDispo ? `<div class="field" style="margin:6px 0 0"><label style="font-size:.78rem">Taille</label><select onchange="prodCouleursSet(${i},'gf',this.value)"><option value="0"${r.gf?'':' selected'}>Standard</option><option value="1"${r.gf?' selected':''}>Grand format</option></select></div>` : ''}
       <div id="f_couleursCoq${i}" style="font-size:.76rem;color:#9a8a82;margin-top:3px">= ${qty(r.q*COQUES_PAR_MACARON)} coques</div>
     </div>`;
   }).join('');
@@ -16677,14 +16719,17 @@ function prodCouleursSet(i, champ, v){
   const r = _prodCouleursRows[i]; if(!r) return;
   if(champ==='couleur'){
     r.couleur = v;
-    // La recette suit la couleur : on garde la courante si elle la porte, sinon la 1re qui la porte (jamais bloquant).
+    // La recette de référence (invisible) suit la couleur : on garde la courante si elle la porte, sinon la 1re qui la porte.
     const cur = _prodCouleursRecettes().find(x=>+x.id===+r.rid);
-    if(!(cur && v!=='__nouvelle__' && recCoqueColors(cur).indexOf(v)>=0)){
-      const m = prodCouleursRecetteDeCouleur(v);
-      if(m) r.rid = m.id;
-    }
+    if(!(cur && v!=='__nouvelle__' && recCoqueColors(cur).indexOf(v)>=0 && !!cur.grandFormat===!!r.gf)) r.rid = prodCouleursRecetteAuto(v, r.gf);
+    r.ridAuto = true;
     prodCouleursRender();
-  } else if(champ==='rid'){ r.rid = +v; prodCouleursApercu(); }
+  } else if(champ==='gf'){
+    r.gf = (v===true || v==='1' || v===1);
+    r.rid = prodCouleursRecetteAuto(r.couleur, r.gf);
+    r.ridAuto = true;
+    prodCouleursRender();
+  } else if(champ==='rid'){ r.rid = +v; r.ridAuto = false; prodCouleursApercu(); }   // conservé pour les appels existants ; plus aucun écran ne le propose
   else if(champ==='q'){
     r.q = Math.max(0, Math.round(+v||0));
     const el = document.getElementById('f_couleursCoq'+i); if(el) el.textContent = `= ${qty(r.q*COQUES_PAR_MACARON)} coques`;   // sans re-dessiner : le champ garde le focus
@@ -16697,7 +16742,7 @@ function prodCouleursAjouter(){
   if(_prodCouleursRows.length >= PROD_COULEURS_MAX){ toast(`${PROD_COULEURS_MAX} couleurs au maximum sur une même meringue`); return; }
   const prises = new Set(_prodCouleursRows.map(r=>r.couleur));
   const c = Object.keys(COQUE_COULEURS).find(k=>!prises.has(k)) || '__nouvelle__';
-  _prodCouleursRows.push({ couleur:c, rid:prodCouleursRecetteDefaut(c), q:0, nouvelleNom:'', nouvelleHex:COULEUR_PERSO_HEX_DEFAUT });
+  _prodCouleursRows.push({ couleur:c, gf:false, rid:prodCouleursRecetteAuto(c,false), ridAuto:true, q:0, nouvelleNom:'', nouvelleHex:COULEUR_PERSO_HEX_DEFAUT });
   prodCouleursRender();
 }
 function prodCouleursRetirer(i){
@@ -16754,6 +16799,7 @@ async function prodCouleursApercu(){
     const prods = await db.productions.toArray().catch(()=>[]);
     const bases = prods.filter(p=>p.parCouleur===true && p.lotBase).map(p=>p.lotBase);
     const actives = _prodCouleursRows.filter(r=>r.q>0);
+    await prodCouleursAffecterRecettes(actives);
     const slots = prodCouleursPlan(prodCouleursResoudre(actives, false), recById, lotDateJJMMAA(dateD), bases);
     if(!slots.length){ z.innerHTML = `<div style="color:#9a8a82;font-size:.84rem">Indique un nombre de macarons pour au moins une couleur.</div>`; return; }
     const totCoq = slots.reduce((s,L)=>s+L.q*COQUES_PAR_MACARON,0);
@@ -16806,13 +16852,28 @@ async function prodCouleursApercu(){
   }catch(e){ console.error('prodCouleursApercu', e); }
 }
 // LANCEMENT : valide TOUT avant la moindre écriture (couleurs, recettes, doublons), crée ensuite les nouvelles couleurs, puis un lot par ligne.
+// Recette de référence INVISIBLE : pour chaque ligne sans recette (ou dont la recette est automatique), on retient la 1re candidate de la
+// bonne taille qui porte des matières « coque ». Une recette fixée à la main par un appelant (r.rid sans ridAuto) n'est jamais écrasée.
+async function prodCouleursAffecterRecettes(lignes){
+  for(const r of (lignes||[])){
+    if(r.rid && !r.ridAuto) continue;
+    let choisie = 0;
+    for(const c of prodCouleursCandidats(r.couleur, !!r.gf)){
+      const its = await db.recipeItems.where('recipeId').equals(+c.id).toArray().catch(()=>[]);
+      if(its.some(it=>it.partie==='coque'||!it.partie)){ choisie = c.id; break; }
+    }
+    r.rid = choisie || r.rid || prodCouleursRecetteAuto(r.couleur, !!r.gf);
+  }
+  return lignes;
+}
 async function prodLancerCouleurs(rows, dateD){
   const lignes = (rows||[]).filter(Boolean);
   if(!lignes.length) throw new Error('Ajoute au moins une couleur');
   if(lignes.length > PROD_COULEURS_MAX) throw new Error(`${PROD_COULEURS_MAX} couleurs au maximum sur une même meringue`);
+  await prodCouleursAffecterRecettes(lignes);
   for(const r of lignes){
     if(!(Math.round(+r.q||0) >= 1)) throw new Error('Indique un nombre de macarons pour chaque couleur');
-    if(!r.rid) throw new Error('Choisis la recette de chaque couleur');
+    if(!r.rid) throw new Error(r.gf ? 'Aucune recette grand format ne permet de calculer les matières de ces coques.' : 'Aucune recette ne permet de calculer les matières de ces coques.');
     if(r.couleur==='__nouvelle__'){ if(!couleurNormaliser(couleurLabelNettoyer(r.nouvelleNom))) throw new Error('Tape le nom de la nouvelle couleur'); }
     else if(!COQUE_COULEURS[r.couleur]) throw new Error('Couleur inconnue');
   }
@@ -16830,7 +16891,7 @@ async function prodLancerCouleurs(rows, dateD){
     const items = await db.recipeItems.where('recipeId').equals(rid).toArray();
     const etiquetee = items.some(it=>it.partie==='coque'||it.partie==='ganache'||it.partie==='cremeux');
     const nbCoque = etiquetee ? items.filter(it=>it.partie==='coque'||!it.partie).length : items.length;
-    if(!nbCoque) throw new Error(`« ${recById[rid].produitNom} » n'a pas de matières « coque » : choisis une autre recette.`);
+    if(!nbCoque) throw new Error('Les matières « coque » de référence sont introuvables : renseigne la partie coque d\'au moins une recette (Recettes).');
   }
   const resolues = prodCouleursResoudre(lignes.map(r=>Object.assign({}, r, { q:Math.round(+r.q) })), true);   // crée les couleurs nouvelles
   const baseD = lotDateJJMMAA(dateD);
@@ -19170,6 +19231,7 @@ async function scanAffectConfirm(){
         type:'livraison', productionId:prodId, orderId };
     });
     if(_mvLog) await logStockMove(_mvLog);
+    await majLiensTrace();   // [v1525] la traçabilité vient de changer
     closeModal();
     toast(`✓ ${qty(q)} affecté(s) à la commande · stock décompté`);
     if(typeof markUnsaved==='function') markUnsaved();
@@ -31216,8 +31278,41 @@ function flavorScale(tauxMarge){
 //   (espèces + CB + autre) est ventilé entre parfums au prorata des pièces vendues.
 //   (Tous les parfums partageant le même prix au sein d'un format, le prorata pièces est exact.)
 // caVentes = encaissé ; caTheo = Σ pièces × prix moyen pondéré (pour l'alerte d'écart).
-function buildFlavorSales(orders, markets, marketMoves, recipes, productions, settings){
+// [v1525] PARFUMS « À DÉTERMINER » COMPTÉS DÈS QUE LA TRAÇABILITÉ EST ÉTABLIE.
+// Une commande saisie « parfum(s) à déterminer » (sansParfum) n'avait aucun parfum : ses macarons sortaient du
+// classement par parfum (pièces, CA, marge). Dès que des lots sont liés à la commande (picking / « Commande prête »
+// → orderItems {orderId, productionId, qte}), les parfums RÉELS de ces lots remplacent « à déterminer ».
+// Règle : les parfums explicites de la commande sont servis en premier (on les retire des lots liés), le reste des
+// lots liés sert les macarons à déterminer, dans la limite de ce qui était à déterminer ; le surplus non tracé
+// reste « à définir » (jamais inventé).
+let _TRACE_LIENS = [];           // copie en mémoire de db.orderItems (rafraîchie à chaque affichage / liaison)
+async function majLiensTrace(){ try{ _TRACE_LIENS = await db.orderItems.toArray(); }catch(e){ swallow(e,'majLiensTrace'); } }
+function parfumsTracesDeCommande(lignes, liens, prodById, recipes, matchRecipe){
+  const out = new Map();
+  const aTracer = (lignes||[]).filter(l=>l && +l.sansParfum>0);
+  if(!aTracer.length || !(liens||[]).length) return out;
+  const lie = {};   // recipeId -> quantité liée à la commande
+  liens.forEach(it=>{ const p=prodById[it.productionId]; if(!p || p.recipeId==null) return; lie[p.recipeId]=round3((lie[p.recipeId]||0)+(+it.qte||0)); });
+  (lignes||[]).forEach(ln=>{ if(!ln || ln.type==='grand') return; (ln.parfums||[]).forEach(p=>{
+    if(!(+p.qte>0)) return; const r=matchRecipe(p.nom);
+    if(r && lie[r.id]!=null) lie[r.id]=Math.max(0, round3(lie[r.id]-(+p.qte)));
+  }); });
+  aTracer.forEach(ln=>{
+    let reste=+ln.sansParfum; const extra=[];
+    Object.keys(lie).forEach(rid=>{
+      if(reste<=0) return;
+      const rec=recipes.find(r=>String(r.id)===rid); if(!rec) return;
+      const q=Math.min(lie[rid], reste); if(!(q>0)) return;
+      extra.push({nom:rec.produitNom, qte:round3(q)}); lie[rid]=round3(lie[rid]-q); reste=round3(reste-q);
+    });
+    if(extra.length) out.set(ln, extra);
+  });
+  return out;
+}
+function buildFlavorSales(orders, markets, marketMoves, recipes, productions, settings, liensTrace){
   const s = settings || getSettings();
+  const _liens = liensTrace || _TRACE_LIENS || [];
+  const _liensParCmd = {}; _liens.forEach(it=>{ if(it && it.orderId!=null) (_liensParCmd[it.orderId] ||= []).push(it); });
   const prixMoyen = (computeAvgSellPrice({orders, markets, settings:s}).prix)||0;
   const recByNorm = {};
   recipes.forEach(r=>{ recByNorm[aiNormalize(r.produitNom)] = r; });
@@ -31253,15 +31348,16 @@ function buildFlavorSales(orders, markets, marketMoves, recipes, productions, se
   // connue, sinon des pièces) ; la part « prestation/service » reste à part. Les dons (0€) ne
   // prennent aucune part de CA mais sont comptés en pièces offertes.
   const TYPES_MACARON = ['coffret','evenement','vrac','grand','histo'];
-  const lineParfumsOf = ln => (ln.type==='grand' ? (ln.items||[]) : (ln.parfums||[])).filter(p=>+p.qte>0);
+  const lineParfumsOf = (ln, tr) => (ln.type==='grand' ? (ln.items||[]) : (ln.parfums||[])).filter(p=>+p.qte>0).concat((tr && tr.get(ln)) || []);
   (orders||[]).forEach(o=>{
     const lignes = orderToLines(o);
+    const tr = parfumsTracesDeCommande(lignes, _liensParCmd[o.id], prodById, recipes, matchRecipe);   // [v1525] à déterminer → parfums tracés
     const gpct = Math.max(0,Math.min(100,+o.remiseGlobale||0));
     const factor = gpct>0 ? (1-gpct/100) : 1;
     // 1) Dons : comptés en pièces offertes (aucun CA).
     lignes.forEach(ln=>{
       if(ln.type!=='don') return;
-      lineParfumsOf(ln).forEach(p=>{ const a=ensure(p.nom); a.piecesDon+=+p.qte; a.cmdPieces+=+p.qte; if(!a.recipeId){const r=matchRecipe(p.nom); if(r)a.recipeId=r.id;} });
+      lineParfumsOf(ln, tr).forEach(p=>{ const a=ensure(p.nom); a.piecesDon+=+p.qte; a.cmdPieces+=+p.qte; if(!a.recipeId){const r=matchRecipe(p.nom); if(r)a.recipeId=r.id;} });
     });
     // ══════════════════════════════════════════════════════════════════════════════════════
     // [v1434] MA RÉGRESSION DE LA v1433 : LES DONS ONT DISPARU.
@@ -31283,7 +31379,7 @@ function buildFlavorSales(orders, markets, marketMoves, recipes, productions, se
       if(ln.type==='prestation'){ valPresta += money2(lineTotalStored(ln)); }
       else if(TYPES_MACARON.includes(ln.type)){
         valMac += money2(lineTotalStored(ln));   // 0 pour histo (non catalogué)
-        lineParfumsOf(ln).forEach(p=>totalPiecesMac+=+p.qte);
+        lineParfumsOf(ln, tr).forEach(p=>totalPiecesMac+=+p.qte);
       }
     });
     if(totalPiecesMac<=0) return;   // rien à ventiler par parfum dans cette commande
@@ -31297,7 +31393,7 @@ function buildFlavorSales(orders, markets, marketMoves, recipes, productions, se
     const useValeur = valMac>0;
     lignes.forEach(ln=>{
       if(!TYPES_MACARON.includes(ln.type)) return;
-      const parfums = lineParfumsOf(ln);
+      const parfums = lineParfumsOf(ln, tr);
       const piecesLn = parfums.reduce((s2,p)=>s2+(+p.qte||0),0);
       if(piecesLn<=0) return;
       const valLn = money2(lineTotalStored(ln));
@@ -31372,37 +31468,113 @@ function buildFlavorSales(orders, markets, marketMoves, recipes, productions, se
 // `fiable` exige DEUX batchs et un volume minimal : une seule fournée peut être atypique
 // (première fois, ratage, matière de dépannage). Un chiffre mesuré sur un cas n'est pas une
 // mesure, c'est une anecdote — même règle qu'en v1430 sur les marchés.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// [v1526] LE COÛT DES COQUES SUIT LE PARFUM, AU MOMENT DE L'ASSEMBLAGE.
+// Ben : « le calcul de coût des coques associé à un parfum doit se rattacher à celui-ci au moment d'associer les coques à la
+// ganache ». Un lot de coques n'a plus de parfum (il a une couleur) : son coût est celui des matières réellement puisées
+// (prodConsumption × prix du lot de matière). Quand on l'associe à une ganache, ce coût — au prorata des coques utilisées — devient
+// le coût « coques » du macaron assemblé, donc de SON parfum (celui de la ganache). Fonctions PURES, testables sans base.
+const _qConso = c => (c && c.qteConsommee!=null) ? (+c.qteConsommee||0) : (+(c||{}).qte||0);   // les vraies lignes portent qteConsommee
+const _arr4 = n => { const v=+n; return isFinite(v) ? Math.round(v*10000)/10000 : 0; };
+// Coût d'UNE coque d'un lot de coques : matières puisées / nombre de coques produites. {pu, cout, coques, complet}
+function coutCoqueUnitaireDeLot(prod, conso, lotsById){
+  let cout = 0;
+  (conso||[]).forEach(c=>{
+    if(!c || c.annuleeInventaire || +c.productionId!==+(prod||{}).id) return;
+    const l = (lotsById||{})[c.materialLotId]; if(!l) return;
+    const pu = lotPU(l); if(!(pu>0)) return;                    // lot sans prix : on ne devine pas
+    cout += _qConso(c)*pu;
+  });
+  const coques = +(prod||{}).qteReelle || +(prod||{}).qteProduite || +(prod||{}).qteTheorique || 0;
+  return { pu: (cout>0 && coques>0) ? cout/coques : 0, cout: money2(cout), coques, complet: cout>0 && coques>0 };
+}
+// Coût des coques d'un assemblage : entrées « coques » de assembleFrom × coût unitaire de leur lot d'origine.
+// complet=false dès qu'UNE entrée n'a pas de coût connu (lot de reprise, coques de dégustation…) : on ne présente pas un total partiel.
+function coutCoquesAssemblage(assembleFrom, prodById, conso, lotsById){
+  const detail = []; let total = 0, complet = true, vu = false;
+  (assembleFrom||[]).forEach(e=>{
+    if(!e || e.composant!=='coques') return;
+    vu = true;
+    const src = (prodById||{})[e.id];
+    const u = src ? coutCoqueUnitaireDeLot(src, conso, lotsById) : { pu:0, complet:false };
+    const cout = (+e.qte||0) * u.pu;
+    if(!(u.pu>0)) complet = false;
+    total += cout;
+    detail.push({ id:e.id, lot:e.lot||'', couleur:e.couleur||'', qte:+e.qte||0, puCoque:_arr4(u.pu), cout:money2(cout), connu:u.pu>0 });
+  });
+  if(!vu) complet = false;
+  return { total: money2(total), detail, complet };
+}
+// Charge ce qu'il faut en base puis calcule. Ne jette JAMAIS : un coût indisponible ne doit pas bloquer un assemblage.
+async function coutCoquesAssemblageDepuisBase(assembleFrom){
+  try{
+    const ids = [...new Set((assembleFrom||[]).filter(e=>e && e.composant==='coques' && e.id!=null).map(e=>+e.id))];
+    const prodById = {}, lotsById = {}; let conso = [];
+    for(const id of ids){
+      const pr = await db.productions.get(id); if(pr) prodById[id] = pr;
+      conso = conso.concat(await db.prodConsumption.where('productionId').equals(id).toArray());
+    }
+    for(const c of conso){ if(c.materialLotId!=null && !lotsById[c.materialLotId]){ const l = await db.materialLots.get(c.materialLotId); if(l) lotsById[c.materialLotId] = l; } }
+    return coutCoquesAssemblage(assembleFrom, prodById, conso, lotsById);
+  }catch(e){ console.error('coutCoquesAssemblageDepuisBase', e); return null; }
+}
 function coutMatiereMesureParRecette(productions, conso, lots, opts){
   opts = opts||{};
   const minBatchs = opts.minBatchs!=null ? +opts.minBatchs : 2;
   const minPieces = opts.minPieces!=null ? +opts.minPieces : 30;
   const parLot = {}; (lots||[]).forEach(l=>{ if(l) parLot[l.id]=l; });
+  const prodById = {}; (productions||[]).forEach(p=>{ if(p) prodById[p.id]=p; });
   // Coût matière réellement consommé, batch par batch.
+  // [v1526] La quantité d'une vraie ligne s'appelle `qteConsommee` : l'ancien code lisait `qte`, qui n'existe pas → la « mesure » ne
+  // s'est donc JAMAIS déclenchée en production (tout retombait sur le coût théorique de la recette). Corrigé, avec repli sur `qte`.
   const coutParProd = {};
   (conso||[]).forEach(c=>{
     if(!c || c.annuleeInventaire) return;                 // conso neutralisée à l'inventaire : rendue
     const l = parLot[c.materialLotId]; if(!l) return;
     const pu = (typeof lotPU==='function') ? lotPU(l) : (+l.prixUnitaire||0);
     if(!(pu>0)) return;                                    // lot sans prix : on ne devine pas
-    coutParProd[c.productionId] = (coutParProd[c.productionId]||0) + (+c.qte||0)*pu;
+    coutParProd[c.productionId] = (coutParProd[c.productionId]||0) + _qConso(c)*pu;
   });
+  const piecesDe = p => (typeof prodQteAffichee==='function') ? prodQteAffichee(p) : (+p.qteReelle||+p.qteProduite||0);
   const acc = {};
+  const A = rid => acc[rid] || (acc[rid]={ cout:0, pieces:0, nbBatchs:0, gCout:0, gPieces:0, gBatchs:0, cCout:0, cPieces:0 });
   (productions||[]).forEach(p=>{
     if(!p || p.recipeId==null) return;
     if(p.histo === true) return;                           // un lot de REPRISE n'a rien consommé : il ne mesure rien
+    const comp = (typeof prodComposant==='function') ? prodComposant(p) : (p.composant||'complet');
+    if(comp==='coques' || p.parCouleur===true) return;     // [v1526] un lot de coques n'a pas de parfum : son coût arrive via l'assemblage
+    if(comp==='assemble' || comp==='degustation'){
+      // Le coût des coques est rattaché au parfum (= celui de la GANACHE) au moment de l'assemblage.
+      if(comp==='degustation' || p.degOrigine || p.etiquetteDe!=null) return;   // dégustation / pièces récupérées / boîte scindée (déjà comptée sur son lot d'origine)
+      let cq = null;
+      if(p.coutCoquesComplet===true && p.coutCoques!=null) cq = { total:+p.coutCoques, complet:true };
+      else if(Array.isArray(p.assembleFrom) && p.assembleFrom.length) cq = coutCoquesAssemblage(p.assembleFrom, prodById, conso, parLot);   // lots d'avant v1526 : recalculé
+      const pcs = +p.qteProduite || +p.qteReelle || 0;
+      if(cq && cq.complet && cq.total>0 && pcs>0){ const a=A(p.recipeId); a.cCout += cq.total; a.cPieces += pcs; }
+      return;
+    }
     const cout = coutParProd[p.id]; if(!(cout>0)) return;  // aucun coût réel rattaché → n'entre pas dans la mesure
-    const pieces = (typeof prodQteAffichee==='function') ? prodQteAffichee(p) : (+p.qteReelle||+p.qteProduite||0);
+    const pieces = piecesDe(p);
     if(!(pieces>0)) return;
-    const a = acc[p.recipeId] || (acc[p.recipeId]={cout:0, pieces:0, nbBatchs:0});
-    a.cout += cout; a.pieces += pieces; a.nbBatchs++;
+    const a = A(p.recipeId);
+    if(comp==='ganache' || comp==='cremeux'){ a.gCout += cout; a.gPieces += pieces; a.gBatchs++; return; }   // garniture seule : il manque les coques
+    a.cout += cout; a.pieces += pieces; a.nbBatchs++;      // 'complet' : coques + garniture dans le même lot
   });
   const out = {};
   for(const rid in acc){
     const a = acc[rid];
+    let cout = a.cout, pieces = a.pieces, nbBatchs = a.nbBatchs, coquesManquantes = false;
+    if(a.gPieces>0){
+      // Garniture fabriquée séparément : coût par macaron = garniture + coques assemblées. Sans coque chiffrée on n'invente rien.
+      if(a.cPieces>0){ const unit = a.gCout/a.gPieces + a.cCout/a.cPieces; cout += unit*a.gPieces; pieces += a.gPieces; nbBatchs += a.gBatchs; }
+      else coquesManquantes = true;
+    }
+    if(!(pieces>0)){ if(coquesManquantes) out[rid] = { coutMatUnit:0, pieces:0, nbBatchs:0, fiable:false, coquesManquantes:true }; continue; }
     out[rid] = {
-      coutMatUnit: a.pieces>0 ? money2(a.cout/a.pieces) : 0,
-      pieces: round3(a.pieces), nbBatchs: a.nbBatchs,
-      fiable: (a.nbBatchs >= minBatchs && a.pieces >= minPieces && a.cout > 0)
+      coutMatUnit: money2(cout/pieces),
+      pieces: round3(pieces), nbBatchs,
+      fiable: (nbBatchs >= minBatchs && pieces >= minPieces && cout > 0),
+      coquesManquantes
     };
   }
   return out;
@@ -31443,6 +31615,30 @@ function medianeCoutMatiereAtelier(mesure){
   if(!vals.length) return 0;
   const n = vals.length, mid = Math.floor(n/2);
   return money2(n%2 ? vals[mid] : (vals[mid-1]+vals[mid])/2);
+}
+
+// [v1527] MARGE NETTE PAR MACARON, SÉPARÉE STANDARD / GROS MACARON (accueil). PURE.
+// Même base que le chiffre global : marge nette des parfums au coût connu, moins le coût des dons, divisée par les pièces dont la marge
+// est calculée. Les dons rattachés à un parfum sont déduits de SA taille ; le reste du coût des dons (non rattachés, emballages) est
+// réparti au prorata des pièces — ainsi la moyenne pondérée des deux tailles retombe exactement sur le chiffre global.
+function margeNetteParTaille(rows, totals){
+  const cumul = { std:{ marge:0, pieces:0 }, gf:{ marge:0, pieces:0 } };
+  let donsRattaches = 0;
+  (rows||[]).forEach(r=>{
+    if(!r || r.margeBrute==null) return;                       // coût inconnu : exclu, comme dans le total
+    const k = r.grandFormat ? 'gf' : 'std';
+    const don = (+r.piecesDon||0) * (+r.coutUnitRetenu||0);
+    cumul[k].marge += (+r.margeNette||0) - don; cumul[k].pieces += (+r.piecesVendues||0);
+    donsRattaches += don;
+  });
+  const totPieces = cumul.std.pieces + cumul.gf.pieces;
+  const reste = Math.max(0, (+(totals||{}).coutDons||0) - donsRattaches);
+  const fin = k => {
+    const c = cumul[k]; if(!(c.pieces>0)) return { pieces: 0, margeParPiece: null };
+    const part = totPieces>0 ? reste * c.pieces / totPieces : 0;
+    return { pieces: round3(c.pieces), margeParPiece: money2((c.marge - part) / c.pieces) };
+  };
+  return { standard: fin('std'), grand: fin('gf') };
 }
 
 function analyzeFlavorProfitability(data){
@@ -31493,7 +31689,7 @@ function analyzeFlavorProfitability(data){
   const ordersMarge   = (orders||[]).filter(o=>o && o.histo!==true && o.commandeMereId==null);
 
   // 2) ventes par parfum — sur la seule assiette qui peut porter une marge
-  const sales = buildFlavorSales(ordersMarge, markets, marketMoves, recipes, productions, s);
+  const sales = buildFlavorSales(ordersMarge, markets, marketMoves, recipes, productions, s, data.orderItems);
   // Volume des reprises, mesuré à part : Ben doit savoir ce qui a été mis de côté, et combien.
   const salesReprise = ordersReprise.length
     ? buildFlavorSales(ordersReprise, [], [], recipes, productions, s) : [];
@@ -31504,7 +31700,7 @@ function analyzeFlavorProfitability(data){
   });
   // 3) stock fini (immobilisation) par recette
   const stockByRecipe={};
-  (productions||[]).forEach(p=>{ const q=round3(+p.qteRestante||0); if(q>0){ stockByRecipe[p.recipeId]=round3((stockByRecipe[p.recipeId]||0)+q); } });
+  (productions||[]).forEach(p=>{ if(p && (p.composant==='coques' || p.parCouleur===true)) return; const q=round3(+p.qteRestante||0); if(q>0){ stockByRecipe[p.recipeId]=round3((stockByRecipe[p.recipeId]||0)+q); } });
 
   // 4) lignes consolidées par recette/parfum
   const rows = recipes.map(r=>{
@@ -31534,7 +31730,7 @@ function analyzeFlavorProfitability(data){
     const valStockCout = coutConnu ? money2(stock * coutUnitRetenu) : null;
     const scale = flavorScale(tauxMarge);
     return {
-      recipeId:r.id, nom:r.produitNom, cost:c,
+      recipeId:r.id, nom:r.produitNom, grandFormat:!!r.grandFormat, cost:c,
       coutUnitRetenu, coutSource:cr.source, coutFiable:!!cr.fiable, coutNbBatchs:cr.nbBatchs||0,
       piecesVendues, piecesDon, ca, caTheo, ecartTheo, prixVenteMoyen, coutVentes,
       margeBrute, margeUnit, tauxMarge, chargesSoc, margeNette, tauxNet,
@@ -31610,6 +31806,7 @@ function analyzeFlavorProfitability(data){
   totals.tauxMargeGlobal = totals.ca>0 ? Math.round(totals.margeBrute/totals.ca*1000)/10 : null;
   // marge nette une fois le coût des dons déduit (impact réel de la générosité/promo)
   totals.margeApresDons = money2(totals.margeNette - totals.coutDons);
+  totals.parTaille = margeNetteParTaille(rows, totals);   // [v1527] standard / gros macaron
 
   // [AUDIT-2026-07 · A5] IMPACT LIVRAISON au niveau global. Jusqu'ici margeNetteApresLiv n'existait
   // qu'à la fiche commande, jamais agrégé → le dashboard ignorait le poids des tournées. On additionne :
