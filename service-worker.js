@@ -1,3 +1,4 @@
+// [v1529] DÉMARRAGE FIGÉ (« les boutons sont cliquables puis deviennent inactifs, les pages ne se chargent pas »). CAUSE : sur iPhone, indexedDB.open() peut ne jamais répondre (ni succès, ni erreur, ni « blocked ») ; dexie.min.js attendait alors indéfiniment, donc TOUT le démarrage (réconciliation, migrations, premier rendu) et toute lecture de la base. FIX : (1) dexie.min.js relance l'ouverture muette après 4 s (jusqu'à 4 tentatives, la première qui aboutit gagne) ; (2) app.js n'attend plus la préparation au-delà de 7 s : l'écran s'affiche, une barre « Réessayer / Recharger » apparaît, et l'app re-rend toute seule dès que la base répond. dexie.min.js change → cache v559.
 // [v1518] « DATABASE CONNECTION IS CLOSING » après des heures de veille (iOS). dexie.min.js rouvre désormais la base tout seul (réouverture unique, rejeu unique de l'opération échouée, jamais pendant une transaction explicite) ; sonde au retour au premier plan. IMPORTANT : dexie.min.js change → cache v548 pour qu'il soit rechargé.
 // [v1517] Libellé du menu « Nouvelle production » : « Coques — 2 couleurs et + » (au lieu de « 2 à 3 couleurs (meringue commune) », demandé par Ben car le mode accepte 2 à 8 couleurs). Aucun autre changement. Cache v547.
 // [v1516] « COQUES — 2 À 3 COULEURS (MERINGUE COMMUNE) ». Ben : dans Nouvelle production, plus de « 2 à 3 parfums » mais « 2 à 3 couleurs », sans l'option « coques par couleur (sans parfum) » ; autant de couleurs que voulu sur une même production (1 à 8), avec le calcul des recettes (base commune + propres de chaque couleur) ajusté. Moteur de calcul inchangé ; une ligne = couleur + recette (matières) + macarons. Cache v546.
@@ -85,7 +86,7 @@
 // [v1272] Temps de production : le tableau « Par parfum / recette » (qui débordait à droite sur iPhone) est remplacé par un rendu en CARTES. Une carte par parfum : nom + nb de batches en tête, puis Réel / Actif / Moy./batch en grille 3 colonnes. Aucune donnée ni logique changée (garde-fou actif>réel + ⚠ conservés). Tableaux « Par jour » et « Détail par batch » inchangés.
 // [v1271] Assemblage : le bouton « Assembler » ne démarre plus de session/chrono d'atelier (l'assemblage physique est fait en amont, temps déjà compté). Il matérialise seulement l'action (décrément composants + création lot).
 // [v1270] Section Impot sur le revenu dans la Comptabilite : abattement micro (71%/50%) + taux marginal (30% par defaut) -> impot estime et net reel apres URSSAF+impot. Taux reglable dans Parametres.
-const CACHE = 'sm-iphone-v558';
+const CACHE = 'sm-iphone-v559';
 const ASSETS = [
   './',
   './index.html',
