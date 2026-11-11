@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1529'; // suite : voir tests/v1525-parfums-a-determiner-traces.test.js
+const APP_VERSION = 'v1530'; // suite : voir tests/v1525-parfums-a-determiner-traces.test.js
 const APP_MAJ = '« CHEQUE DE CAUTION » DEVIENT « EMPREINTE BANCAIRE ». Ben : « le cheque de caution doit se transformer en empreinte bancaire. Peux-tu changer la mention partout ou apparait cheque de caution ? » ⚠️ CE N ETAIT PAS UN SIMPLE RENOMMAGE : le texte associe decrivait des gestes propres a un CHEQUE — il est « remis », il « n est pas encaisse », il est « restitue ». Une empreinte bancaire se PREND, se DEBITE et s ANNULE. Renommer sans adapter les verbes aurait laisse des clauses incoherentes dans les CGV, un document juridique transmis aux clients. Les VERBES ONT DONC ETE ADAPTES partout : sur la ligne du devis et de la facture (« empreinte prise le jour de la livraison, non debitee, annulee apres retour du materiel »), et dans les trois clauses concernees des CGV — 7.1 (prise a la mise a disposition, non debitee, annulee), 7.2 (aucune empreinte exigee du particulier) et 7.4 (l empreinte pourra etre DEBITEE, et non encaissee). La logique juridique est inchangee : montants dus, complement exigible, surplus restitue, engagement sur l honneur du particulier. LES IDENTIFIANTS DE CODE SONT CONSERVES (CAUTION_CHEQUE, cautionRowHtml, cautionMention) : les renommer toucherait des dizaines de references et des donnees DEJA ENREGISTREES, pour zero gain visible. Seul le texte vu par le client change. Les documents deja emis gardent leur redaction d origine, puisqu ils memorisent leur rendu. Suite v1493 : 27 assertions, dont la verification que le vocabulaire du cheque a bien disparu ; un renommage NAIF (terme change mais verbes conserves) fait rougir 5 assertions. La suite v1492 a suivi le nouveau libelle, son mecanisme etant inchange.';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
@@ -22757,6 +22757,7 @@ async function cmdForm(id, opts){
      <button class="btn ghost sm" onclick="addLine('grand')">+ Grand format</button>
      <button class="btn ghost sm" onclick="addLine('vrac')">+ Vrac</button>
      <button class="btn ghost sm" onclick="addLine('prestation')">+ Prestation / Coaching</button>
+     <button class="btn ghost sm" onclick="addLine('livraison')">+ 🚚 Livraison</button>
      <button class="btn ghost sm" onclick="addLine('don')">+ Don (0 €)</button>
    </div>
 
@@ -23316,6 +23317,11 @@ function addLine(type){
   else if(type==='sachet') cmdLines.push({type:'sachet', parfums:{}});
   else if(type==='don') cmdLines.push({type:'don', parfums:{}, items:{}});
   else if(type==='prestation') cmdLines.push({type:'prestation', libelle:'', montantHT:0, remiseType:'pct', remisePct:0, remiseEuro:0});
+  else if(type==='livraison'){
+    // [v1530] une seule ligne livraison par document : si elle existe déjà, on ne l'empile pas.
+    if(cmdLines.some(estLigneLivraison)){ toast('Une ligne livraison existe déjà'); return; }
+    cmdLines.push({type:'prestation', isLivraison:true, libelle:'Livraison', montantHT:0, remiseType:'pct', remisePct:0, remiseEuro:0});
+  }
   drawLines();
 }
 function removeLine(i){ cmdLines.splice(i,1); drawLines(); }
@@ -24525,7 +24531,42 @@ function setDonSacMat(i,v){ cmdLines[i].sacMatId = v?+v:null; if(!v){ cmdLines[i
 function setDonSacNb(i,v){ cmdLines[i].sacNb = Math.max(0, Math.round(+v||0)); drawLines(); }
 // Variante live (voir setVracSansParfumLive) : pas de redraw pendant la frappe.
 function setDonSacNbLive(i,v){ if(!cmdLines[i]) return; cmdLines[i].sacNb = Math.max(0, Math.round(+v||0)); if(typeof cmdRecalc==='function') cmdRecalc(); }
+// [v1530] Bloc d'édition DÉDIÉ à la livraison : montant + réduction propre (€ ou %), avec raccourci
+// « Offrir la livraison » et mention « Offert » dès que la réduction mène à la gratuité.
+function drawLivraisonLine(ln,i){
+  if(ln.remiseType==null) ln.remiseType='pct';
+  const L = livraisonInfo(ln);
+  const sum = L.offert
+    ? `<span>Livraison ${euro(L.base)}</span><b style="color:#3f7d52">Offert</b>`
+    : (L.remise>0 ? `<span>Avant réduction ${euro(L.base)} · réduction −${euro(L.remise)}</span><b>${euro(L.net)}</b>` : `<span>Montant livraison</span><b>${euro(L.base)}</b>`);
+  return `<div class="cmd-line cmd-liv">
+    <div class="line-head"><span class="line-type">🚚 Livraison <span class="line-sub">ligne distincte sur le devis / la facture</span></span><span class="line-del" onclick="removeLine(${i})">✕</span></div>
+    <div class="row2">
+      <div class="field" style="margin:6px 0 0"><label>Montant (€)</label>
+        <input type="number" step="0.01" min="0" value="${ln.montantHT||''}" placeholder="0" oninput="setPrestaField(${i},'montantHT',this.value)"></div>
+      <div class="field" style="margin:6px 0 0"><label>Réduction livraison</label>
+        <select onchange="setPrestaField(${i},'remiseType',this.value)">
+          <option value="pct" ${ln.remiseType==='pct'?'selected':''}>Pourcentage (%)</option>
+          <option value="euro" ${ln.remiseType==='euro'?'selected':''}>Fixe (€)</option>
+        </select></div>
+    </div>
+    <div class="field" style="margin:6px 0 0">
+      ${ln.remiseType==='euro'
+        ? `<label>Réduction (€)</label><input type="number" step="0.01" min="0" value="${ln.remiseEuro||''}" placeholder="0" oninput="setPrestaField(${i},'remiseEuro',this.value)">`
+        : `<label>Réduction (%)</label><input type="number" step="1" min="0" max="100" value="${ln.remisePct||''}" placeholder="0" oninput="setPrestaField(${i},'remisePct',this.value)">`}
+    </div>
+    <div style="margin-top:6px"><button type="button" class="btn ghost sm" onclick="cmdOffrirLivraison(${i})">🎁 Offrir la livraison</button></div>
+    <div class="sum-box">${sum}</div>
+  </div>`;
+}
+// Passe la réduction à 100 % : la livraison devient « Offert » (le montant reste visible, barré).
+function cmdOffrirLivraison(i){
+  const ln=cmdLines[i]; if(!ln) return;
+  ln.remiseType='pct'; ln.remisePct=100; ln.remiseEuro=0;
+  drawLines();
+}
 function drawPrestationLine(ln,i){
+  if(ln.isLivraison) return drawLivraisonLine(ln,i);
   if(ln.remiseType==null) ln.remiseType='pct';
   const base=money2(+ln.montantHT||0);
   const net=lineTotal(ln);
@@ -60335,9 +60376,48 @@ function factGroupeCoffretRows(g, brut){
   const desc = `<span class="ln-main">${esc(`${n} coffrets de ${taille} macarons`)}</span>` + subs.map(t=>`<span class="ln-sub">${esc(t)}</span>`).join('');
   return `<tr><td class="desc">${desc}</td><td class="mt">${euro(mtPrincipal)}</td></tr>${factRemiseSubHtml(remTot)}`;
 }
+// [v1530] LIGNE DE LIVRAISON DISTINCTE, AVEC SA RÉDUCTION DÉDIÉE.
+// La livraison est une ligne `prestation` marquée isLivraison, qui porte déjà ses propres champs de
+// remise (€ ou %). Cette fonction PURE en tire ce que les documents ont besoin d'afficher :
+//  base = montant avant réduction · remise = réduction en € · net = ce qui est facturé ·
+//  offert = la réduction mène à la gratuité (base > 0 et net = 0).
+function livraisonInfo(ln){
+  if(!ln) return {base:0, remise:0, net:0, offert:false, type:'pct', pct:0};
+  const base = money2(+ln.montantHT||0);
+  const remise = Math.min(base, money2(lineRemiseEuro(ln)));
+  const net = Math.max(0, money2(base - remise));
+  const type = ln.remiseType==='euro' ? 'euro' : 'pct';
+  const pct = type==='pct' ? Math.max(0, Math.min(100, +ln.remisePct||0)) : (base>0 ? Math.round(remise/base*1000)/10 : 0);
+  return {base, remise, net, offert: base>0 && net===0, type, pct};
+}
+function estLigneLivraison(ln){ return !!(ln && ln.type==='prestation' && ln.isLivraison); }
+// Rend la ligne « Livraison » (jamais fusionnée avec les autres prestations).
+// brut=false (devis) : montant avant réduction, puis sous-ligne « réduction livraison » ; brut=true
+// (facture) : la réduction est déjà agrégée dans « Réductions accordées », on ne la répète pas — sauf
+// la mention « Offert », qui doit toujours se lire sur la ligne.
+function factLivraisonRows(ln, brut){
+  const L = livraisonInfo(ln);
+  if(!(L.base>0)) return '';                       // ligne vide : rien à montrer
+  const lib = esc(ln.libelle || 'Livraison');
+  if(L.offert){
+    return `<tr class="livraison-ligne"><td class="desc"><span class="ln-main">${lib}</span><span class="ln-sub" style="color:#3f7d52">livraison offerte</span></td>`+
+           `<td class="mt"><s style="color:#9a8a82">${euro(L.base)}</s> <b class="liv-offert" style="color:#3f7d52">Offert</b></td></tr>`;
+  }
+  let html = `<tr class="livraison-ligne"><td class="desc"><span class="ln-main">${lib}</span></td><td class="mt">${euro(brut ? L.base : (L.remise>0 ? L.base : L.net))}</td></tr>`;
+  if(!brut && L.remise>0){
+    const lbl = (L.type==='pct' ? `r\u00e9duction livraison \u2212${L.pct}\u00a0%` : `r\u00e9duction livraison`);
+    html += `<tr class="ln-remise livraison-remise"><td class="desc"><span class="ln-sub" style="color:#3f7d52">${lbl}</span></td><td class="mt" style="color:#3f7d52">\u2212${euro(L.remise)}</td></tr>`;
+  }
+  return html;
+}
 // Point d'entrée UNIQUE des devis, devis groupés et factures : remplace `lignes.map(ln=>factLineRows(ln, brut))`.
+// [v1530] La livraison sort du flux des prestations : elle est rendue À PART, en dernière ligne.
 function factRowsHtml(lignes, brut){
-  return factGrouperCoffrets(lignes).map(it => it.kind==='groupe' ? factGroupeCoffretRows(it, brut) : factLineRows(it.ln, brut)).join('');
+  const toutes = Array.isArray(lignes) ? lignes : [];
+  const autres = toutes.filter(l=>!estLigneLivraison(l));
+  const livs = toutes.filter(estLigneLivraison);
+  return factGrouperCoffrets(autres).map(it => it.kind==='groupe' ? factGroupeCoffretRows(it, brut) : factLineRows(it.ln, brut)).join('')
+       + livs.map(l=>factLivraisonRows(l, brut)).join('');
 }
 function factLineRows(ln, brut){
   // brut=true : affiche le montant AVANT remise de ligne (utilisé par le devis, qui montre
