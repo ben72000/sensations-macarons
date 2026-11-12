@@ -93,13 +93,13 @@ function monde(opts){
   const doc = { querySelectorAll: () => (opts.comp ? [{ getAttribute: () => '7', value: '108' }] : []), getElementById: id => (id === 'f_asmDeg' ? { checked: !!opts.deg } : null), querySelector: () => ({ value: 'frigo' }) };
   const val = id => (form[id] != null ? form[id] : '');
   const enc = [];
-  const f = new Function('val','document','db','toast','window','prodComposant','qty','round3','subQty','repartitionCoques','COQUES_PAR_MACARON','today','isFreezer','computeDlcFromHistory','computeAssemblyDlc','lotBaseSansSuffixe','genLotCode','lotAvecEmplacement','logStockMove','closeModal','renderProductions','fmtDate','asmAfterAssemble','coqueColorProfile','coqueLotLibelle',
-    srcSave + '\nreturn prodAssembleSave;')(
+  const f = new Function('val','document','db','toast','window','prodComposant','qty','round3','subQty','repartitionCoques','COQUES_PAR_MACARON','today','isFreezer','computeDlcFromHistory','computeAssemblyDlc','lotBaseSansSuffixe','genLotCode','lotAvecEmplacement','logStockMove','closeModal','renderProductions','fmtDate','asmAfterAssemble','coqueColorProfile','coqueLotLibelle','money2',
+    [ligne('const _qConso ='), ligne('const _arr4 ='), fn('function lotPU(l){'), fn('function coutCoqueUnitaireDeLot('), fn('function coutCoquesAssemblage('), fn('async function coutCoquesAssemblageDepuisBase('), srcSave].join('\n') + '\nreturn prodAssembleSave;')(
     val, doc, dbm, t => toasts.push(t), { _prodRecName: id => (recs[id] ? recs[id].produitNom : '') },
     p => p.composant, x => String(x), round3, (a, b) => round3(a - b),
     (q, deux) => (deux ? { lot1: q, lot2: q } : { lot1: q * 2, lot2: 0 }), 2, () => '2026-10-26', () => false,
     () => '2026-11-02', (base, congelo, dlcs) => base, x => String(x || '').replace(/-(C|G|AS|DG)$/, ''), () => 'XXX', (b, d) => b + '-F',
-    async mv => { moves.push(mv); }, () => {}, () => {}, d => d, async () => {}, couleurApi.coqueColorProfile, couleurApi.coqueLotLibelle);
+    async mv => { moves.push(mv); }, () => {}, () => {}, d => d, async () => {}, couleurApi.coqueColorProfile, couleurApi.coqueLotLibelle, x => Math.round(x * 100) / 100);
   return { lots, ajoutes, moves, toasts, form, run: id => f(id), recs };
 }
 const asm = async (w, a, b) => { w.form.f_asmOther = String(b); await w.run(a); return w.ajoutes[0]; };

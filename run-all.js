@@ -215,7 +215,18 @@ const SUITES = [
   'v1516-meringue-couleurs.test.js',  // v1516 · « Coques — 2 à 3 couleurs (meringue commune) » : N couleurs (1 à 8) sur une production, calcul de la meringue commune ajusté (vrai moteur), aperçu = lancement, validations sans écriture, ancien mode parfums/mono-couleur retirés
   'v1518-connexion-base-perdue.test.js',        // v1518 · « The database connection is closing » après des heures de veille (iOS) : reconnexion automatique de dexie.min.js, rejeu unique sans doublon, sonde au réveil, vrai dexie.min.js sur faux IndexedDB persistant, scénario bloquant isolé
   'v1519-gros-macarons-650-tarif-pro-remise.test.js',  // v1519 · gros macarons 6,50 € (grille du 04/11/2026), fin du tarif pro automatique (gros macarons + vrac), remise « Tarif pro » indépendante en € ou %, documents existants figés sur leurs prix
-  'v1520-audit-prune-erreur-interne.test.js'  // v1520 · « _auditPrune — internal error in the Indexed Database server » : suppression en bloc par paquets (une transaction), rétention bornée et différée après le rendu, reprise unique, lectures rejouées sur erreur interne (jamais les écritures), trace non grave
+  'v1520-audit-prune-erreur-interne.test.js',  // v1520 · « _auditPrune — internal error in the Indexed Database server » : suppression en bloc par paquets (une transaction), rétention bornée et différée après le rendu, reprise unique, lectures rejouées sur erreur interne (jamais les écritures), trace non grave
+  'v1521-date-emission-facture-brouillon.test.js',  // v1521 · date d'émission d'une facture brouillon : conservée à la régénération (Aperçu complet) et réécrite dans le HTML mémorisé ; facture validée jamais modifiée ; date future refusée
+  'v1522-facture-annulee-statut.test.js',  // v1522 · facture annulée puis recréée : état « annulée par avoir » (dérivé), jamais resynchronisée sur les paiements de la commande, avoir rattaché à SA facture, remise en état d'une annulation polluée, « Annuler »/« Facturer » ciblent la facture vivante, contrôle annulations + CA
+  'v1523-vrac-prix-libre.test.js',  // v1523 · vrac au prix libre : menu quantité + prix total saisi, bulles favoris, anciennes commandes scellées à leur total, modification d'une commande passée
+  'v1524-stock-actifs-filet-demarrage.test.js',  // v1524 · stockParMatiere (variable `actifs` jamais définie), tableau de bord en une seule lecture des lots, filet d'écran blanc
+  'v1525-parfums-a-determiner-traces.test.js',  // v1525 · les macarons « parfums à définir » comptent dans les classements par parfum dès que la traçabilité (lots liés) est établie
+  'v1526-cout-coques-au-parfum.test.js',  // v1526 · plus de parfum sur une couleur de coques ; le coût des coques se rattache au parfum de la ganache à l'assemblage
+  'v1527-marge-standard-gros.test.js',  // v1527 · accueil : marge nette / macaron standard et / gros macaron côte à côte
+  'v1528-base-marge-affichee.test.js',  // v1528 · accueil : « sur N macarons » sous chaque marge nette
+  'v1529-demarrage-base-muette.test.js'  // v1529 · démarrage : une base qui ne répond pas ne fige plus l'app,
+  'v1530-ligne-livraison-offert.test.js'  // v1530 · livraison : ligne distincte, réduction dédiée (€ / %), mention « Offert »,
+  'v1531-tabbar-recalage.test.js'  // v1531 · barre d'onglets : plus de flottement au milieu de l'écran
 ];
 
 let allOk = true;

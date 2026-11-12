@@ -36,7 +36,7 @@ function slice(from, to){
   return APP.slice(i, j < 0 ? i + 6000 : j);
 }
 // Le bloc de boot = la DERNIÈRE IIFE async du fichier.
-const iBoot = APP.lastIndexOf('(async()=>{');
+const iBoot = APP.indexOf('(async()=>{\n  // Le rendu ne doit JAMAIS');
 const BOOT_RAW = iBoot >= 0 ? APP.slice(iBoot) : '';
 const BOOT = stripComments(BOOT_RAW);
 

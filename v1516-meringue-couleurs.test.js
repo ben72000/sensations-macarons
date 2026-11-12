@@ -33,8 +33,8 @@ const srcConsts = [ligne('const COULEURS_PERSO_CLE ='), ligne('const COULEUR_PER
 const srcCoul = [ligne('function coqueCouleurLabel(k){'), fn('function coqueCouleurCode(k){'), fn('function recCoqueColors(rec){'),
   fn('function couleurNormaliser(txt){'), fn('function couleurLabelNettoyer(txt){'), fn('function couleursPersoLire(){'), ligne('function couleursPersoEcrire(liste){'),
   fn('function couleurExistante(label, sauf){'), fn('function couleurPersoCode(label, utilises){'), fn('function couleurPersoCreer(labelBrut, hexBrut){')].join('\n');
-const noms = ['_prodCouleursRecettes','prodCouleursRecetteDeCouleur','prodCouleursRecetteDefaut','prodCouleursRecetteOptions','prodCouleursInit','prodCouleursRender','prodCouleursSet','prodCouleursAjouter','prodCouleursRetirer','prodCouleursRepartir','prodCouleursResoudre','prodCouleursPlan'];
-const srcNouv = noms.map(n => fn('function ' + n + '(')).join('\n') + '\n' + fn('async function prodCouleursApercu(){') + '\n' + fn('async function prodLancerCouleurs(rows, dateD){') + '\n' + fn('async function prodCouleursSave(){');
+const noms = ['_prodCouleursRecettes','prodCouleursRecetteDeCouleur','prodCouleursRecetteDefaut','prodCouleursRecetteOptions','prodCouleursCandidats','prodCouleursRecetteAuto','prodCouleursGrandFormatDispo','prodCouleursInit','prodCouleursRender','prodCouleursSet','prodCouleursAjouter','prodCouleursRetirer','prodCouleursRepartir','prodCouleursResoudre','prodCouleursPlan'];
+const srcNouv = noms.map(n => fn('function ' + n + '(')).join('\n') + '\n' + fn('async function prodCouleursAffecterRecettes(lignes){') + '\n' + fn('async function prodCouleursApercu(){') + '\n' + fn('async function prodLancerCouleurs(rows, dateD){') + '\n' + fn('async function prodCouleursSave(){');
 const srcMoteur = ['var _aiNormCache;', fn('function _aiNormalizeRaw('), fn('function aiNormalize('), fn('function _isTantPourTant('), fn('function _isBaseMeringue('), fn('function _natureCoque('), fn('function _meringueCommuneCalc(parfums, dispOf, matName){'), fn('async function ficheMeringueProduction(parts, meringueBatchId){')].join('\n');
 check('0. palette, couleurs, 14 fonctions du mode, moteur et fiche retrouvés', srcPalette.length > 600 && srcCoul.length > 1500 && noms.every(n => new RegExp('function ' + n + '\\(').test(srcNouv)) && /prodLancerCouleurs/.test(srcNouv) && /_meringueCommuneCalc/.test(srcMoteur) && /ficheMeringueProduction/.test(srcMoteur) && /function _natureCoque\(/.test(srcMoteur));
 
@@ -225,15 +225,16 @@ const row = (couleur, q, rid, extra) => Object.assign({ couleur, q, rid, nouvell
     let r = await refus([]); check('E. aucune ligne refusée', /au moins une couleur/.test(r.msg) && r.rien);
     r = await refus(Array.from({ length: 9 }, (_, i) => row(Object.keys(monde().COQUE_COULEURS)[i], 10, 10))); check('E. 9 couleurs refusées (maximum 8)', /8 couleurs au maximum/.test(r.msg) && r.rien);
     r = await refus([row('rouge', 0, 10)]); check('E. 0 macaron refusé', /nombre de macarons/.test(r.msg) && r.rien);
-    r = await refus([row('rouge', 60, 0)]); check('E. recette non choisie refusée', /Choisis la recette/.test(r.msg) && r.rien);
+    { const wa = monde(); await wa.prodLancerCouleurs([row('rouge', 60, 0)], '2026-10-26');   // [v1526] plus de parfum choisi par Ben : la recette de référence est trouvée en silence
+      check('E. [v1526] ligne SANS recette : acceptée, la recette de référence (celle qui porte le rouge) dimensionne les matières', wa.trace.enreg.length === 1 && wa.trace.enreg[0][0] === 10); }
     r = await refus([row('fuchsia_inexistante', 60, 10)]); check('E. couleur inconnue refusée', /Couleur inconnue/.test(r.msg) && r.rien);
     r = await refus([row('__nouvelle__', 60, 10, { nouvelleNom: '   ' })]); check('E. nouvelle couleur sans nom refusée', /Tape le nom/.test(r.msg) && r.rien);
     r = await refus([row('rouge', 60, 10), row('rouge', 60, 11)]); check('E. même couleur sur deux lignes refusée (message nommant la couleur)', /même couleur \(Rouge\)/.test(r.msg) && r.rien);
     r = await refus([row('rouge', 60, 10), row('__nouvelle__', 60, 11, { nouvelleNom: 'rougé' })]); check('E. « Autre couleur » qui retombe sur une couleur déjà présente → doublon refusé', /même couleur/.test(r.msg) && r.rien);
     r = await refus([row('rouge', 60, 99)]); check('E. recette introuvable refusée', /Recette introuvable/.test(r.msg) && r.rien);
-    r = await refus([row('rouge', 60, 15)]); check('E. recette SANS matière « coque » refusée (sinon un lot serait créé sans rien décompter)', /pas de matières « coque »/.test(r.msg) && r.rien);
+    r = await refus([row('rouge', 60, 15)]); check('E. recette SANS matière « coque » refusée (sinon un lot serait créé sans rien décompter)', /matières « coque » de référence sont introuvables/.test(r.msg) && r.rien);
     r = await refus([row('__nouvelle__', 60, 10, { nouvelleNom: 'bleu nuit' }), row('rose', 60, 15)]);
-    check('E. un refus de validation ne crée PAS la couleur nouvelle (valider tout avant la moindre écriture)', /pas de matières « coque »/.test(r.msg) && r.rien && !r.w.COQUE_COULEURS.perso_bleu_nuit && !('sm_couleursPerso' in r.w.store));
+    check('E. un refus de validation ne crée PAS la couleur nouvelle (valider tout avant la moindre écriture)', /matières « coque » de référence sont introuvables/.test(r.msg) && r.rien && !r.w.COQUE_COULEURS.perso_bleu_nuit && !('sm_couleursPerso' in r.w.store));
     r = await refus([row('__nouvelle__', 60, 10, { nouvelleNom: 'Corail' })], { storage: {} }); 
     const wp = monde(); wp.localStorage.plein = true; let m2 = null; try{ await wp.prodLancerCouleurs([row('__nouvelle__', 60, 10, { nouvelleNom: 'Corail' })], '2026-10-26'); }catch(x){ m2 = x.message; }
     check('E. création impossible (stockage plein) : erreur, AUCUN lot (pas de lot dans une couleur fantôme)', !!m2 && wp.trace.enreg.length === 0);

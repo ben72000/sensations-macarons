@@ -25,11 +25,11 @@ const oneLine = m => { const i = APP.indexOf(m); if(i < 0) return ''; return APP
 const srcFns = [
   oneLine('function grilleCourante(){'), oneLine('function grilleHistorique(){'), oneLine('function grilleParId(id){'),
   fn('function tarifsSaisie(){'), fn('function tarifsDeLigne(ln){'), fn('function tarifsLigneSaisie(ln){'),
-  fn('function bigPrice(tarif, ref){'), fn('function vracPrixMacaron(ln, grille){'), fn('function grillePourCommande(o){'),
+  oneLine('function vracEstLibre(ln){'), fn('function vracNbPieces(ln){'), fn('function bigPrice(tarif, ref){'), fn('function vracPrixMacaron(ln, grille){'), fn('function grillePourCommande(o){'),
   fn('function libelleRemise('), fn('function sachetPrixPour(n, g){'), fn('function lineTotalStored(ln){'),
   fn('function coffretSupplementParfums('), fn('function _lineToEdit(ln){'), fn('function cmdLinesToStored(){')
 ].join('\n');
-check('A. grilles et 15 fonctions retrouvées', srcGrilles.length > 500 && (srcFns.match(/^function /gm) || []).length === 15);
+check('A. grilles et 15 fonctions retrouvées', srcGrilles.length > 500 && (srcFns.match(/^function /gm) || []).length === 17);
 
 function monde({ ancien = false, grilleId = null, date = '2026-11-10' } = {}){
   const cb = { checked: ancien }, gi = grilleId == null ? null : { value: grilleId };
@@ -92,7 +92,7 @@ let W = monde();
   const st = nouvelle.cmdLinesToStored();
   check('E. toutes les lignes enregistrées portent grilleId nov2026', st.length === 4 && st.every(l => l.grilleId === 'nov2026'));
   check('E. gros macaron « pro » forcé en particulier à l\'enregistrement (plus de pro automatique)', st[0].tarif === 'particulier');
-  check('E. vrac « pro » forcé en non pro', st[1].proMode === 'nonpro');
+  check('E. [v1523] vrac : plus de mode pro enregistré (prix libre scellé à la place)', st[1].proMode === undefined && st[1].prixVrac !== undefined);
   check('E. relecture ligne par ligne : _lineToEdit conserve grilleId', st.every(l => nouvelle._lineToEdit(l).grilleId === 'nov2026'));
   check('E. 2 gros macarons enregistrés = 13,00 €', nouvelle.lineTotalStored(st[0]) === 13);
 
@@ -145,15 +145,15 @@ let W = monde();
 {
   const ai = APP.slice(APP.indexOf('async function aiExecuteOrderDraft'), APP.indexOf('async function aiExecuteOrderDraft') + 3500);
   check('H. assistant : gros macarons toujours « particulier »', /type:'grand', tarif:'particulier'/.test(ai) && !/tarif: estPro\?'pro'/.test(ai));
-  check('H. assistant : vrac d\'un client pro en non pro', /type:'vrac', proMode:'nonpro'/.test(ai));
+  check('H. [v1523] assistant : vrac d\'un client pro sans mode pro, prix à saisir', /type:'vrac', parfums, nbMacarons:/.test(ai) && /prixVrac:null/.test(ai));
 }
 
 // ---------- I. ÉCRANS ----------
 {
   const big = fn('function drawBigLine(ln,i){');
   check('I. écran gros macarons : option « Pro » masquée sans tarif pro, indication vers la remise', /_sansPro\?'':`<option value="pro"/.test(big) && /Remise → « Tarif pro »/.test(big));
-  const vr = APP.slice(APP.indexOf('const _vSansPro'), APP.indexOf('const _vSansPro') + 900);
-  check('I. écran vrac : boutons pro remplacés par une note', /_vSansPro/.test(vr) && /Remise → « Tarif pro »/.test(vr));
+  const vr = fn('function drawVracLine(ln,i){');
+  check('I. [v1523] écran vrac : plus aucun bouton pro / non pro, menu quantité + prix libre', !/setVracMode|Pro occasionnel|Pro récurrent/.test(vr) && /setVracNb/.test(vr) && /setVracPrix/.test(vr));
   check('I. aucun prix « 7 » codé en dur dans la nouvelle grille', !/grandFormat:\{ particulier:7/.test(srcGrilles.slice(0, srcGrilles.indexOf("id:'sept2026'"))));
 }
 

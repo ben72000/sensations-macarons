@@ -25,9 +25,9 @@ function check(label, cond){ if(cond){ pass++; } else { fail++; failures.push(la
   const iCalc = APP.indexOf('const avoirsDeCetteFacture = (d.type');
   check('A. le calcul des avoirs liés existe', iCalc > -1);
   check('A. il matche par factureId OU par commande liée (les deux chemins d\'émission possibles)',
-    /x\.factureId===d\.id \|\| orderIds\.includes\(x\.orderId\)/.test(APP));
+    /docAvoirsDeFacture\(d, allDocs\)/.test(APP) && /\(a\.factureId!=null \? a\.factureId===f\.id : ids\.includes\(a\.orderId\)\)/.test(APP));   // [v1522] un avoir avec factureId ne vise que SA facture ; sans identifiant, par la commande
   check('A. seuls les avoirs réellement émis comptent (statut emis/enregistré)',
-    /x\.statut==='emis'\|\|x\.statut==='enregistre'/.test(APP.slice(iCalc, iCalc+250)));
+    /a\.statut==='emis'\|\|a\.statut==='enregistre'/.test(APP.slice(APP.indexOf('function docAvoirsDeFacture'), APP.indexOf('function docAvoirsDeFacture')+400)));   // [v1522] règle déplacée dans docAvoirsDeFacture
 
   const iDecl = APP.indexOf('const orderIds = d.type');
   check('A. orderIds est déclaré AVANT le calcul des avoirs qui le consulte (pas de ReferenceError)',

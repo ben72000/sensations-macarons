@@ -37,9 +37,9 @@ const netDe = l => money2(brutDe(l) * (1 - (+l.remisePct || 0) / 100));
 function monter(){
   const appels = [];
   const factLineRows = (ln, brut) => { appels.push(ln); return `<tr data-single="${esc(ln.id)}"><td>${esc(ln.type)} ${brut ? 'brut' : 'net'}</td></tr>`; };
-  const f = new Function('esc','euro','money2','lineTotalBrut','lineTotalStored','lineRemiseEuro','factLineRows',
+  const f = new Function('esc','euro','money2','lineTotalBrut','lineTotalStored','lineRemiseEuro','factLineRows','estLigneLivraison',
     sources.join('\n') + '\nreturn { factRowsHtml, factGrouperCoffrets, factGroupeCoffretRows, factCoffretCompoPhrase, factRemiseSubHtml, factListeFr };')(
-    esc, euro, money2, brutDe, netDe, l => money2(brutDe(l) - netDe(l)), factLineRows);
+    esc, euro, money2, brutDe, netDe, l => money2(brutDe(l) - netDe(l)), factLineRows, ln => !!(ln && ln.type === 'prestation' && ln.isLivraison));
   return Object.assign(f, { appels });
 }
 const P = (nom, qte) => ({ nom, qte });

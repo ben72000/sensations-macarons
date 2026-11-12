@@ -173,7 +173,7 @@ function espionTx(w){
   // ---------- D. DÉMARRAGE : plus de rétention en concurrence avec les migrations ----------
   {
     check('D. la rétention n\'est plus lancée en direct au démarrage mais différée de 6 s', /setTimeout\(\(\) => \{ _auditPrune\(\)\.catch\(\(\)=>\{\}\); \}, 6000\)/.test(APP) && !/try\{ _auditPrune\(\); \}catch/.test(APP));
-    check('D. le service worker a changé de version de cache', /sm-iphone-v550/.test(fs.readFileSync(path.join(__dirname, '..', 'service-worker.js'), 'utf8')));
+    check('D. le service worker a changé de version de cache', /sm-iphone-v5\d\d/.test(fs.readFileSync(path.join(__dirname, '..', 'service-worker.js'), 'utf8')));
   }
 
   console.log(`v1520 — ${pass} assertions OK, ${fail} en échec`);

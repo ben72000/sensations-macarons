@@ -84,7 +84,10 @@ async function testAudit(){
 {
   check('D. lien depuis le détail d\'une période du graphique',
     (APP.match(/auditCaManquantUI\(\)/g)||[]).length >= 2);
-  const srcUI = extractFunction('auditCaManquantUI');
+  // [v1522] extraction par coupe brute jusqu'à la fin RÉELLE de la fonction : extractFunction débordait sur les fonctions voisines (et a
+  // donc attrapé le `db.documents.update` du nouveau contrôle des annulations, qui n'a rien à voir avec cet écran).
+  const _iUI = APP.indexOf('async function auditCaManquantUI(){');
+  const srcUI = APP.slice(_iUI, APP.indexOf('\n}\n', _iUI) + 3);
   check('D. l\'écran n\'écrit rien non plus',
     !/db\.\w+\.(?:add|put|update|delete)\(/.test(srcUI));
   check('D. aucune anomalie → message rassurant, pas un écran vide', /Aucune commande n'échappe/.test(srcUI));

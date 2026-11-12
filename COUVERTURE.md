@@ -7236,3 +7236,83 @@ Cause : la rétention du journal d'audit tournait au démarrage, en concurrence 
 Correctifs : `bulkDelete` en une transaction par paquet de 400 (sans hook de suppression, hors transaction explicite) ; rétention bornée à 500 lignes par passage et différée de 6 s après le démarrage ; reprise unique ; échec persistant → report silencieux, trace non grave ; lectures (get/toArray/count/_all) rejouées une fois après réouverture sur cette erreur interne, JAMAIS les écritures.
 Mutations (8 testées, 8 détectées) : bulkDelete ligne à ligne · lectures non rejouées · écritures rejouées · paquet non borné · pas de reprise · trace grave · démarrage direct · paquets non découpés.
 Limite honnête : je n'ai pas pu reproduire l'erreur interne réelle de WebKit (elle vient du moteur de l'iPhone) ; le test injecte la même erreur à la création de la transaction. Si elle réapparaît ailleurs qu'en lecture/rétention, elle sera visible dans le journal santé avec son écran d'origine.
+
+## v1521 — Date d'émission d'une facture brouillon qui revenait à la date initiale
+Suite `v1521-date-emission-facture-brouillon.test.js` (19 assertions ; vrais `docSetFactDate`, `docHtmlAvecDate` et bloc de reprise de date de `genererFactureMultiple`). Signalé par Ben : après avoir modifié la date d'émission d'une facture générée depuis les commandes, elle reste à la date initiale à l'ouverture.
+Causes : ① `docSetFactDate` ne changeait que le champ `date`, pas la date du HTML mémorisé (relu par l'envoi mail) ; ② « Aperçu complet » d'un brouillon le régénère via `genererFactureMultiple`, qui réécrivait `today()` dans le HTML ET dans l'enregistrement : la date choisie était écrasée.
+Correctifs : la régénération reprend la date du brouillon existant (même lot de commandes, jamais dans le futur) ; changer la date réécrit le HTML ; facture validée jamais modifiée ; date future refusée ; champ vidé refusé.
+Mutations (8, 8 détectées) : HTML non réécrit · régénération avec today() · enregistrement écrasant la date · facture validée modifiable · futur non borné · brouillon d'un autre lot repris · date future reprise · HTML affichant today().
+Limite : une facture VALIDÉE reste inaltérable (obligation légale) : sa date d'émission ne se change plus ; seule la date d'un brouillon est modifiable, avant « Valider définitivement ».
+
+## v1522 — Facture annulée puis recréée : « enregistrée comme payée alors que le statut devrait être annulée »
+Suite `v1522-facture-annulee-statut.test.js` (40 assertions ; vraies fonctions `docFactureAnnulee`, `docAvoirsDeFacture`, `docFactureVivante`, `docPatchFactureAnnulee`, `docControleAnnulations`, libellés de statut + gardes de câblage dans app.js).
+Causes : ① aucun état « annulée » (une facture annulée restait « Validée · payée ») ; ② la resynchronisation des règlements suit les paiements de la COMMANDE : la facture recréée réglée rendait aussi « payée » la facture annulée de la même commande ; ③ un avoir était rattaché à toutes les factures de la commande ; ④ « Annuler » et « Facturer » retrouvaient la première facture de la commande (l'annulée).
+Correctifs : état « ↩︎ Annulée par avoir » (dérivé de l'avoir portant son `factureId`, statut légal inchangé) ; exclue de la resynchronisation ; remise en état (validée, réglé 0 €) d'une annulation pure polluée (jamais un remboursement) ; « Marquer payée » refusé et masqué ; avoir ciblant la facture vivante ; « Facturer » rouvre la vivante au lieu d'empiler un doublon ; bouton « ↩︎ Contrôle annulations » (annulée marquée payée, deux factures vivantes sur une commande, avoir sans facture, double comptage de CA).
+CA : calculé sur les commandes et leurs paiements, pas sur le statut des factures → aucun double comptage par cette voie ; le contrôle le recalcule.
+Mutations (12, 12 détectées après ajout de 2 assertions de sélection). Limite : si une facture a été annulée PAR REMBOURSEMENT (argent rendu) puis recréée, le suivi de règlement de la nouvelle suit toujours les paiements de la commande ; ce cas n'est pas modifié (risque de fausser les remboursements partiels).
+
+## v1523 — Vrac au prix libre (comme les coffrets)
+Suite : `tests/v1523-vrac-prix-libre.test.js` (81 assertions, mutations 9/9 tuées ; v1523b : prix par pièce × quantité + aperçu du total sous les champs).
+- Prix total libre (`prixVrac`) + quantité du menu (`nbMacarons`) : plus de tarif pro / non pro ni de prix préenregistré.
+- Anciennes commandes : total d'origine inchangé (stocké) ; rouvertes, scellées à ce total exact (6 cas : pro, récurrent, non pro, sans marqueur, grilles nov/sept).
+- Modification d'une commande passée : prix et quantité modifiables, aller-retour stocké → édition → stocké stable, reste non réparti = « sans parfum ».
+- Saisie : virgule/point, champ vidé ≠ 0, frappe sans redessin, bulles favoris (prix au macaron × quantité), refus sans quantité.
+- Validation à l'enregistrement : quantité, prix > 0, parfums ≤ quantité. Réglage « Prix favoris du vrac ».
+- Suite v1519 réalignée (E/H/I : le mode pro du vrac n'existe plus).
+Non couvert : rendu visuel réel sur iPhone (HTML de drawVracLine testé par inspection du code, pas par capture).
+
+## v1524 — Écran blanc / lenteur au démarrage
+Suite : `tests/v1524-stock-actifs-filet-demarrage.test.js`.
+- `stockParMatiere` référençait `actifs` sans la déclarer : ReferenceError à chaque appel (stock à 0, alertes DLC muettes, centaines d'erreurs journalisées). Corrigé + `stockDepuisLots` (même résultat, vérifié).
+- Tableau de bord : une seule lecture des lots (au lieu d'une lecture complète par matière). Mesure sur base de test (150 matières, 4 000 lots, 1 200 commandes) : accueil affiché en 4,3 s → 0,5 s, 172 erreurs console → 0.
+- Filet de démarrage (index.html) : écran vide après 6 s → message lisible + « Réparer » (cache seulement, jamais les données).
+Non couvert : la cause exacte de l'écran blanc constaté sur l'iPhone de Ben (non reproduite telle quelle ; la lenteur l'est).
+
+## v1525 — Parfums « à déterminer » comptabilisés dès que la traçabilité est établie
+Suite : `tests/v1525-parfums-a-determiner-traces.test.js` (22 assertions).
+- `parfumsTracesDeCommande` : les macarons « à déterminer » d'une commande prennent les parfums des lots qui lui sont liés (`orderItems`), après déduction des parfums déjà saisis explicitement ; plafonné au nombre « à déterminer », pool partagé entre lignes sans double compte, traçabilité partielle = partielle, rien d'inventé sans lien.
+- `buildFlavorSales` : pièces, CA (au prorata) et dons ventilés sur les vrais parfums ; le CA total de la commande est conservé. Avant traçabilité, comportement inchangé.
+- Rafraîchissement des liens à chaque affichage et après « Commande prête » / affectation manuelle.
+Non couvert : prévisions de production (`_orderParfumDemand`, tranche « À définir ») et `diagFlavorCAGap`, inchangés volontairement.
+
+
+## v1526 — Plus de parfum sur une couleur · le coût des coques suit le parfum à l'assemblage
+Suite : `tests/v1526-cout-coques-au-parfum.test.js` (39 assertions, 10 mutations toutes détectées).
+- **Écran « Coques — 2 couleurs et + »** : une ligne = couleur + (taille si grand format existe) + nombre de macarons. Plus de choix de recette/parfum ; la recette de référence (matières « coque » + colorant) est résolue en silence (recette qui porte la couleur, même taille). Suites v1516 adaptées (recette non choisie ⇒ résolue automatiquement ; message « matières coque de référence introuvables »).
+- **Coût des coques → parfum de la ganache** : `coutCoqueUnitaireDeLot` / `coutCoquesAssemblage` (pures) ; `prodAssembleSave` fige `coutCoques`, `coutCoquesParMac`, `coutCoquesComplet`, `coutCoquesDetail` sur le lot assemblé ; jamais de total partiel présenté comme complet.
+- **Coût mesuré** : bug corrigé (lecture de `qteConsommee`, la vraie colonne) ; garniture seule + coques assemblées ; lots de coques, dégustations et boîtes scindées exclus ; sans coque chiffrée ⇒ non fiable.
+- `analyzeFlavorProfitability` : les lots de coques ne comptent plus dans le stock d'un parfum.
+
+
+## v1527 — Accueil : marge nette / macaron standard et / gros macaron
+Suite : `tests/v1527-marge-standard-gros.test.js` (12 assertions, 3 mutations détectées).
+- `margeNetteParTaille` (pure) : marge nette des parfums au coût connu, moins les dons (rattachés à leur taille ; le reste réparti au prorata des pièces), divisée par les pièces chiffrées. La moyenne pondérée des deux tailles retombe sur le chiffre global. Aucun gros macaron vendu ⇒ « — », jamais 0.
+- Carte d'accueil pleine largeur : deux colonnes sur une même ligne, libellé puis chiffre dessous ; mode discret respecté.
+
+
+## v1528 — Accueil : base de calcul affichée sous chaque marge nette
+Suite : `tests/v1528-base-marge-affichee.test.js` (8 assertions). « sur N macarons » sous chaque chiffre (pièces dont la marge est chiffrée, par taille) ; « aucune vente » si 0 ; masqué en mode discret.
+
+
+## v1529 — Démarrage figé : « les boutons deviennent inactifs, les pages ne se chargent pas »
+Suite : `tests/v1529-demarrage-base-muette.test.js` (17 assertions, 4 mutations détectées) + vérifié dans un vrai Chromium (ouverture IndexedDB muette simulée : V1528 reste vide, V1529 s'affiche et navigue).
+- Cause : `indexedDB.open()` peut ne jamais répondre sur iPhone ; `dexie.min.js` attendait sans fin, donc le boot (avant le premier rendu) et toute lecture de la base.
+- `dexie.min.js` : ouverture relancée après 4 s (4 tentatives max), la première qui aboutit gagne, les doublons sont refermés, événement `stalled`.
+- `app.js` : la préparation du démarrage est isolée (`_prep`) ; au-delà de 7 s l'écran s'affiche avec une barre « Réessayer / Recharger » et se re-rend seul quand la base répond.
+
+
+## v1530 — Ligne de livraison distincte, réduction dédiée, mention « Offert »
+Suite : `tests/v1530-ligne-livraison-offert.test.js` (27 assertions, 4 mutations détectées sur 5 ; la 5ᵉ — plafond de la réduction — est équivalente car `lineRemiseEuro` plafonne déjà).
+- La livraison reste une ligne `prestation` marquée `isLivraison` (donc totaux, acomptes, analytique inchangés) mais sort du flux des prestations : `factRowsHtml` la rend à part, en dernière ligne (`factLivraisonRows`).
+- Réduction propre à la livraison, en € ou en % (champs `remiseType/remisePct/remiseEuro` de la ligne) ; `livraisonInfo` calcule base / réduction / net / offert.
+- Devis (net) : ligne au montant, puis sous-ligne « réduction livraison −X % » ; facture (brut) : montant, la réduction restant agrégée aux « Réductions accordées » (aucun double comptage).
+- Gratuité (net = 0, montant > 0) : montant barré + « Offert » dans les deux modes.
+- Saisie : bloc 🚚 dédié (`drawLivraisonLine`), bouton « + 🚚 Livraison » (une seule par document), bouton « 🎁 Offrir la livraison » (réduction 100 %).
+
+
+## v1531 — Barre d'onglets détachée du bas de l'écran (iPhone)
+Suite : `tests/v1531-tabbar-recalage.test.js` (11 assertions).
+- Constat (capture) : la barre Accueil/Commandes/… flottait au milieu de l'écran, le contenu continuait dessous.
+- Cause probable : viewport de mise en page iOS désynchronisé du viewport visible (`position:fixed;bottom:0` suit le premier). Non reproductible hors iPhone.
+- `tabbarEcartBas` (pur) mesure l'écart `innerHeight` vs `visualViewport` ; `tabbarRecaler` le compense sur `bottom` (rien si écart ≤ 2 px ou zoom au pincement), déclenché par resize/scroll du viewport visuel, focus, pageshow, visibilité, rotation.
+- CSS : `.tabbar` promue en couche GPU (`translateZ(0)`).

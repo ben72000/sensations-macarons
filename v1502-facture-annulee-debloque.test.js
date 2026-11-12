@@ -28,6 +28,8 @@ const failures = [];
 function check(label, cond){ if(cond){ pass++; } else { fail++; failures.push(label); } }
 
 const src = extractFunction('genererFactureMultiple');
+// [v1522] la règle « facture annulée » vit désormais dans des helpers partagés (docAvoirsDeFacture / docFactureAnnulee)
+const _hi = APP.indexOf('function docOrderIdsDe(f){'); const _helpers = APP.slice(_hi, APP.indexOf('function docFactureVivante', _hi));
 
 // ---- A. Le calcul « facture annulée » existe et précède la décision de rouvrir ----
 {
@@ -35,11 +37,11 @@ const src = extractFunction('genererFactureMultiple');
   const iDecision = src.indexOf('if(existing && docEstDefinitif(existing) && !existingAnnulee)');
   check('A. le calcul existingAnnulee existe', iCalc > -1);
   check('A. il précède la décision de rouvrir (pas de ReferenceError)', iCalc > -1 && iDecision > -1 && iCalc < iDecision);
-  check('A. il ne se déclenche que pour une facture réellement définitive (sinon retour rapide false)',
-    /if\(!docEstDefinitif\(existing\)\) return false;/.test(src));
+  check('A. il ne se déclenche que pour une facture réellement définitive (docFactureAnnulee exige docEstDefinitif)',
+    /existingAnnulee = existing \? docFactureAnnulee\(existing/.test(src) && /if\(!f \|\| f\.type!=='facture' \|\| !docEstDefinitif\(f\)\) return false;/.test(_helpers));   // [v1522]
   check('A. il additionne les avoirs par factureId OU par commande liée (mêmes deux chemins qu\'en v1501)',
-    /a\.factureId===existing\.id \|\| orderIds\.includes\(a\.orderId\)/.test(src));
-  check('A. seuls les avoirs réellement émis comptent', /a\.statut==='emis'\|\|a\.statut==='enregistre'/.test(src));
+    /a\.factureId!=null \? a\.factureId===f\.id : ids\.includes\(a\.orderId\)/.test(_helpers));   // [v1522] règle unique docAvoirsDeFacture : factureId d'abord, commande pour les avoirs anciens
+  check('A. seuls les avoirs réellement émis comptent', /a\.statut==='emis'\|\|a\.statut==='enregistre'/.test(_helpers));   // [v1522]
 }
 
 // ---- B. [LE DÉFAUT CORRIGÉ] Une facture annulée ne bloque plus la réouverture/reprint ----
