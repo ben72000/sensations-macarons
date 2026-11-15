@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1531'; // suite : voir tests/v1525-parfums-a-determiner-traces.test.js
+const APP_VERSION = 'v1532'; // suite : voir tests/v1532-base-reveil-reprises.test.js
 const APP_MAJ = '« CHEQUE DE CAUTION » DEVIENT « EMPREINTE BANCAIRE ». Ben : « le cheque de caution doit se transformer en empreinte bancaire. Peux-tu changer la mention partout ou apparait cheque de caution ? » ⚠️ CE N ETAIT PAS UN SIMPLE RENOMMAGE : le texte associe decrivait des gestes propres a un CHEQUE — il est « remis », il « n est pas encaisse », il est « restitue ». Une empreinte bancaire se PREND, se DEBITE et s ANNULE. Renommer sans adapter les verbes aurait laisse des clauses incoherentes dans les CGV, un document juridique transmis aux clients. Les VERBES ONT DONC ETE ADAPTES partout : sur la ligne du devis et de la facture (« empreinte prise le jour de la livraison, non debitee, annulee apres retour du materiel »), et dans les trois clauses concernees des CGV — 7.1 (prise a la mise a disposition, non debitee, annulee), 7.2 (aucune empreinte exigee du particulier) et 7.4 (l empreinte pourra etre DEBITEE, et non encaissee). La logique juridique est inchangee : montants dus, complement exigible, surplus restitue, engagement sur l honneur du particulier. LES IDENTIFIANTS DE CODE SONT CONSERVES (CAUTION_CHEQUE, cautionRowHtml, cautionMention) : les renommer toucherait des dizaines de references et des donnees DEJA ENREGISTREES, pour zero gain visible. Seul le texte vu par le client change. Les documents deja emis gardent leur redaction d origine, puisqu ils memorisent leur rendu. Suite v1493 : 27 assertions, dont la verification que le vocabulaire du cheque a bien disparu ; un renommage NAIF (terme change mais verbes conserves) fait rougir 5 assertions. La suite v1492 a suivi le nouveau libelle, son mecanisme etant inchange.';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
@@ -53,8 +53,17 @@ function smDebugOn(){
 //              import, validation, audit, kv, comptabilité. Ceux-là doivent PARLER.
 //   'normal' → tout le reste : rendu, affichage, calcul d'écran. Enregistré, jamais alarmant.
 const _SM_CTX_GRAVE = /(kv|audit|valide|validation|backup|sauvegarde|import|export|restaur|snapshot|db\.|write|ecrit|écrit|save|persist|compta|journal|facture|encaiss|stock|boot|migration|dexie|moteur)/i;
-function _smGravite(ctx){
-  try{ return _SM_CTX_GRAVE.test(String(ctx||'')) ? 'grave' : 'normal'; }
+// [v1532] Ben, journal santé du 16/11 : « GLOBAL promesse — An internal error was encountered in the Indexed Database server », classé
+// « mineur — affichage, rendu ». FAUX : une promesse rejetée SANS ENDROIT CONNU qui vient de la base peut être une écriture perdue. Le contexte
+// ne dit rien (il vaut « GLOBAL ») ; c'est le MESSAGE qui porte l'information. Une panne de base d'origine inconnue est donc « importante ».
+// Les incidents au contexte connu gardent leur classement (une lecture d'écran ratée reste mineure ; « entretien reporté » reste non grave).
+const _SM_MSG_BASE = /indexed ?database|indexeddb|idbdatabase|idbobjectstore|idbtransaction|database connection is clos/i;
+function _smGravite(ctx, msg){
+  try{
+    if(_SM_CTX_GRAVE.test(String(ctx||''))) return 'grave';
+    if(/^GLOBAL/.test(String(ctx||'')) && _SM_MSG_BASE.test(String(msg||''))) return 'grave';
+    return 'normal';
+  }
   catch(_){ return 'normal'; }
 }
 
@@ -91,7 +100,13 @@ async function _smErrFlush(){
         }else{
           await db.errLog.add(e);
         }
-      }catch(_){ /* incident pendant la journalisation d'un incident : on abandonne CETTE ligne */ }
+      }catch(_){
+        // [v1532] Base indisponible (panne au réveil) : AVANT, la ligne était abandonnée — précisément l'incident qui expliquait la panne
+        // disparaissait. On la remet en tête de file et on retente plus tard (sans swallow : pas de boucle), file toujours bornée à 200.
+        _SM_ERR_QUEUE.unshift(e);
+        if(!_smErrFlushArme){ _smErrFlushArme = true; setTimeout(()=>{ _smErrFlushArme=false; _smErrFlush(); }, SM_ERR_REPRISE_MS); }
+        break;
+      }
     }
     // Rétention : on garde les ERR_MAX signatures les plus récentes.
     try{
@@ -105,6 +120,7 @@ async function _smErrFlush(){
   finally{ _smErrFlushEnCours = false; }
 }
 const SM_ERR_MAX_BASE = 300;
+const SM_ERR_REPRISE_MS = 15000;   // [v1532] nouvel essai d'écriture du journal santé quand la base était indisponible
 
 function swallow(e, ctx){
   try{
@@ -123,7 +139,7 @@ function swallow(e, ctx){
         sig: String(ctx||'') + '|' + String(msg).slice(0,120),
         ctx: entry.ctx,
         msg: String(msg).slice(0,300),
-        grav: _smGravite(ctx),
+        grav: _smGravite(ctx, msg),
         pile: pile,
         ecran: (typeof view!=='undefined' && view) ? String(view) : '',
         v: (typeof APP_VERSION!=='undefined') ? APP_VERSION : '',
@@ -914,6 +930,33 @@ function dbReveil(source){
       .catch(e=>{ console.warn('dbReveil ' + source, e); return null; });
   }catch(e){ swallow(e, 'dbReveil'); return Promise.resolve(null); }
 }
+// [v1532] PANNE DURABLE DE LA BASE. dexie.min.js réessaie désormais pendant ~4 s (reprises espacées, connexion neuve à chaque fois) ; s'il
+// émet « panne », c'est que le serveur IndexedDB d'iOS ne répond toujours pas. Ce n'est plus un détail d'affichage : une saisie faite à ce
+// moment-là pourrait ne pas être enregistrée. On le DIT (bandeau, avec le seul remède fiable connu : recharger l'app) et on laisse UNE trace
+// importante dans le journal santé. Si la base revient d'elle-même (« retablie »), le bandeau s'efface.
+function dbPanneBandeau(){
+  try{
+    if(typeof document==='undefined' || !document.body || document.getElementById('smDbPanne')) return;
+    const d = document.createElement('div');
+    d.id = 'smDbPanne';
+    d.setAttribute('style','position:fixed;left:8px;right:8px;top:8px;z-index:100000;background:#fdf3f2;border:1px solid #d9a39b;border-radius:10px;padding:10px 12px;font-size:.84rem;color:#5a2a2a;box-shadow:0 4px 14px rgba(0,0,0,.16);display:flex;gap:10px;align-items:center;justify-content:space-between');
+    const p = document.createElement('div');
+    p.textContent = "La base de données du téléphone ne répond plus après la mise en veille. Ce qui était déjà enregistré est en sécurité, mais n'enregistrez rien avant d'avoir rechargé l'app.";
+    const b = document.createElement('button');
+    b.textContent = 'Recharger';
+    b.setAttribute('style','background:#52252F;color:#fff;border:0;border-radius:8px;padding:7px 12px;font-size:.82rem;flex-shrink:0');
+    b.onclick = function(){ try{ location.reload(); }catch(_){} };
+    d.appendChild(p); d.appendChild(b);
+    document.body.appendChild(d);
+  }catch(_){ }
+}
+function dbPanneRetiree(){ try{ const d = document.getElementById('smDbPanne'); if(d) d.remove(); }catch(_){ } }
+try{
+  if(typeof db!=='undefined' && db && typeof db.on==='function'){
+    db.on('panne', e => { swallow(e, 'dexie : base indisponible après reprises'); dbPanneBandeau(); });
+    db.on('retablie', () => { dbPanneRetiree(); });
+  }
+}catch(e){ swallow(e, 'dbPanne listeners'); }
 try{
   document.addEventListener('visibilitychange', () => { if(!document.hidden) dbReveil('visibilitychange'); });
   window.addEventListener('pageshow', () => { dbReveil('pageshow'); });
@@ -1174,6 +1217,7 @@ async function renderSanteModal(){
         <b style="color:#7a4b2a">${esc(String(r.ctx||'(sans contexte)'))}</b><br>
         <span style="color:#4a3a32">${esc(String(r.msg||''))}</span>
         ${r.ecran?`<br><span style="opacity:.5;font-size:.72rem">écran : ${esc(String(r.ecran))}${r.v?' · '+esc(String(r.v)):''}</span>`:''}
+        ${r.pile?`<details style="margin-top:4px"><summary style="font-size:.72rem;opacity:.6">où c'est arrivé</summary><pre style="white-space:pre-wrap;font-size:.66rem;opacity:.7;margin:4px 0 0">${esc(String(r.pile))}</pre></details>`:''}
       </td></tr>`;
   };
 
