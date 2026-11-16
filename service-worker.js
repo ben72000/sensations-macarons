@@ -86,13 +86,21 @@
 // [v1272] Temps de production : le tableau « Par parfum / recette » (qui débordait à droite sur iPhone) est remplacé par un rendu en CARTES. Une carte par parfum : nom + nb de batches en tête, puis Réel / Actif / Moy./batch en grille 3 colonnes. Aucune donnée ni logique changée (garde-fou actif>réel + ⚠ conservés). Tableaux « Par jour » et « Détail par batch » inchangés.
 // [v1271] Assemblage : le bouton « Assembler » ne démarre plus de session/chrono d'atelier (l'assemblage physique est fait en amont, temps déjà compté). Il matérialise seulement l'action (décrément composants + création lot).
 // [v1270] Section Impot sur le revenu dans la Comptabilite : abattement micro (71%/50%) + taux marginal (30% par defaut) -> impot estime et net reel apres URSSAF+impot. Taux reglable dans Parametres.
-const CACHE = 'sm-iphone-v562';
+const CACHE = 'sm-iphone-v563';
+// [v1533] ESSENTIELS : sans eux l'app ne démarre pas hors-ligne → leur échec fait échouer l'installation (comportement d'avant).
+const ASSETS_ESSENTIELS = ['./', './index.html', './app.js', './dexie.min.js'];
+// [v1533] Tout le reste est mis en cache UN PAR UN, sans bloquer : avant, `addAll` échouait en BLOC dès qu'un seul fichier manquait
+// sur le site — l'installation de la nouvelle version ratait, et le téléphone retéléchargeait TOUT (dont app.js, ~6,8 Mo) à chaque
+// ouverture pour réessayer. Exemple : `qr.min.js` figurait ici alors que la page charge `qr_min.js` (et `html5-qrcode.min.js`, absent
+// de la liste) : les deux noms sont désormais listés, celui qui n'existe pas est simplement ignoré.
 const ASSETS = [
   './',
   './index.html',
   './app.js',
   './dexie.min.js',
   './qr.min.js',
+  './qr_min.js',
+  './html5-qrcode.min.js',
   './rd_packs.json',
   './rd_pack_alice.json',
   './rd_pack_bau.json',
@@ -121,7 +129,10 @@ const ASSETS = [
 // On n'attend plus un clic utilisateur : la mise à jour s'applique d'elle-même.
 self.addEventListener('install', e => {
   e.waitUntil(
-    caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting())
+    caches.open(CACHE)
+      .then(c => c.addAll(ASSETS_ESSENTIELS)
+        .then(() => Promise.all(ASSETS.filter(u => ASSETS_ESSENTIELS.indexOf(u) < 0).map(u => c.add(u).catch(() => null)))))
+      .then(() => self.skipWaiting())
   );
 });
 
@@ -140,6 +151,7 @@ self.addEventListener('message', e => {
   if (e.data && e.data.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
+const CODE_DELAI_MS = 3000;   // [v1533] attente maximale du réseau pour le code avant de servir la copie du téléphone
 // FETCH :
 // - Pour le CODE (index.html, app.js, et la navigation) : NETWORK-FIRST.
 //   On tente d'abord le réseau (donc la dernière version en ligne) ; en cas d'échec
@@ -158,16 +170,28 @@ self.addEventListener('fetch', e => {
     || url.pathname === '/' || url.pathname.endsWith('/');
 
   if (isCode) {
-    // network-first
-    e.respondWith(
-      fetch(req).then(res => {
-        if (res && res.status === 200 && res.type === 'basic') {
-          const copy = res.clone();
-          caches.open(CACHE).then(c => c.put(req, copy));
-        }
-        return res;
-      }).catch(() => caches.open(CACHE).then(c => c.match(req).then(r => r || c.match('./index.html'))))
-    );
+    // network-first, [v1533] AVEC UN DÉLAI MAXIMAL. Avant : on attendait le réseau SANS LIMITE. Au premier lancement du matin (réseau
+    // mobile qui se réveille, Wi-Fi qui ne répond pas encore), app.js (~6,8 Mo) pouvait faire patienter de longues secondes avant de
+    // retomber sur le cache. Désormais : réseau si la réponse arrive en moins de CODE_DELAI_MS, sinon la copie du téléphone tout de suite
+    // — et la réponse réseau, quand elle arrive, met quand même le cache à jour pour la fois suivante. Sans copie en cache (première
+    // installation), on attend le réseau comme avant.
+    const reseau = fetch(req).then(res => {
+      if (res && res.status === 200 && res.type === 'basic') {
+        const copy = res.clone();
+        caches.open(CACHE).then(c => c.put(req, copy)).catch(() => {});
+      }
+      return res;
+    });
+    const enCache = () => caches.open(CACHE).then(c => c.match(req).then(r => r || c.match('./index.html')));
+    e.respondWith((async () => {
+      let copie = null;
+      try { copie = await enCache(); } catch (_) { copie = null; }
+      if (!copie) return reseau.catch(() => enCache());
+      const delai = new Promise(r => setTimeout(() => r(null), CODE_DELAI_MS));
+      const gagnant = await Promise.race([reseau.catch(() => null), delai]);
+      return gagnant || copie;
+    })());
+    e.waitUntil(reseau.then(() => {}, () => {}));   // laisse la mise à jour du cache se terminer même si la copie a été servie
     return;
   }
 

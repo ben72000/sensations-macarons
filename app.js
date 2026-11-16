@@ -5,7 +5,9 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1532'; // suite : voir tests/v1532-base-reveil-reprises.test.js
+const APP_VERSION = 'v1533'; // suite : voir tests/v1533-premiere-ouverture.test.js
+// [v1533] Instant où app.js commence à s'exécuter, en ms depuis l'ouverture de la page : couvre le téléchargement ET la lecture du code.
+const _BOOT_DEBUT_JS = (()=>{ try{ return (typeof performance!=='undefined' && performance.now) ? Math.round(performance.now()) : null; }catch(_){ return null; } })();
 const APP_MAJ = '« CHEQUE DE CAUTION » DEVIENT « EMPREINTE BANCAIRE ». Ben : « le cheque de caution doit se transformer en empreinte bancaire. Peux-tu changer la mention partout ou apparait cheque de caution ? » ⚠️ CE N ETAIT PAS UN SIMPLE RENOMMAGE : le texte associe decrivait des gestes propres a un CHEQUE — il est « remis », il « n est pas encaisse », il est « restitue ». Une empreinte bancaire se PREND, se DEBITE et s ANNULE. Renommer sans adapter les verbes aurait laisse des clauses incoherentes dans les CGV, un document juridique transmis aux clients. Les VERBES ONT DONC ETE ADAPTES partout : sur la ligne du devis et de la facture (« empreinte prise le jour de la livraison, non debitee, annulee apres retour du materiel »), et dans les trois clauses concernees des CGV — 7.1 (prise a la mise a disposition, non debitee, annulee), 7.2 (aucune empreinte exigee du particulier) et 7.4 (l empreinte pourra etre DEBITEE, et non encaissee). La logique juridique est inchangee : montants dus, complement exigible, surplus restitue, engagement sur l honneur du particulier. LES IDENTIFIANTS DE CODE SONT CONSERVES (CAUTION_CHEQUE, cautionRowHtml, cautionMention) : les renommer toucherait des dizaines de references et des donnees DEJA ENREGISTREES, pour zero gain visible. Seul le texte vu par le client change. Les documents deja emis gardent leur redaction d origine, puisqu ils memorisent leur rendu. Suite v1493 : 27 assertions, dont la verification que le vocabulaire du cheque a bien disparu ; un renommage NAIF (terme change mais verbes conserves) fait rougir 5 assertions. La suite v1492 a suivi le nouveau libelle, son mecanisme etant inchange.';
 const _APP_MAJ_v1450_ARCHIVE_INUTILISEE = 'POURCENTAGE DE CA DEVANT CHAQUE TRANSACTION. Ben : « je veux qu\u2019à chaque fois que c\u2019est possible, devant chaque transaction ça indique le pourcentage de CA que ça représente sur la totalité du calcul réalisé. Exemple quand je clique sur CA du mois, et que je clique sur le détail du CA encaissé, chaque commande indique le pourcentage que ça représente sur la totalité du calcul. » CE QUI EST FAIT : un pourcentage s\u2019affiche désormais sous le montant de chaque ligne, sur les 3 écrans de détail CA/encaissement de l\u2019app — détail du mois, détail d\u2019une période glissante (jour/semaine/année, v1444), détail d\u2019une catégorie du bilan URSSAF. Un seul calcul partagé (pctDuTotal), pas un par écran : une ligne négative (reprise, avoir) affiche un pourcentage négatif — elle réduit le total, ce n\u2019est pas la même chose que d\u2019y contribuer. Respecte le mode confidentialité comme les montants. SECOND POINT DE BEN (« chaque ligne indique le nom du client, pas un montant avec un numéro ») : audit des 3 écrans — déjà en place sur les trois (corrigé lors de fixes antérieurs, v1419 notamment), vérifié plutôt que re-modifié sans raison. Suite v1450 : 19 assertions, dont une réconciliation (la somme des pourcentages d\u2019une répartition retombe sur 100 %) et un rendu réel vérifié sur un jeu de données connu.';
 const _APP_MAJ_v1449_ARCHIVE_INUTILISEE = 'UN PARFUM BICOLORE COMBINÉ À D\u2019AUTRES SE DIVISE AUSSI. Ben, en réaction à v1445/v1448 : « t\u2019as pas compris. Si c\u2019est un parfum bicolore la partie de la meringue dédiée à cette couleur doit être divisée ! Ainsi si j\u2019ai 240 coques et que je souhaite mutualiser la meringue à part égale entre pistache et chocolat passion je devrais faire : Pistache = 120 coques / Chocolat passion = 60 coques marrons + 60 coques orange. Ainsi la recette doit s\u2019ajuster en conséquence. » CE QUI CHANGE : la division bicolore (v1445) ne gérait qu\u2019UN parfum, à part, sur une case à cocher. C\u2019est désormais un comportement systématique du moteur, plus une option : un nouveau moteur partagé (_sousLotsCoques) décide, pour CHAQUE parfum d\u2019un lancement « Composant → Coques » ou d\u2019une meringue commune (duo/trio), s\u2019il produit 1 lot (mono-couleur) ou 2 (bicolore, toujours 50/50) — et ce, qu\u2019il soit seul ou combiné à d\u2019autres parfums. La case à cocher a disparu : plus besoin de la cocher, plus de risque de l\u2019oublier. Le récapitulatif de répartition, les numéros de lot prévisualisés et le détail des ingrédients de la meringue reflètent désormais tous les VRAIS sous-lots qui seront créés — jusqu\u2019à 6 dans un trio où chaque parfum serait bicolore. Suite v1449 : 28 assertions, dont la reproduction EXACTE du scénario chiffré de Ben (Pistache 120 coques + Chocolat passion 60 marron + 60 orange, 240 coques au total) — à la fois pour le lancement réel et pour l\u2019aperçu, vérifiée sensible par mutation réelle de app.js.';
@@ -1239,6 +1241,10 @@ async function renderSanteModal(){
     <div style="max-height:48vh;overflow:auto">
       ${bloc('🔴 Importants — base, sauvegarde, validation, compta', graves, 'Aucun incident important enregistré.')}
       ${bloc(`⚪ Mineurs — affichage, rendu (${nA})`, autres, 'Aucun incident mineur enregistré.')}
+      <div style="margin-bottom:10px">
+        <h3 style="margin:6px 0;font-size:.92rem">⏱ Démarrages récents</h3>
+        ${(()=>{ try{ return bootProfilsHtml(JSON.parse(localStorage.getItem('sm_bootProfils')||'[]')); }catch(_){ return '<p class="note">Mesure illisible.</p>'; } })()}
+      </div>
     </div>
     <div class="flex" style="flex-wrap:wrap;gap:8px;margin-top:10px">
       <button class="btn ghost" onclick="smSantePurge()">🧹 Vider le journal des incidents</button>
@@ -56788,11 +56794,17 @@ async function snapshotBackup(type){
   const rec={ date:new Date().toISOString(), type:type||'manuel',
     checksum:dump._checksum, count:dumpRecordCount(dump), size:payload.length, payload };
   const id=await db.backups.add(rec);
+  try{ _bootNoteSauvegarde(payload.length); }catch(_){ }
   // purge : ne conserver que les MAX_BACKUPS plus récents
+  // [v1533] SANS RECHARGER LES SAUVEGARDES. Avant : `orderBy('date').reverse().toArray()` relisait les 21 sauvegardes — chacune contient
+  // TOUTE la base — rien que pour connaître leurs numéros, à chaque première ouverture du jour. Désormais seules les clés sont lues
+  // (index `date`). Même résultat : on supprime les plus anciennes au-delà de MAX_BACKUPS.
   try{
-    const all=await db.backups.orderBy('date').reverse().toArray();
-    if(all.length>MAX_BACKUPS){
-      const surplus=all.slice(MAX_BACKUPS).map(b=>b.id);
+    const cles = (typeof db.backups.clesSelonIndex === 'function')
+      ? await db.backups.clesSelonIndex('date')                                        // de la plus ancienne à la plus récente
+      : (await db.backups.orderBy('date').toArray()).map(b=>b.id);
+    if(cles.length>MAX_BACKUPS){
+      const surplus=cles.slice(0, cles.length-MAX_BACKUPS);
       await bulkDeleteSafe(db.backups, surplus);
     }
   }catch(ePurge){ console.warn('snapshotBackup purge (non bloquant)', ePurge); }
@@ -76420,6 +76432,109 @@ async function pmsExportDDPP(){
    ============================================================ */
 // ─── [v1529] DÉMARRAGE : ne jamais rester figé sur une base qui ne répond pas ───
 const BOOT_PREP_MAX_MS = 7000;
+// ─── [v1533] MESURE DU DÉMARRAGE — « l'app rame terriblement à la première ouverture de la journée » ───
+// On ne corrige durablement que ce qu'on mesure SUR L'IPHONE de Ben, pas sur une supposition. Chaque démarrage enregistre : le temps
+// jusqu'au lancement du code (téléchargement + lecture de app.js), la durée de chaque étape de préparation, le premier affichage, les
+// tâches de fond, et la sauvegarde quotidienne (durée, taille). Les 10 derniers démarrages sont lisibles dans « Santé de l'app ».
+// Ne modifie aucune donnée ; ne jette jamais.
+const BOOT_PROFILS_CLE = 'sm_bootProfils';
+const BOOT_PROFILS_MAX = 10;
+// [v1533] Les deux tâches lourdes de fin de démarrage (contrôle de cohérence, sauvegarde quotidienne de TOUTE la base) attendent que l'app
+// soit affichée ET au repos depuis ce délai, au lieu de se disputer le téléphone avec les premiers gestes de Ben.
+const BOOT_TACHES_REPOS_MS = 15000;
+function _bootMaintenant(){ try{ if(typeof performance!=='undefined' && performance.now) return performance.now(); }catch(_){ } return Date.now(); }
+const _BOOT_PROFIL = {
+  quand: Date.now(),
+  v: (typeof APP_VERSION!=='undefined') ? APP_VERSION : '',
+  debutJsMs: (typeof _BOOT_DEBUT_JS!=='undefined') ? _BOOT_DEBUT_JS : null,
+  premiereDuJour: (()=>{ try{ return localStorage.getItem('sm_autoBackupDate')!==today(); }catch(_){ return null; } })(),
+  etapes: [], jalons: {}, sauvegarde: null, reseau: null, caches: null
+};
+let _bootDernier = null;
+// Marque la FIN d'une étape : sa durée = temps écoulé depuis la marque précédente.
+function bootEtape(nom){
+  try{
+    const t = _bootMaintenant();
+    if(_bootDernier!=null) _BOOT_PROFIL.etapes.push({ nom: String(nom), ms: Math.round(t - _bootDernier) });
+    _bootDernier = t;
+  }catch(_){ }
+}
+function bootJalon(nom){ try{ _BOOT_PROFIL.jalons[nom] = Math.round(_bootMaintenant()); _bootProfilEnregistre(); }catch(_){ } }
+function _bootNoteSauvegarde(taille){ try{ _BOOT_PROFIL.sauvegarde = Object.assign(_BOOT_PROFIL.sauvegarde||{}, { taille: +taille||0 }); }catch(_){ } }
+// Pur : ajoute (ou remplace, même horodatage) un profil en tête et borne la liste.
+// Pur : rendu des derniers démarrages pour « Santé de l'app ». Rien d'inventé : une mesure absente s'affiche « — ».
+function bootProfilsHtml(liste){
+  const L = Array.isArray(liste) ? liste.filter(p => p && p.quand) : [];
+  if(!L.length) return '<p class="note">Aucun démarrage mesuré pour l\'instant (la mesure commence avec la v1533).</p>';
+  const sec = ms => (ms==null || !isFinite(ms)) ? '—' : (ms < 1000 ? Math.round(ms) + ' ms' : (ms/1000).toFixed(1).replace('.', ',') + ' s');
+  const mo = o => (o==null || !isFinite(o)) ? '—' : (o >= 1048576 ? (o/1048576).toFixed(1).replace('.', ',') + ' Mo' : Math.round(o/1024) + ' Ko');
+  const e = (typeof esc==='function') ? esc : (x => String(x));
+  const lignes = L.map(p => {
+    const d = new Date(p.quand);
+    const quand = d.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'}) + ' ' + d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+    const j = p.jalons || {};
+    const lentes = (p.etapes || []).slice().sort((a,b) => (b.ms||0) - (a.ms||0)).slice(0,3).filter(x => (x.ms||0) >= 50)
+      .map(x => e(x.nom) + ' ' + sec(x.ms)).join(' · ');
+    const r = p.reseau || {};
+    const code = r.appJsMs!=null ? (sec(r.appJsMs) + (r.appJsOctets===0 ? ' (0 octet transféré)' : (r.appJsOctets>0 ? ' (téléchargé, ' + mo(r.appJsOctets) + ')' : ''))) : '—';
+    const f = p.differe;
+    const sauv = !f ? 'pas encore faite (attend que l\'app soit au repos)'
+      : (f.sauvegardeDue ? ('sauvegarde du jour ' + sec(f.sauvegardeMs) + (p.sauvegarde && p.sauvegarde.taille ? ', ' + mo(p.sauvegarde.taille) : '') + (f.nbSauvegardes!=null ? ', ' + f.nbSauvegardes + ' en historique' : '')) : 'sauvegarde déjà faite ce jour')
+        + ' · contrôle ' + sec(f.coherenceMs);
+    const jour = p.premiereDuJour ? '<br><span class="tag warn">1re du jour</span>' : '';
+    const prep = sec(j.prepFinie!=null && j.debutPrep!=null ? j.prepFinie - j.debutPrep : null);
+    const sansSw = r.controleParSW===false ? ' · <b>sans service worker</b>' : '';
+    const lent = lentes ? 'Étapes les plus lentes : ' + lentes + '<br>' : '';
+    const cach = Array.isArray(p.caches) ? '<br><span style="opacity:.55;font-size:.7rem">caches : ' + e(p.caches.join(', ') || 'aucun') + '</span>' : '';
+    return '<tr><td style="white-space:nowrap;font-size:.78rem">' + quand + jour + '<br><span style="opacity:.5;font-size:.7rem">' + e(p.v||'') + '</span></td>'
+      + '<td style="font-size:.76rem"><b>Prêt à l\'écran : ' + sec(j.affiche) + '</b> · code lancé à ' + sec(p.debutJsMs) + ' · préparation ' + prep + '<br>'
+      + 'app.js : ' + code + sansSw + '<br>' + lent + 'Après l\'affichage : ' + sauv + cach + '</td></tr>';
+  }).join('');
+  return '<table class="tbl"><tbody>' + lignes + '</tbody></table>';
+}
+function bootProfilsFusion(liste, profil, max){
+  const l = Array.isArray(liste) ? liste.filter(p => p && p.quand !== profil.quand) : [];
+  l.unshift(profil);
+  return l.slice(0, max || BOOT_PROFILS_MAX);
+}
+function _bootProfilEnregistre(){
+  try{
+    let l = [];
+    try{ l = JSON.parse(localStorage.getItem(BOOT_PROFILS_CLE) || '[]'); }catch(_){ l = []; }
+    localStorage.setItem(BOOT_PROFILS_CLE, JSON.stringify(bootProfilsFusion(l, _BOOT_PROFIL, BOOT_PROFILS_MAX)));
+  }catch(_){ }
+}
+// Ce que le navigateur sait du chargement : le code est-il venu du réseau ou du cache, et en combien de temps.
+function _bootReseauRelever(){
+  try{
+    const res = (performance.getEntriesByType && performance.getEntriesByType('resource')) || [];
+    const app = res.find(e => /\/app\.js(\?|$)/.test(e.name));
+    const nav = (performance.getEntriesByType && performance.getEntriesByType('navigation') || [])[0];
+    _BOOT_PROFIL.reseau = {
+      pageMs: nav ? Math.round(nav.responseEnd) : null,
+      appJsMs: app ? Math.round(app.duration) : null,
+      appJsOctets: app && app.transferSize!=null ? app.transferSize : null,
+      controleParSW: !!(navigator.serviceWorker && navigator.serviceWorker.controller)
+    };
+  }catch(_){ }
+  try{ if(typeof caches!=='undefined' && caches.keys) caches.keys().then(k => { _BOOT_PROFIL.caches = k; _bootProfilEnregistre(); }).catch(()=>{}); }catch(_){ }
+}
+// Pur : lance `fn` une fois l'app visible ET au repos depuis `reposMs` (tout geste relance l'attente). Plafond : passé `maxMs` d'usage
+// continu, 2 s de repos suffisent — la sauvegarde du jour ne doit jamais être repoussée indéfiniment. `env` injecté pour les tests.
+const BOOT_TACHES_MAX_MS = 120000;
+function bootQuandAuRepos(fn, reposMs, env, maxMs){
+  const E = env || { doc: document, win: window, setTimeout: (f,ms)=>setTimeout(f,ms), clearTimeout: t=>clearTimeout(t), now: ()=>Date.now() };
+  const now = E.now || (()=>Date.now());
+  const debut = now(), plafond = (maxMs==null ? BOOT_TACHES_MAX_MS : maxMs);
+  let t = null, fait = false;
+  const gestes = ['pointerdown','touchstart','keydown','scroll'];
+  const fin = () => { if(fait) return; fait = true; try{ gestes.forEach(g => E.win.removeEventListener(g, rearmer, true)); E.doc.removeEventListener('visibilitychange', rearmer); }catch(_){ } fn(); };
+  const armer = () => { if(fait) return; if(t) E.clearTimeout(t); if(E.doc.hidden){ t = null; return; } t = E.setTimeout(fin, (now() - debut >= plafond) ? Math.min(2000, reposMs) : reposMs); };
+  const rearmer = () => armer();
+  try{ gestes.forEach(g => E.win.addEventListener(g, rearmer, { capture:true, passive:true })); E.doc.addEventListener('visibilitychange', rearmer); }catch(_){ }
+  armer();
+  return { annuler(){ fait = true; if(t) E.clearTimeout(t); } };
+}
 // Attend `promesse` au plus `ms` ; renvoie true si le délai est dépassé (ou `repli` si fourni) — la promesse, elle, continue en tâche de fond.
 function bootAttendre(promesse, ms, repli){
   return new Promise(res=>{
@@ -76508,68 +76623,127 @@ function startClock(){
   // [v1529] LE RENDU N'ATTEND PLUS UNE BASE MUETTE. Toute la préparation (réconciliation, seeds, migrations) tourne dans `_prep` ; si elle
   // n'a pas fini au bout de BOOT_PREP_MAX_MS (base qui ne répond pas), on affiche l'app quand même, avec une barre « Réessayer », et on
   // re-rend dès que la préparation aboutit. Avant : la base muette gelait le démarrage SANS RIEN dire (boutons visibles, pages jamais chargées).
+  // [v1533] Mesure : chaque étape est chronométrée (voir bootEtape) ; résultat lisible dans « Santé de l'app ».
+  _bootDernier = _bootMaintenant(); bootJalon('debutPrep');
   const _prep = (async()=>{
   try{ valideInstalle(); }catch(e){ console.error('valideInstalle', e); }   // [v1373] la validation refuse AVANT que l'audit ne journalise
+  bootEtape('valideInstalle');
   try{ auditInstalle(); }catch(e){ console.error('auditInstalle', e); }
+  bootEtape('auditInstalle');
   try{ await kvBoot(); }catch(e){ console.error('kvBoot', e); }
+  bootEtape('kvBoot');
   // [v1520] rétention du journal : différée APRÈS le rendu (plus en concurrence avec les migrations de démarrage)
   try{ setTimeout(() => { _auditPrune().catch(()=>{}); }, 6000); }catch(e){ swallow(e,'boot auditPrune'); }
+  bootEtape('auditPrune (programmé)');
   try{ _figVerifie(); }catch(e){ swallow(e,'boot figVerifie'); }    // [v1374] une carte fausse est pire que pas de carte
+  bootEtape('_figVerifie');
   try{
     migratePackaging202511();   // inscrit les tarifs emballage 28/11/2025 (une seule fois)
+    bootEtape('migratePackaging202511');
     migrateIRTranche2026();     // règle le taux marginal d'imposition à 30 % s'il n'a jamais été fixé (une seule fois)
+    bootEtape('migrateIRTranche2026');
     try{ await seedIfEmpty(); }catch(e){ console.error('seed',e); }
+    bootEtape('seedIfEmpty');
     try{ await seedProducts(); }catch(e){ console.error('seedProducts',e); }
+    bootEtape('seedProducts');
     try{ await seedCoffret10(); }catch(e){ console.error('seedCoffret10',e); }
+    bootEtape('seedCoffret10');
     try{ await alignerCatalogueSurGrille(); }catch(e){ console.error('alignerCatalogueSurGrille',e); }
+    bootEtape('alignerCatalogueSurGrille');
     try{ await migrerDateUnique(); }catch(e){ console.error('migrerDateUnique',e); }
+    bootEtape('migrerDateUnique');
     try{ pyraMigrer285(); }catch(e){ console.error('pyraMigrer285',e); }
+    bootEtape('pyraMigrer285');
     try{ await migrerDevisTarifRef(); }catch(e){ console.error('migrerDevisTarifRef',e); }
+    bootEtape('migrerDevisTarifRef');
     try{ await migrerCommandesIssuesDevis(); }catch(e){ console.error('migrerCommandesIssuesDevis',e); }
+    bootEtape('migrerCommandesIssuesDevis');
     try{ await seedPMS(); }catch(e){ console.error('seedPMS',e); }
+    bootEtape('seedPMS');
     try{ await seedAllergenes(); }catch(e){ console.error('seedAllergenes',e); }
+    bootEtape('seedAllergenes');
     try{ await seedEmballages(); }catch(e){ console.error('seedEmballages',e); }
+    bootEtape('seedEmballages');
     try{ await migrateDlcCongelateur(); }catch(e){ console.error('migrateDlcCongelateur',e); }
+    bootEtape('migrateDlcCongelateur');
     try{ await migrateCoqueColors(); }catch(e){ console.error('migrateCoqueColors',e); }
+    bootEtape('migrateCoqueColors');
     try{ await migrateCoquesRoseV1506(); }catch(e){ console.error('migrateCoquesRoseV1506',e); }   // [v1506] APRÈS le pré-remplissage, qui aurait remis du rouge
+    bootEtape('migrateCoquesRoseV1506');
     try{ await migrateMereHistoV1421(); }catch(e){ console.error('migrateMereHistoV1421',e); }
+    bootEtape('migrateMereHistoV1421');
     try{ const r=await rdSeedSiVide();
       let nIdees=0,nTests=0; try{nIdees=await db.rdIdees.count();}catch(e){swallow(e,'startClock')}; try{nTests=await db.rdTests.count();}catch(e){swallow(e,'startClock')}
       diagPublish('rd_seed','R&D · module', {...r, idees:nIdees, tests:nTests});
     }catch(e){ console.error('rdSeed',e); }
+    bootEtape('rdSeedSiVide');
     try{ await materializeRecurringCharges(); }catch(e){ console.error('recurCharges',e); }
+    bootEtape('materializeRecurringCharges');
     try{ await prodSessHydrate(); }catch(e){ console.error('prodSessHydrate',e); }
+    bootEtape('prodSessHydrate');
   }catch(e){ console.error('Préparation au démarrage (non bloquant):', e); }
 
   try{ await fixSplitComponentInheritance(); }catch(e){ console.error('fixSplitComp',e); }
+  bootEtape('fixSplitComponentInheritance');
   try{ await migrateAddUuids(); }catch(e){ console.error('migrateUuids',e); }
+  bootEtape('migrateAddUuids');
   // Cache recettes/matières prêt AVANT le premier rendu : prodNomComplet() (appelé sans
   // « recipes » en portée, ex. Stock par parfum) s'appuie sur window._allRecipesCache. Sans ce
   // rafraîchissement initial, le cache peut être vide/périmé et les lots s'afficheraient à tort
   // « (recette supprimée) », faussant le regroupement par parfum.
   try{ await refreshMatsCache(); }catch(e){ console.error('refreshMatsCache boot',e); }
+  bootEtape('refreshMatsCache');
+  bootJalon('prepFinie');
   })();
   const _lent = await bootAttendre(_prep, BOOT_PREP_MAX_MS);
   if(_lent){ bootLentAfficher(_prep); }
   let opened=false;
   try{ opened = _lent ? false : await bootAttendre(handleTraceAnchor().catch(()=>false), 2000, false); }catch(e){ console.error('traceAnchor',e); }
   try{ if(!opened) render(); }catch(e){ console.error('render',e); }
+  bootEtape('premier affichage');
+  bootJalon('affiche'); _bootReseauRelever();
   initHistoryNav();
   try{ auditRoutage(); }catch(e){ swallow(e,'boot auditRoutage'); }   // [v1298] filet anti-écran-orphelin
+  bootEtape('auditRoutage');
   ttInit();
   try{ mascotInit(); }catch(e){ console.error('mascotInit',e); }
+  bootEtape('mascotInit');
   // Camembert radial retiré ; seul le geste de balayage vers le coin (retour menu) reste actif.
   try{ radialInit(); }catch(e){ console.error('radialInit',e); }
+  bootEtape('radialInit');
   startClock();
   try{ window._allMatsCache = await db.materials.toArray(); }catch(e){swallow(e,'startClock')}
+  bootEtape('materials cache');
   try{ await refreshEmbEstRatio(); }catch(e){ console.error('embEstRatio',e); }
+  bootEtape('refreshEmbEstRatio');
   try{ await refreshEmbEstRatioMarches(); }catch(e){ console.error('embEstRatioMarches',e); }
+  bootEtape('refreshEmbEstRatioMarches');
   try{ await refreshMoCtx(); }catch(e){ console.error('moCtx',e); }   // [A2] contexte main-d'œuvre mesurée pour la marge par-parfum
-  // Sécurité des données : contrôle de cohérence + sauvegarde auto quotidienne au démarrage.
-  try{ await runConsistencyCheck(false); }catch(e){ console.error('consistency',e); }
+  bootEtape('refreshMoCtx');
   try{ await requestPersistentStorage(); }catch(e){ console.error('persist',e); }
-  try{ await autoDailyBackup(); }catch(e){ console.error('autoBackup',e); }
+  bootEtape('requestPersistentStorage');
   try{ await pmsEndOfDayCheck(); }catch(e){ console.error('pmsEod',e); }
+  bootEtape('pmsEndOfDayCheck');
+  bootJalon('fond');
+  // Sécurité des données : contrôle de cohérence + sauvegarde auto quotidienne.
+  // [v1533] Plus au démarrage même : APRÈS l'affichage, quand l'app est au repos (BOOT_TACHES_REPOS_MS, plafond BOOT_TACHES_MAX_MS).
+  // La sauvegarde quotidienne relit et recopie TOUTE la base : c'est elle, une fois par jour, qui pesait sur la première ouverture.
+  // Rien n'est retiré : même contrôle, même sauvegarde, même règle « une par jour » (si l'app est fermée avant, elle sera faite à la prochaine ouverture).
+  try{
+    bootQuandAuRepos(async ()=>{
+      const t0 = _bootMaintenant();
+      try{ await runConsistencyCheck(false); }catch(e){ console.error('consistency',e); }
+      const t1 = _bootMaintenant();
+      let due = null; try{ due = localStorage.getItem('sm_autoBackupDate')!==today(); }catch(_){ }
+      try{ await autoDailyBackup(); }catch(e){ console.error('autoBackup',e); }
+      const t2 = _bootMaintenant();
+      try{
+        _BOOT_PROFIL.differe = { coherenceMs: Math.round(t1-t0), sauvegardeDue: due, sauvegardeMs: due ? Math.round(t2-t1) : 0 };
+        try{ _BOOT_PROFIL.differe.nbSauvegardes = await db.backups.count(); }catch(_){ }
+        _bootProfilEnregistre();
+      }catch(_){ }
+    }, BOOT_TACHES_REPOS_MS);
+  }catch(e){ swallow(e,'boot tâches au repos'); }
   // [v1508] ZÉRO POPUP AU DÉMARRAGE (demande de Ben). Ne sont plus appelés au boot :
   //   · exportReminder()          — modale « Sauvegarde recommandée »
   //   · showForecastPopup(daily)  — modale « Risque de rupture » (commandes à venir vs stock)
