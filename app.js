@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1534'; // suite : voir tests/v1534-impression-ios.test.js
+const APP_VERSION = 'v1535'; // suite : voir tests/v1535-impression-ios-pdf.test.js
 // [v1533] Instant où app.js commence à s'exécuter, en ms depuis l'ouverture de la page : couvre le téléchargement ET la lecture du code.
 const _BOOT_DEBUT_JS = (()=>{ try{ return (typeof performance!=='undefined' && performance.now) ? Math.round(performance.now()) : null; }catch(_){ return null; } })();
 const APP_MAJ = '« CHEQUE DE CAUTION » DEVIENT « EMPREINTE BANCAIRE ». Ben : « le cheque de caution doit se transformer en empreinte bancaire. Peux-tu changer la mention partout ou apparait cheque de caution ? » ⚠️ CE N ETAIT PAS UN SIMPLE RENOMMAGE : le texte associe decrivait des gestes propres a un CHEQUE — il est « remis », il « n est pas encaisse », il est « restitue ». Une empreinte bancaire se PREND, se DEBITE et s ANNULE. Renommer sans adapter les verbes aurait laisse des clauses incoherentes dans les CGV, un document juridique transmis aux clients. Les VERBES ONT DONC ETE ADAPTES partout : sur la ligne du devis et de la facture (« empreinte prise le jour de la livraison, non debitee, annulee apres retour du materiel »), et dans les trois clauses concernees des CGV — 7.1 (prise a la mise a disposition, non debitee, annulee), 7.2 (aucune empreinte exigee du particulier) et 7.4 (l empreinte pourra etre DEBITEE, et non encaissee). La logique juridique est inchangee : montants dus, complement exigible, surplus restitue, engagement sur l honneur du particulier. LES IDENTIFIANTS DE CODE SONT CONSERVES (CAUTION_CHEQUE, cautionRowHtml, cautionMention) : les renommer toucherait des dizaines de references et des donnees DEJA ENREGISTREES, pour zero gain visible. Seul le texte vu par le client change. Les documents deja emis gardent leur redaction d origine, puisqu ils memorisent leur rendu. Suite v1493 : 27 assertions, dont la verification que le vocabulaire du cheque a bien disparu ; un renommage NAIF (terme change mais verbes conserves) fait rougir 5 assertions. La suite v1492 a suivi le nouveau libelle, son mecanisme etant inchange.';
@@ -7228,10 +7228,17 @@ function openPrintView(htmlDoc, opts){
   const frame = document.getElementById('pvFrame');
   const doc = frame.contentWindow.document;
   doc.open(); doc.write(htmlDoc); doc.close();
-  // [v1534] Copie imprimable dans la page principale, préparée DÈS l'ouverture (logo, QR déjà décodés
-  // au moment du clic). Voir _pvBuildPrintHost. Le bouton « Imprimer » interne au document (barre
-  // .noprint de la facture/du devis) passe lui aussi par ce chemin.
-  try{ _pvBuildPrintHost(htmlDoc); }catch(e){ _pvRemovePrintHost(); swallow(e,'openPrintView/printHost'); }
+  // [v1535] App installée sur l'iPhone : iOS n'imprime plus rien depuis une app de l'écran d'accueil
+  // (voir printPrintView). Le PDF est préparé DÈS l'ouverture, pour que le toucher sur « Imprimer »
+  // puisse ouvrir la feuille de partage tout de suite (iOS l'exige dans le geste même).
+  if(_pvModePdf()){
+    try{ _pvPdfPreparer(htmlDoc, opts.title||'Document'); }catch(e){ swallow(e,'openPrintView/pdf'); }
+  } else {
+    // [v1534] Copie imprimable dans la page principale, préparée DÈS l'ouverture (logo, QR déjà décodés
+    // au moment du clic). Voir _pvBuildPrintHost.
+    try{ _pvBuildPrintHost(htmlDoc); }catch(e){ _pvRemovePrintHost(); swallow(e,'openPrintView/printHost'); }
+  }
+  // Le bouton « Imprimer » interne au document (barre .noprint de la facture/du devis) suit le même chemin.
   try{ frame.contentWindow.print = function(){ printPrintView(); }; }catch(e){swallow(e,'openPrintView/printBind')}
   // [v1186] Nom de fichier PDF = numéro du document. À l'enregistrement PDF (iOS/Safari),
   // le nom proposé vient du document.title de la PAGE HÔTE, pas du <title> de l'iframe.
@@ -7255,11 +7262,273 @@ function printPrintView(){
   // honore à coup sûr depuis un geste), appelé tout de suite dans le clic, sans attente. La feuille
   // imprimée est la copie #pvPrintHost (préparée à l'ouverture) ; tout le reste de l'app est masqué
   // par la règle @media print de index.html. Ancien chemin conservé en repli si la copie manque.
+  //
+  // [v1535] Ben, après la v1534 : « Le bouton est toujours inactif ». La v1534 partait d'une fausse
+  // cause : ce n'est pas l'iframe, c'est l'impression elle-même. Depuis iOS 27, dans une app ouverte
+  // depuis l'écran d'accueil, iOS ignore window.print() en silence — page ou iframe, pas de feuille,
+  // pas d'erreur, pas d'évènement (WebKit bug 327504). Safari en onglet imprime toujours.
+  // Donc, dans l'app installée sur iPhone/iPad : on n'appelle plus print(). Le document est converti
+  // en PDF A4 (préparé à l'ouverture de l'aperçu) et remis à la feuille de partage d'iOS, qui propose
+  // « Imprimer », « Enregistrer dans Fichiers », Mail… Ailleurs (Safari en onglet, Mac, PC) : inchangé.
+  if(_pvModePdf()){ _pvImprimerViaPdf(); return; }
   if(document.getElementById('pvPrintHost')){
     try{ window.print(); return; }catch(e){ swallow(e,'printPrintView/host'); }
   }
   try{ frame.contentWindow.focus(); frame.contentWindow.print(); }
   catch(e){ try{ window.print(); }catch(e){swallow(e,'printPrintView')} }
+}
+// ════════════════════════════════════════════════════════════════════════════
+// [v1535] IMPRESSION DEPUIS L'APP INSTALLÉE SUR iPHONE : PAR UN PDF ET LA FEUILLE DE PARTAGE.
+// ════════════════════════════════════════════════════════════════════════════
+// App ouverte depuis l'écran d'accueil d'un iPhone/iPad (mode « standalone ») : seul cas où iOS
+// ignore print(). Un Mac (pas d'écran tactile) ou Safari en onglet impriment normalement.
+function _pvModePdf(){
+  try{
+    if(window._pvForcerPdf === true) return true;     // essais / diagnostic
+    const installee = navigator.standalone === true || !!(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+    const ua = navigator.userAgent || '';
+    const appareilIos = /iP(hone|ad|od)/.test(ua) || (/Macintosh/.test(ua) && (navigator.maxTouchPoints||0) > 1);
+    return installee && appareilIos;
+  }catch(e){ return false; }
+}
+let _pvPdf = null;   // { fichier, erreur, promesse } du document affiché dans l'aperçu
+function _pvNomFichierPdf(titre){
+  const base = String(titre||'Document').replace(/[\\/:*?"<>|]+/g,'-').replace(/\s+/g,' ').trim() || 'Document';
+  return base + '.pdf';
+}
+function _pvPdfPreparer(htmlDoc, titre){
+  const etat = { fichier:null, erreur:null, promesse:null };
+  _pvPdf = etat;
+  _pvPdfBouton('prepa');
+  etat.promesse = docHtmlVersPdfBlob(htmlDoc).then(blob => {
+    etat.fichier = new File([blob], _pvNomFichierPdf(titre), { type:'application/pdf' });
+    if(_pvPdf === etat){ _pvPdfBouton('pret'); if(etat.attend) _pvPdfBandeau('PDF prêt ✓ — touche « Imprimer »'); }
+    return etat.fichier;
+  }).catch(e => {
+    etat.erreur = e; swallow(e, 'docHtmlVersPdfBlob');
+    if(_pvPdf === etat){ _pvPdfBouton('pret'); _pvPdfBandeau('⚠️ PDF impossible : ' + ((e && e.message) || 'erreur')); }
+    return null;
+  });
+  return etat;
+}
+// Libellé du bouton de la barre : l'état du PDF se voit là (les toasts passent sous l'aperçu).
+function _pvPdfBouton(etape){
+  const b = document.querySelector('#printView .pv-print'); if(!b) return;
+  b.textContent = etape === 'prepa' ? '⏳ PDF…' : '🖨 Imprimer';
+}
+function _pvPdfBandeau(texte){
+  const wrap = document.getElementById('printView'); if(!wrap) return;
+  let el = document.getElementById('pvPdfBandeau');
+  if(!el){
+    el = document.createElement('div'); el.id = 'pvPdfBandeau';
+    el.style.cssText = 'background:#E8DDCD;color:#490F25;font-weight:600;font-size:.86rem;text-align:center;padding:9px 12px;flex-shrink:0';
+    const barre = wrap.querySelector('.pv-bar');
+    if(barre && barre.nextSibling) wrap.insertBefore(el, barre.nextSibling); else wrap.appendChild(el);
+  }
+  el.textContent = texte;
+}
+// Appelé DANS le toucher : navigator.share doit partir tout de suite, sans attente (exigence iOS).
+function _pvImprimerViaPdf(){
+  const etat = _pvPdf;
+  if(!etat){ _pvPdfBandeau('Aperçu introuvable — ferme et rouvre le document'); return; }
+  if(etat.fichier){ _pvPartagerPdf(etat.fichier); return; }
+  if(etat.erreur){ _pvPdfBandeau('⚠️ PDF impossible : ' + ((etat.erreur && etat.erreur.message) || 'erreur')); return; }
+  etat.attend = true;
+  _pvPdfBandeau('⏳ Le PDF se prépare… touche à nouveau « Imprimer » dans un instant');
+}
+function _pvPartagerPdf(fichier){
+  try{
+    if(navigator.canShare && navigator.canShare({ files:[fichier] })){
+      navigator.share({ files:[fichier], title: fichier.name.replace(/\.pdf$/i,'') }).then(() => {
+        _pvPdfBandeau('');
+        const el = document.getElementById('pvPdfBandeau'); if(el) el.remove();
+      }).catch(e => {
+        if(e && e.name === 'AbortError') return;              // feuille de partage refermée par Ben
+        swallow(e, '_pvPartagerPdf');
+        _pvPdfBandeau('Touche à nouveau « Imprimer » pour ouvrir le partage');
+      });
+      return;
+    }
+  }catch(e){ swallow(e, '_pvPartagerPdf/canShare'); }
+  // Pas de partage de fichier possible : téléchargement (iOS ouvre l'aperçu PDF, avec son bouton Partager).
+  try{
+    const url = URL.createObjectURL(fichier);
+    const a = document.createElement('a'); a.href = url; a.download = fichier.name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  }catch(e){ swallow(e, '_pvPartagerPdf/telechargement'); _pvPdfBandeau('⚠️ Impossible d\'ouvrir le PDF'); }
+}
+
+// DOCUMENT HTML → PDF A4, SANS print() ET SANS foreignObject.
+// L'ancien htmlToPdfBlob passe par une image SVG <foreignObject> : Safari « salit » alors le canevas
+// (SecurityError à l'export) — d'où son abandon. Ici, le navigateur met le document en page dans un
+// cadre caché de la largeur d'une A4 (règles « print » du document actives), puis on REDESSINE ce
+// qu'il a calculé : fonds, bordures, images, et chaque mot à sa position exacte, avec les vraies
+// polices. Rien de tout ça ne salit un canevas. Découpage en pages entre deux lignes, jamais au
+// milieu d'une ligne, d'une rangée de tableau ou d'un bloc « break-inside:avoid ».
+const PV_A4_W = 793.7, PV_A4_H = 1122.5, PV_MARGE_SUITE = 45;   // px CSS (96/pouce) ; marge ≈ 12 mm
+function _pvHtmlPourPdf(html){
+  return String(html||'')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/@media\s+screen/gi, '@media not all')     // l'aperçu écran (fond gris, largeur mobile) ne s'applique pas
+    .replace(/@media\s+print/gi, '@media all');         // la mise en page d'impression, si
+}
+// Pages [haut, bas, marge du haut] : coupe la plus basse possible qui ne tranche aucun « atome ».
+function _pvDecouperPages(hauteur, atomes){
+  const pages = []; let haut = 0;
+  while(haut < hauteur - 1 && pages.length < 60){
+    const marge = pages.length ? PV_MARGE_SUITE : 0;
+    if(hauteur - haut <= PV_A4_H - marge + 0.5){ pages.push([haut, hauteur, marge]); break; }
+    const utile = PV_A4_H - marge - PV_MARGE_SUITE;
+    let coupe = haut + utile, bouge = true, garde = 0;
+    while(bouge && garde++ < 1000){
+      bouge = false;
+      for(const [a, b] of atomes){
+        if(a < coupe - 0.5 && b > coupe + 0.5 && (b - a) < utile && a > haut + 0.5){ coupe = a; bouge = true; }
+      }
+    }
+    if(coupe <= haut + 60) coupe = haut + utile;      // rien de propre : coupe franche plutôt qu'une page vide
+    pages.push([haut, coupe, marge]); haut = coupe;
+  }
+  return pages;
+}
+function _pvChemin(ctx, x, y, w, h, rad){
+  const r = (rad||[0,0,0,0]).map(v => Math.max(0, Math.min(v, w/2, h/2)));
+  if(r.some(v => v > 0) && typeof ctx.roundRect === 'function'){ ctx.roundRect(x, y, w, h, r); }
+  else ctx.rect(x, y, w, h);
+}
+async function docHtmlVersPdfBlob(htmlDoc, opts){
+  opts = opts || {};
+  const ECH = opts.echelle || 2.5;                    // ≈ 240 ppp : net à l'impression, ~1 Mo la page
+  const cadre = document.createElement('iframe');
+  cadre.setAttribute('aria-hidden', 'true'); cadre.tabIndex = -1;
+  cadre.style.cssText = 'position:fixed;left:-12000px;top:0;width:794px;height:1123px;border:0;opacity:0;pointer-events:none;z-index:-1';
+  document.body.appendChild(cadre);
+  try{
+    const win = cadre.contentWindow, doc = win.document;
+    doc.open(); doc.write(_pvHtmlPourPdf(htmlDoc)); doc.close();
+    await new Promise(ok => { if(doc.readyState === 'complete') return ok(); win.addEventListener('load', ok, { once:true }); setTimeout(ok, 4000); });
+    if(doc.body) void doc.body.offsetHeight;
+    if(doc.fonts){
+      try{ await Promise.all(Array.from(doc.fonts).map(f => f.load().catch(() => null))); await doc.fonts.ready; }catch(e){ swallow(e, 'docHtmlVersPdfBlob/polices'); }
+    }
+    await Promise.all(Array.from(doc.images).map(im => (im.complete && im.naturalWidth)
+      ? (im.decode ? im.decode().catch(() => null) : null)
+      : new Promise(ok => { im.addEventListener('load', ok, { once:true }); im.addEventListener('error', ok, { once:true }); setTimeout(ok, 4000); })));
+
+    // 1) Relevé de ce que le navigateur a mis en page.
+    const ops = [], atomes = [];
+    let basContenu = 0;
+    const visibleC = c => !!c && c !== 'transparent' && !/^rgba\(.*,\s*0(\.0+)?\)$/.test(c);
+    const rayons = cs => ['borderTopLeftRadius','borderTopRightRadius','borderBottomRightRadius','borderBottomLeftRadius'].map(k => parseFloat(cs[k]) || 0);
+    const majuscules = (t, tt) => tt === 'uppercase' ? t.toUpperCase() : tt === 'lowercase' ? t.toLowerCase() : tt === 'capitalize' ? t.charAt(0).toUpperCase() + t.slice(1) : t;
+    const texte = (noeud, cs, a) => {
+      const s = noeud.nodeValue; if(!s || !/\S/.test(s)) return;
+      const police = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+      const esp = cs.letterSpacing === 'normal' ? '0px' : cs.letterSpacing;
+      const taille = parseFloat(cs.fontSize) || 13;
+      const pose = (t, q) => {
+        ops.push({ t:'txt', s:majuscules(t, cs.textTransform), x:q.left, y:q.top, h:q.height, police, taille, esp, c:cs.color, a });
+        atomes.push([q.top - 1, q.bottom + 1]); basContenu = Math.max(basContenu, q.bottom);
+      };
+      const re = /\S+/g; let m;
+      while((m = re.exec(s))){
+        const rg = doc.createRange(); rg.setStart(noeud, m.index); rg.setEnd(noeud, m.index + m[0].length);
+        const rects = Array.from(rg.getClientRects()).filter(q => q.width > 0 && q.height > 0);
+        if(rects.length === 1){ pose(m[0], rects[0]); continue; }
+        if(!rects.length) continue;
+        // Mot coupé sur deux lignes : lettre par lettre.
+        let k = m.index;
+        for(const ch of m[0]){
+          const r2 = doc.createRange(); r2.setStart(noeud, k); r2.setEnd(noeud, k + ch.length); k += ch.length;
+          const q = Array.from(r2.getClientRects()).find(z => z.width > 0); if(q) pose(ch, q);
+        }
+      }
+    };
+    const visiter = (el, alpha) => {
+      const cs = win.getComputedStyle(el);
+      if(cs.display === 'none') return;
+      const tag = el.tagName;
+      if(tag === 'SCRIPT' || tag === 'STYLE' || tag === 'HEAD' || tag === 'TITLE' || tag === 'META' || tag === 'LINK') return;
+      const a = alpha * (cs.opacity === '' ? 1 : (parseFloat(cs.opacity) || 0));
+      const vis = cs.visibility !== 'hidden' && a > 0.001;
+      const r = el.getBoundingClientRect();
+      if(vis && r.width > 0 && r.height > 0){
+        const rad = rayons(cs);
+        if(visibleC(cs.backgroundColor)) ops.push({ t:'fond', x:r.left, y:r.top, w:r.width, h:r.height, c:cs.backgroundColor, rad, a });
+        const bw = ['Top','Right','Bottom','Left'].map(k => (cs['border'+k+'Style'] === 'none' || cs['border'+k+'Style'] === 'hidden') ? 0 : (parseFloat(cs['border'+k+'Width']) || 0));
+        const bc = ['Top','Right','Bottom','Left'].map(k => cs['border'+k+'Color']);
+        const unie = bw.every(w => w === bw[0]) && bc.every(c => c === bc[0]);
+        if(bw[0] > 0 && unie && rad.some(v => v > 0)){
+          if(visibleC(bc[0])) ops.push({ t:'cadre', x:r.left, y:r.top, w:r.width, h:r.height, lw:bw[0], c:bc[0], rad, a });
+        } else {
+          const cotes = [[r.left, r.top, r.width, bw[0]], [r.right - bw[1], r.top, bw[1], r.height], [r.left, r.bottom - bw[2], r.width, bw[2]], [r.left, r.top, bw[3], r.height]];
+          cotes.forEach((q, i) => { if(bw[i] > 0 && visibleC(bc[i])) ops.push({ t:'trait', x:q[0], y:q[1], w:q[2], h:q[3], c:bc[i], a }); });
+        }
+        if(bw.some(w => w > 0) || (visibleC(cs.backgroundColor) && el !== doc.body && el !== doc.documentElement)) basContenu = Math.max(basContenu, r.bottom);
+        if(tag === 'IMG' && el.complete && el.naturalWidth){ ops.push({ t:'img', el, x:r.left, y:r.top, w:r.width, h:r.height, a }); basContenu = Math.max(basContenu, r.bottom); }
+        if(cs.display === 'list-item' && cs.listStyleType && cs.listStyleType !== 'none'){
+          const fs = parseFloat(cs.fontSize) || 13, lh = parseFloat(cs.lineHeight) || fs * 1.3;
+          ops.push({ t:'puce', x:r.left - fs * 0.75, y:r.top + lh / 2, r:fs * 0.16, c:cs.color, a });
+        }
+        if(tag === 'IMG' || tag === 'TR' || cs.breakInside === 'avoid' || cs.pageBreakInside === 'avoid') atomes.push([r.top, r.bottom]);
+      }
+      const coupe = (cs.overflow === 'hidden' || cs.overflowX === 'hidden' || cs.overflowY === 'hidden') && r.width > 0 && r.height > 0;
+      if(coupe) ops.push({ t:'clip', x:r.left, y:r.top, w:r.width, h:r.height, rad:rayons(cs) });
+      if(tag !== 'svg' && tag !== 'SVG'){
+        for(const n of el.childNodes){
+          if(n.nodeType === 3){ if(vis) texte(n, cs, a); }
+          else if(n.nodeType === 1) visiter(n, a);
+        }
+      }
+      if(coupe) ops.push({ t:'/clip' });
+    };
+    visiter(doc.documentElement, 1);
+    if(!ops.some(o => o.t === 'txt' || o.t === 'img')) throw new Error('document vide');
+
+    // 2) Pages.
+    const hauteur = Math.min(Math.max(doc.documentElement.scrollHeight, PV_A4_H), Math.ceil(basContenu) + 8);
+    const pages = _pvDecouperPages(Math.max(hauteur, 1), atomes);
+    if(opts.releve) return { pages, atomes, hauteur, nbOps: ops.length };   // diagnostic / tests
+
+    // 3) Dessin : un canevas par page (iOS limite la taille d'un canevas), créé DANS le cadre pour
+    //    disposer de ses polices.
+    const W = Math.round(PV_A4_W * ECH), H = Math.round(PV_A4_H * ECH);
+    const jpegs = [];
+    for(const [y0, y1, marge] of pages){
+      const cv = doc.createElement('canvas'); cv.width = W; cv.height = H;
+      const ctx = cv.getContext('2d');
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);
+      ctx.save(); ctx.scale(ECH, ECH); ctx.translate(0, marge - y0);
+      // −0,6 px : un fond qui commence pile à la coupe laisserait sinon un liseré en bas de page (anticrénelage).
+      ctx.beginPath(); ctx.rect(0, y0, PV_A4_W, Math.max(1, y1 - y0 - 0.6)); ctx.clip();
+      for(const o of ops){
+        if(o.t === 'clip'){ ctx.save(); ctx.beginPath(); _pvChemin(ctx, o.x, o.y, o.w, o.h, o.rad); ctx.clip(); continue; }
+        if(o.t === '/clip'){ ctx.restore(); continue; }
+        ctx.globalAlpha = o.a;
+        if(o.t === 'fond'){ ctx.fillStyle = o.c; ctx.beginPath(); _pvChemin(ctx, o.x, o.y, o.w, o.h, o.rad); ctx.fill(); }
+        else if(o.t === 'trait'){ ctx.fillStyle = o.c; ctx.fillRect(o.x, o.y, o.w, o.h); }
+        else if(o.t === 'cadre'){ ctx.strokeStyle = o.c; ctx.lineWidth = o.lw; ctx.beginPath(); _pvChemin(ctx, o.x + o.lw/2, o.y + o.lw/2, o.w - o.lw, o.h - o.lw, o.rad.map(v => Math.max(0, v - o.lw/2))); ctx.stroke(); }
+        else if(o.t === 'img'){ try{ ctx.drawImage(o.el, o.x, o.y, o.w, o.h); }catch(e){ swallow(e, 'docHtmlVersPdfBlob/img'); } }
+        else if(o.t === 'puce'){ ctx.fillStyle = o.c; ctx.beginPath(); ctx.arc(o.x, o.y, o.r, 0, Math.PI * 2); ctx.fill(); }
+        else if(o.t === 'txt'){
+          ctx.font = o.police; ctx.fillStyle = o.c; ctx.textBaseline = 'alphabetic';
+          if('letterSpacing' in ctx) ctx.letterSpacing = o.esp;
+          const mt = ctx.measureText(o.s);
+          const asc = (mt.fontBoundingBoxAscent != null) ? mt.fontBoundingBoxAscent : o.taille * 0.8;
+          const desc = (mt.fontBoundingBoxDescent != null) ? mt.fontBoundingBoxDescent : o.taille * 0.2;
+          ctx.fillText(o.s, o.x, o.y + (o.h - (asc + desc)) / 2 + asc);
+        }
+      }
+      ctx.globalAlpha = 1;
+      ctx.restore();
+      jpegs.push(_dataURLtoBytes(cv.toDataURL('image/jpeg', 0.9)));
+      cv.width = cv.height = 0;   // rend la mémoire tout de suite (iOS est strict)
+    }
+    return new Blob([_buildMultiImagePDF(jpegs, 210, 297, W, H)], { type:'application/pdf' });
+  } finally {
+    cadre.remove();
+  }
 }
 // [v1534] COPIE IMPRIMABLE DU DOCUMENT DANS LA PAGE PRINCIPALE.
 // Le document (facture, devis, CGV…) est un HTML complet avec ses propres styles (`body`, `*`,
@@ -7329,6 +7598,7 @@ function closePrintView(opts){
   const wrap = document.getElementById('printView');
   if(wrap){ wrap.remove(); }
   _pvRemovePrintHost();
+  _pvPdf = null;   // [v1535] un PDF encore en préparation pour cet aperçu est abandonné
   document.body.style.overflow='';
   // [v1186] restaurer le titre hôte mémorisé à l'ouverture de l'aperçu.
   try{ if(_pvPrevTitle!==null){ document.title = _pvPrevTitle; _pvPrevTitle=null; _pvWantTitle=''; } }catch(e){swallow(e,'closePrintView')}
