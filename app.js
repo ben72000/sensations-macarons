@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1533'; // suite : voir tests/v1533-premiere-ouverture.test.js
+const APP_VERSION = 'v1534'; // suite : voir tests/v1534-impression-ios.test.js
 // [v1533] Instant où app.js commence à s'exécuter, en ms depuis l'ouverture de la page : couvre le téléchargement ET la lecture du code.
 const _BOOT_DEBUT_JS = (()=>{ try{ return (typeof performance!=='undefined' && performance.now) ? Math.round(performance.now()) : null; }catch(_){ return null; } })();
 const APP_MAJ = '« CHEQUE DE CAUTION » DEVIENT « EMPREINTE BANCAIRE ». Ben : « le cheque de caution doit se transformer en empreinte bancaire. Peux-tu changer la mention partout ou apparait cheque de caution ? » ⚠️ CE N ETAIT PAS UN SIMPLE RENOMMAGE : le texte associe decrivait des gestes propres a un CHEQUE — il est « remis », il « n est pas encaisse », il est « restitue ». Une empreinte bancaire se PREND, se DEBITE et s ANNULE. Renommer sans adapter les verbes aurait laisse des clauses incoherentes dans les CGV, un document juridique transmis aux clients. Les VERBES ONT DONC ETE ADAPTES partout : sur la ligne du devis et de la facture (« empreinte prise le jour de la livraison, non debitee, annulee apres retour du materiel »), et dans les trois clauses concernees des CGV — 7.1 (prise a la mise a disposition, non debitee, annulee), 7.2 (aucune empreinte exigee du particulier) et 7.4 (l empreinte pourra etre DEBITEE, et non encaissee). La logique juridique est inchangee : montants dus, complement exigible, surplus restitue, engagement sur l honneur du particulier. LES IDENTIFIANTS DE CODE SONT CONSERVES (CAUTION_CHEQUE, cautionRowHtml, cautionMention) : les renommer toucherait des dizaines de references et des donnees DEJA ENREGISTREES, pour zero gain visible. Seul le texte vu par le client change. Les documents deja emis gardent leur redaction d origine, puisqu ils memorisent leur rendu. Suite v1493 : 27 assertions, dont la verification que le vocabulaire du cheque a bien disparu ; un renommage NAIF (terme change mais verbes conserves) fait rougir 5 assertions. La suite v1492 a suivi le nouveau libelle, son mecanisme etant inchange.';
@@ -7228,6 +7228,11 @@ function openPrintView(htmlDoc, opts){
   const frame = document.getElementById('pvFrame');
   const doc = frame.contentWindow.document;
   doc.open(); doc.write(htmlDoc); doc.close();
+  // [v1534] Copie imprimable dans la page principale, préparée DÈS l'ouverture (logo, QR déjà décodés
+  // au moment du clic). Voir _pvBuildPrintHost. Le bouton « Imprimer » interne au document (barre
+  // .noprint de la facture/du devis) passe lui aussi par ce chemin.
+  try{ _pvBuildPrintHost(htmlDoc); }catch(e){ _pvRemovePrintHost(); swallow(e,'openPrintView/printHost'); }
+  try{ frame.contentWindow.print = function(){ printPrintView(); }; }catch(e){swallow(e,'openPrintView/printBind')}
   // [v1186] Nom de fichier PDF = numéro du document. À l'enregistrement PDF (iOS/Safari),
   // le nom proposé vient du document.title de la PAGE HÔTE, pas du <title> de l'iframe.
   if(opts.title){
@@ -7242,12 +7247,88 @@ function printPrintView(){
   if(!frame){ return; }
   // [v1186] réappliquer le titre hôte juste avant l'impression (iOS le relit au print()).
   try{ if(_pvPrevTitle!==null && _pvWantTitle){ document.title = _pvWantTitle; } }catch(e){swallow(e,'printPrintView')}
+  // [v1534] Ben : « Depuis la dernière mise à jour iOS je n'arrive plus à imprimer les factures. Le
+  // bouton semble inactif. » Avant : on demandait à l'IFRAME d'aperçu de s'imprimer
+  // (frame.contentWindow.print()). Depuis la mise à jour, iOS ignore cet appel EN SILENCE dans
+  // l'app installée : pas d'erreur, donc le repli window.print() du catch n'était jamais atteint.
+  // Maintenant : c'est la PAGE PRINCIPALE qui s'imprime (window.print(), le seul appel qu'iOS
+  // honore à coup sûr depuis un geste), appelé tout de suite dans le clic, sans attente. La feuille
+  // imprimée est la copie #pvPrintHost (préparée à l'ouverture) ; tout le reste de l'app est masqué
+  // par la règle @media print de index.html. Ancien chemin conservé en repli si la copie manque.
+  if(document.getElementById('pvPrintHost')){
+    try{ window.print(); return; }catch(e){ swallow(e,'printPrintView/host'); }
+  }
   try{ frame.contentWindow.focus(); frame.contentWindow.print(); }
   catch(e){ try{ window.print(); }catch(e){swallow(e,'printPrintView')} }
+}
+// [v1534] COPIE IMPRIMABLE DU DOCUMENT DANS LA PAGE PRINCIPALE.
+// Le document (facture, devis, CGV…) est un HTML complet avec ses propres styles (`body`, `*`,
+// `.page`, `.total`…) : posé tel quel dans l'app, il déformerait l'app et l'app le déformerait.
+// D'où une racine fantôme (shadow DOM) : ses styles n'en sortent pas, ceux de l'app n'y entrent
+// pas. Trois ajustements, parce que certaines règles n'ont pas de sens dans une racine fantôme :
+//   • `html` / `body` → `.pvh-html` / `.pvh-body` (enveloppes qui jouent leur rôle) ;
+//   • @font-face → au niveau du document (iOS ignore les polices déclarées dans une racine
+//     fantôme), familles renommées `pvh-…` pour ne JAMAIS remplacer les polices de l'app ;
+//   • @page (format A4, marges) → au niveau du document, sous @media print.
+// Les scripts et la barre « .noprint » ne sont pas copiés. Invisible à l'écran (display:none).
+function _pvCssPourCopie(cssBrut){
+  let css = String(cssBrut||'');
+  const fontes = [], pages = [], familles = new Set();
+  // Une police embarquée est en base64 : jamais d'accolade dedans → [^}]* suffit.
+  css = css.replace(/@font-face\s*\{[^}]*\}/g, m => { fontes.push(m); return ''; });
+  css = css.replace(/@page\s*\{[^}]*\}/g, m => { pages.push(m); return ''; });
+  fontes.forEach(f => { const m = /font-family\s*:\s*(['"]?)([^;'"}]+)\1/.exec(f); if(m) familles.add(m[2].trim()); });
+  let fontesDoc = fontes.join('\n');
+  familles.forEach(nom => {
+    const re = new RegExp(`(['"]?)${nom.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}\\1(?=\\s*[,;}!)])`, 'g');
+    const nv = `'pvh-${nom.replace(/[^A-Za-z0-9_-]/g,'')}'`;
+    fontesDoc = fontesDoc.replace(re, nv);
+    css = css.replace(re, nv);
+  });
+  // `html` / `body` utilisés comme SÉLECTEURS (jamais dans une valeur : précédés d'un début de
+  // sélecteur, suivis d'un caractère de sélecteur).
+  css = css.replace(/(^|[\s,{}>+~(])(html|body)(?=[\s,{.:#\[>+~)])/g, (m, avant, tag) => avant + (tag==='html' ? '.pvh-html' : '.pvh-body'));
+  const docCss = fontesDoc + (pages.length ? `\n@media print{\n${pages.join('\n')}\n}` : '');
+  return { shadowCss: css, docCss };
+}
+function _pvRemovePrintHost(){
+  const h = document.getElementById('pvPrintHost'); if(h) h.remove();
+  const s = document.getElementById('pvPrintHostCss'); if(s) s.remove();
+}
+function _pvBuildPrintHost(htmlDoc){
+  _pvRemovePrintHost();
+  if(typeof DOMParser==='undefined') return null;
+  const src = new DOMParser().parseFromString(String(htmlDoc||''), 'text/html');
+  if(!src || !src.body) return null;
+  const host = document.createElement('div');
+  host.id = 'pvPrintHost';
+  if(typeof host.attachShadow!=='function') return null;   // sans racine fantôme : ancien chemin
+  const cssBrut = Array.from(src.querySelectorAll('style')).map(s => s.textContent).join('\n');
+  const { shadowCss, docCss } = _pvCssPourCopie(cssBrut);
+  src.querySelectorAll('script, .noprint, style, link, meta, title').forEach(n => n.remove());
+  const root = host.attachShadow({ mode:'open' });
+  const st = document.createElement('style');
+  // Base de l'enveloppe : ce que le navigateur donne d'ordinaire à <html>/<body> d'une page neuve.
+  st.textContent = `:host{all:initial;display:block}\n.pvh-html,.pvh-body{display:block;margin:0;color:#000;background:#fff;font-family:serif;font-size:16px;line-height:normal;text-align:left;-webkit-text-size-adjust:100%}\n.pvh-body{-webkit-print-color-adjust:exact;print-color-adjust:exact}\n` + shadowCss;
+  root.appendChild(st);
+  const env = document.createElement('div'); env.className = 'pvh-html';
+  if(src.documentElement && src.documentElement.getAttribute('lang')) env.setAttribute('lang', src.documentElement.getAttribute('lang'));
+  const corps = document.createElement('div'); corps.className = 'pvh-body';
+  const bodyCls = src.body.getAttribute('class'); if(bodyCls) corps.className += ' ' + bodyCls;
+  const bodySty = src.body.getAttribute('style'); if(bodySty) corps.setAttribute('style', bodySty);
+  Array.from(src.body.childNodes).forEach(n => corps.appendChild(document.importNode(n, true)));
+  env.appendChild(corps); root.appendChild(env);
+  if(docCss.trim()){
+    const ds = document.createElement('style'); ds.id = 'pvPrintHostCss'; ds.textContent = docCss;
+    document.head.appendChild(ds);
+  }
+  document.body.appendChild(host);
+  return host;
 }
 function closePrintView(opts){
   const wrap = document.getElementById('printView');
   if(wrap){ wrap.remove(); }
+  _pvRemovePrintHost();
   document.body.style.overflow='';
   // [v1186] restaurer le titre hôte mémorisé à l'ouverture de l'aperçu.
   try{ if(_pvPrevTitle!==null){ document.title = _pvPrevTitle; _pvPrevTitle=null; _pvWantTitle=''; } }catch(e){swallow(e,'closePrintView')}

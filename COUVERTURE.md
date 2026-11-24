@@ -7316,3 +7316,34 @@ Suite : `tests/v1531-tabbar-recalage.test.js` (11 assertions).
 - Cause probable : viewport de mise en page iOS désynchronisé du viewport visible (`position:fixed;bottom:0` suit le premier). Non reproductible hors iPhone.
 - `tabbarEcartBas` (pur) mesure l'écart `innerHeight` vs `visualViewport` ; `tabbarRecaler` le compense sur `bottom` (rien si écart ≤ 2 px ou zoom au pincement), déclenché par resize/scroll du viewport visuel, focus, pageshow, visibilité, rotation.
 - CSS : `.tabbar` promue en couche GPU (`translateZ(0)`).
+
+## v1532 — Base au réveil : « An internal error was encountered in the Indexed Database server »
+Suite : `tests/v1532-base-reveil-reprises.test.js` (47 assertions).
+- Constat (journal santé, 16/11 00:07, écran calendrier) : « entretien reporté » 2×, « GLOBAL promesse » 2×, « majLiensTrace » 4×, même message, tous classés « mineur ».
+- Cause : la v1520 rouvrait et rejouait UNE fois, aussitôt ; le serveur IndexedDB d'iOS met quelques secondes à revenir après la veille (WebKit bug 197050). Les incidents ont été écrits quelques secondes plus tard : panne passagère, reprise trop pressée. La sonde de réveil (transaction vide) ne voyait pas cette panne. « GLOBAL » + erreur de base classé mineur.
+- dexie.min.js : reprises espacées (0 / 0,4 / 1,2 / 2,5 s), connexion neuve à chaque fois ; écritures idempotentes rejouées (update, delete, bulkDelete, clear, put/bulkPut avec clé), jamais add/bulkAdd/put sans clé ; pas de multiplication entre couches imbriquées (`_smRepriseEpuisee`) ; erreur interne reconnue au message (AbortError compris) ; transaction explicite recréée si l'erreur survient à la création ; sonde = vraie lecture, les opérations et transactions l'attendent ; évènements `panne` / `retablie`.
+- app.js : `_smGravite(ctx, msg)` (GLOBAL + message de base → important) ; bandeau « Recharger » sur panne durable, retiré au rétablissement ; trace importante « dexie : base indisponible après reprises » ; pile affichée dans l'écran santé (« où c'est arrivé »).
+- Preuve par mutation : dexie v1531 → 21 rouges ; app.js v1531 → 8 rouges.
+- Au passage : tests/run-all.js ne se chargeait plus (virgules manquantes après v1529 et v1530) — corrigé.
+
+## v1533 — Première ouverture de la journée : l'app rame
+Suite : `tests/v1533-premiere-ouverture.test.js` (35 assertions).
+- Constat (Ben) : « l'application continue à ramer terriblement à la première ouverture de la journée ».
+- Ce qui ne tourne qu'au premier démarrage du jour : la sauvegarde automatique. Elle relit les 46 tables et sérialise toute la base, puis purgeait l'historique avec `backups.orderBy('date').reverse().toArray()` : les 21 sauvegardes (chacune = la base entière) rechargées juste pour leurs numéros. Le moteur maison n'utilise aucun index (toute requête relit la table).
+- Service worker : le code (app.js ~6,8 Mo) attendait le réseau sans limite ; l'installation échouait en bloc si un fichier listé manquait (`qr.min.js` listé, la page charge `qr_min.js` et `html5-qrcode.min.js`, non listés).
+- dexie.min.js : `Table.clesSelonIndex(index)` — clés via IDBIndex.getAllKeys, ordre identique ; repli sur l'ancien chemin si index absent, getAllKeys absent ou enregistrement sans valeur d'index.
+- app.js : purge de `snapshotBackup` par les clés seules ; `runConsistencyCheck(false)` + `autoDailyBackup()` exécutés par `bootQuandAuRepos` (15 s sans geste, app visible ; plafond 2 min) ; mesure du démarrage (`bootEtape`, `bootJalon`, `sm_bootProfils`, 10 derniers) affichée dans Santé de l'app (« ⏱ Démarrages récents »). Les 21 étapes de préparation sont inchangées et dans le même ordre (vérifié).
+- service-worker.js : réseau si réponse en < 3 s, sinon copie du cache (mise à jour quand même via waitUntil) ; 4 fichiers essentiels bloquants, les autres mis en cache un par un sans bloquer ; cache v563.
+- Preuve par mutation : rejouée contre la V1532 (env SM_V1532) → 19 rouges.
+- Non traité ici (étape suivante, après mesure sur l'iPhone) : faire utiliser les index par `where().equals()` (141 appels, souvent en boucle).
+
+## v1534 — Factures : le bouton « Imprimer » ne fait plus rien depuis la mise à jour iOS
+Suite : `tests/v1534-impression-ios.test.js` (28 assertions).
+- Constat (Ben) : « Depuis la dernière mise à jour iOS je n'arrive plus à imprimer les factures. Le bouton semble inactif. »
+- Cause : `printPrintView()` appelait `frame.contentWindow.print()` sur l'iframe d'aperçu. iOS ignore désormais cet appel en silence dans l'app installée ; sans exception, le repli `window.print()` du catch n'était jamais atteint. Même chose pour le bouton interne au document (barre « Imprimer / Enregistrer en PDF »), qui imprimait l'iframe.
+- app.js : `_pvBuildPrintHost(html)` pose à l'ouverture de l'aperçu une copie du document dans la page principale (`#pvPrintHost`, racine fantôme, invisible à l'écran) ; `_pvCssPourCopie` adapte ses styles (body/html → enveloppes, @font-face au niveau du document avec familles renommées `pvh-…`, @page sous @media print) ; `printPrintView()` appelle `window.print()` sur la page principale, sans attente ; l'iframe reste l'aperçu écran et le repli ; le `print` de l'iframe est redirigé vers `printPrintView` ; `closePrintView()` retire la copie.
+- index.html : @media print — avec la copie présente, tout le reste masqué, overflow/hauteur libérés (plusieurs pages) ; ancienne règle gardée sans copie.
+- Couvre tout ce qui passe par `openPrintView` : factures (brouillon, figée, régénérée), devis, CGV.
+- Vérifié dans Chromium sans tête, app complète chargée : facture de 14 commandes → 2 pages A4, logo et polices présents, aperçu écran inchangé, copie retirée à la fermeture. Non vérifiable ici : le comportement réel d'iOS (pas d'iPhone dans la session).
+- Preuve par mutation : retirer l'appel à la page principale → 2 rouges.
+- Hors périmètre : les impressions qui ouvrent une nouvelle fenêtre (étiquettes, liste de courses, livre de recettes).

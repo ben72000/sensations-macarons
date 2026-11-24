@@ -17,6 +17,6 @@ check('recalage branché aux évènements visualViewport/focus/pageshow/visibili
 check('le correctif ne peut pas bloquer le boot (try/catch)', /function tabbarRecaler\(\)\{\s*try\{/.test(APP));
 const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
 check('tabbar promue en couche GPU (translateZ)', /\.tabbar\{display:flex;position:fixed[^}]*translateZ\(0\)/.test(html));
-check('APP_VERSION v1531', /const APP_VERSION = 'v1531'/.test(APP));
+check('APP_VERSION >= v1531', (m => !!m && +m[1] >= 1531)(APP.match(/const APP_VERSION = 'v(\d+)';/)));
 console.log(`v1531 — ${pass} assertions OK, ${fail} en échec`);
 if(fail){ failures.forEach(x => console.log('  ✗ ' + x)); process.exit(1); }

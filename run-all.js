@@ -224,9 +224,12 @@ const SUITES = [
   'v1526-cout-coques-au-parfum.test.js',  // v1526 · plus de parfum sur une couleur de coques ; le coût des coques se rattache au parfum de la ganache à l'assemblage
   'v1527-marge-standard-gros.test.js',  // v1527 · accueil : marge nette / macaron standard et / gros macaron côte à côte
   'v1528-base-marge-affichee.test.js',  // v1528 · accueil : « sur N macarons » sous chaque marge nette
-  'v1529-demarrage-base-muette.test.js'  // v1529 · démarrage : une base qui ne répond pas ne fige plus l'app,
-  'v1530-ligne-livraison-offert.test.js'  // v1530 · livraison : ligne distincte, réduction dédiée (€ / %), mention « Offert »,
-  'v1531-tabbar-recalage.test.js'  // v1531 · barre d'onglets : plus de flottement au milieu de l'écran
+  'v1529-demarrage-base-muette.test.js',  // v1529 · démarrage : une base qui ne répond pas ne fige plus l'app,
+  'v1530-ligne-livraison-offert.test.js',  // v1530 · livraison : ligne distincte, réduction dédiée (€ / %), mention « Offert »,
+  'v1531-tabbar-recalage.test.js',  // v1531 · barre d'onglets : plus de flottement au milieu de l'écran
+  'v1533-premiere-ouverture.test.js',  // v1533 · première ouverture du jour : purge sans relire les sauvegardes, tâches lourdes au repos, code servi du cache après 3 s, installation SW tolérante, mesure du démarrage
+  'v1532-base-reveil-reprises.test.js',  // v1532 · base au réveil : reprises espacées, écritures idempotentes rejouées, sonde réelle, panne annoncée, « GLOBAL » + base = important
+  'v1534-impression-ios.test.js'  // v1534 · impression des factures/devis sur iOS : la page principale s'imprime (copie en racine fantôme), plus l'iframe ignorée en silence
 ];
 
 let allOk = true;
