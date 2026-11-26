@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1535'; // suite : voir tests/v1535-impression-ios-pdf.test.js
+const APP_VERSION = 'v1536'; // suite : voir tests/v1536-facture-acompte.test.js
 // [v1533] Instant où app.js commence à s'exécuter, en ms depuis l'ouverture de la page : couvre le téléchargement ET la lecture du code.
 const _BOOT_DEBUT_JS = (()=>{ try{ return (typeof performance!=='undefined' && performance.now) ? Math.round(performance.now()) : null; }catch(_){ return null; } })();
 const APP_MAJ = '« CHEQUE DE CAUTION » DEVIENT « EMPREINTE BANCAIRE ». Ben : « le cheque de caution doit se transformer en empreinte bancaire. Peux-tu changer la mention partout ou apparait cheque de caution ? » ⚠️ CE N ETAIT PAS UN SIMPLE RENOMMAGE : le texte associe decrivait des gestes propres a un CHEQUE — il est « remis », il « n est pas encaisse », il est « restitue ». Une empreinte bancaire se PREND, se DEBITE et s ANNULE. Renommer sans adapter les verbes aurait laisse des clauses incoherentes dans les CGV, un document juridique transmis aux clients. Les VERBES ONT DONC ETE ADAPTES partout : sur la ligne du devis et de la facture (« empreinte prise le jour de la livraison, non debitee, annulee apres retour du materiel »), et dans les trois clauses concernees des CGV — 7.1 (prise a la mise a disposition, non debitee, annulee), 7.2 (aucune empreinte exigee du particulier) et 7.4 (l empreinte pourra etre DEBITEE, et non encaissee). La logique juridique est inchangee : montants dus, complement exigible, surplus restitue, engagement sur l honneur du particulier. LES IDENTIFIANTS DE CODE SONT CONSERVES (CAUTION_CHEQUE, cautionRowHtml, cautionMention) : les renommer toucherait des dizaines de references et des donnees DEJA ENREGISTREES, pour zero gain visible. Seul le texte vu par le client change. Les documents deja emis gardent leur redaction d origine, puisqu ils memorisent leur rendu. Suite v1493 : 27 assertions, dont la verification que le vocabulaire du cheque a bien disparu ; un renommage NAIF (terme change mais verbes conserves) fait rougir 5 assertions. La suite v1492 a suivi le nouveau libelle, son mecanisme etant inchange.';
@@ -1444,10 +1444,10 @@ const VALIDE_SCHEMAS = {
     alertes: { dureeMin:{ min:0 }, tauxHoraire:{ min:0 } }
   },
   documents: {
-    requisCreation: ['type'],                             // devis/facture/avoir : type toujours posé
+    requisCreation: ['type'],                             // devis/facture/avoir/acompte : type toujours posé
     champs: { type:'chaineNonVide', statut:'chaine', numero:'chaine', clientId:'idRef', montant:'nombreFini',
               lignes:'tableau', orderIds:'tableau', createdAt:'horoMs', acompte:'nombreFini' },
-    alertes: { type:{ enum:['devis','facture','avoir'] } }
+    alertes: { type:{ enum:['devis','facture','avoir','acompte'] } }   // [v1536] facture d'acompte
   },
   batches: {
     requisCreation: ['statut'],                           // v29 : {nom, orderIds[], statut, createdAt}
@@ -11992,11 +11992,13 @@ function docStatutLabel(d){
   if(d.type==='devis'){
     return {en_attente:'⏳ En attente', accepte:'✓ Accepté', refuse:'✕ Refusé', expire:'⌛ Expiré'}[d.statut]||d.statut;
   }
+  if(d.type==='acompte') return d.regle ? '🧾 Acompte · réglé' : '🧾 Acompte · à régler';   // [v1536]
   if(d._annulee) return '↩︎ Annulée par avoir';   // [v1522] état dérivé : la facture reste « validée » légalement, mais plus due
   return {brouillon:'📝 Brouillon (à valider)', emise:'🔒 Validée', payee:'🔒 Validée · payée'}[d.statut]||d.statut;
 }
 function docStatutColor(d){
   const map={en_attente:'#d98324', accepte:'#3f7d52', refuse:'#b3261e', expire:'#9a8a82', brouillon:'#b08a3a', emise:'#7a4b82', payee:'#3f7d52'};
+  if(d.type==='acompte') return d.regle ? '#3f7d52' : '#d98324';   // [v1536]
   if(d._annulee) return '#7a4a88';   // [v1522] facture annulée par avoir
   return map[d.statut]||'#9a8a82';
 }
@@ -12169,6 +12171,270 @@ async function avoirConfirm(){
   if(view==='documents') renderDocuments();
   else cmdView(ctx.orderId);
 }
+// ════════════════════════════════════════════════════════════════════════════
+// [v1536] FACTURE D'ACOMPTE.
+// Ben : « Est-ce que sur l'appli c'est possible de générer une facture d'acompte ? » puis « Créer
+// un bouton facture d'acompte ». Jusqu'ici, un acompte n'existait que comme PAIEMENT (saisi sur le
+// devis puis repris sur la commande, ou encaissé depuis la commande) et ne ressortait que sur la
+// facture finale (« Déjà réglé »). Or l'encaissement d'un acompte appelle une facture (art. 289 CGI),
+// y compris en micro-entreprise : un devis accepté n'en tient pas lieu.
+//
+// CHOIX DE CONCEPTION (et pourquoi) :
+//  • Type de document PROPRE : 'acompte'. Pas 'facture' + un drapeau : 27 endroits de l'app filtrent
+//    `type==='facture'` et en déduisent des choses fausses pour un acompte — « la facture de cette
+//    commande » (docFactureVivante : « Facturer » rouvrirait l'acompte au lieu de créer la facture
+//    finale), la resynchronisation du statut sur les paiements de la commande (un acompte de 100 €
+//    deviendrait « non payé » tant que la commande ne l'est pas en entier), le CA facturé (compté deux
+//    fois : l'acompte, puis la facture finale qui reprend tout le montant). Un type à part en est
+//    invisible par construction.
+//  • MÊME NUMÉROTATION LÉGALE que les factures (nextFactureNumeroDefinitif) : une facture d'acompte
+//    est une facture. Le garde-fou anti-régression du compteur et la remise à zéro du compteur
+//    tiennent désormais compte des factures d'acompte.
+//  • Émise DÉFINITIVE d'emblée (comme un avoir) : le formulaire est l'étape de vérification, une
+//    confirmation explicite précède l'attribution du numéro. Inaltérable, non supprimable.
+//  • Hors CA facturé : son montant est repris par la facture finale de la commande (qui la cite).
+//    Le CA encaissé, lui, vit sur les paiements de la commande — inchangé.
+// ════════════════════════════════════════════════════════════════════════════
+function docEstAcompte(d){ return !!d && d.type==='acompte' && d.statut==='emise'; }
+// Factures d'acompte émises pour une commande (PURE).
+function acomptesDeCommande(docs, oid){
+  return (docs||[]).filter(d => docEstAcompte(d) && +d.orderId === +oid)
+    .sort((a,b)=>(a.date||'').localeCompare(b.date||'') || ((+a.id||0)-(+b.id||0)));
+}
+// Paiements de la commande qui n'ont pas encore leur facture d'acompte (PURE). On garde l'INDEX
+// dans o.paiements : une écriture n'y est jamais retirée (les corrections s'ajoutent), il est stable.
+function acomptePaiementsLibres(o, acomptes){
+  const pris = new Set((acomptes||[]).map(a => a.paiementIndex).filter(i => i!=null).map(Number));
+  return ((o && o.paiements) || []).map((p, index) => ({ ...p, index }))
+    .filter(p => p && (+p.montant||0) > 0 && !p.annule && !p.correction && !pris.has(p.index));
+}
+// Ce qu'il reste à facturer en acompte sur la commande (PURE).
+function acompteMaxFacturable(o, acomptes){
+  const deja = money2((acomptes||[]).reduce((s,a)=>s+(+a.montant||0),0));
+  return money2(Math.max(0, (+(o&&o.montant)||0) - deja));
+}
+// Pourquoi on ne peut pas émettre de facture d'acompte sur cette commande ('' = possible) (PURE).
+function acompteRefus(o, factureFinale){
+  if(!o) return 'Commande introuvable';
+  if(typeof estReprise==='function' && estReprise(o)) return 'Commande de reprise : pas de facture d\'acompte';
+  if(o.commandeMereId!=null) return 'Sous-commande : l\'acompte se facture sur la commande mère';
+  if(!((+o.montant||0) > 0)) return 'Commande sans montant';
+  if(factureFinale && factureFinale.type==='facture' && docEstDefinitif(factureFinale)) return 'Cette commande a déjà sa facture validée : un acompte se facture AVANT la facture finale';
+  return '';
+}
+function _acompteClientBloc(client){
+  return client
+    ? `${esc([client.civilite,client.prenom,client.nom].filter(Boolean).join(' ')||client.nom||'')}${client.societe?'<br>'+esc(client.societe):''}${client.adresse?'<br>'+esc(client.adresse):''}${client.tel?'<br>Tél : '+esc(client.tel):''}${client.email?'<br>'+esc(client.email):''}`
+    : 'Client de passage';
+}
+// HTML de la facture d'acompte. Mêmes styles, en-tête, pied et mentions légales que les factures.
+// p : { e, client, o, devisNumero, numero, dateISO, montant, dejaFacture, regle, paiement:{date,moyen} }
+function factureAcompteHtml(p){
+  const e = p.e || {}, o = p.o || {};
+  const montant = money2(+p.montant||0), dejaFacture = money2(+p.dejaFacture||0);
+  const totalCmd = money2(+o.montant||0);
+  const pct = totalCmd>0 ? Math.round(montant/totalCmd*1000)/10 : 0;
+  const resteApres = money2(Math.max(0, totalCmd - dejaFacture - montant));
+  // Rappel de la commande : même section que sur la facture finale (prix BRUT + remises récapitulées).
+  const lignes = orderToLines(o);
+  const frais = +o.fraisLivraison||0;
+  const R = docRabaisTotal(lignes, o.persoMacarons, money2(totalCmd - frais), o, o.persoLogoNb, o.forfaitCreationNb);
+  const rows = factRowsHtml(lignes, true) + cautionRowHtml(lignes, o);
+  const livPrevue = o.dateEvenement || '';
+  const regle = !!p.regle, pay = p.paiement || {};
+  return `<!doctype html><html lang="fr"><head><meta charset="utf-8">
+   <meta name="viewport" content="width=device-width, initial-scale=1">
+   <meta name="format-detection" content="telephone=no, date=no, email=no, address=no">
+   <title>Facture d'acompte ${esc(p.numero||'')}</title>
+   ${FACT_STYLE}</head><body>
+   <div class="barre noprint"><button onclick="window.print()">🖨 Imprimer / Enregistrer en PDF</button></div>
+   <div class="page">
+     <div class="entete">
+       <img class="logo" src="${FACT_LOGO}" alt="logo">
+       <div class="em">
+         ${[e.exploitant?esc(e.exploitant):'', e.adresse?esc(e.adresse):'', e.cpville?esc(e.cpville):'', e.tel?'Tél. '+esc(e.tel):'', e.email?esc(e.email):'', e.siret?'SIRET '+esc(e.siret):'']
+           .filter(Boolean).map(l=>`<div class="em-l">${l}</div>`).join('')}
+       </div>
+     </div>
+     <div class="corps">
+       <div class="ftitre">Facture d'acompte</div>
+       <div class="ftitre-rule"></div>
+       <div class="meta">
+         <div class="bloc"><div class="lbl">Facturé à</div>${_acompteClientBloc(p.client)}</div>
+         <div class="bloc" style="text-align:right">
+           <div class="lbl">Détails</div>
+           Facture n° : <b>${esc(p.numero||'')}</b><br>
+           Date d'émission : ${fmtDate(p.dateISO)}<br>
+           Commande n° ${esc(orderNumber(o))} du ${fmtDate(o.date)}<br>
+           ${p.devisNumero ? `Devis accepté n° ${esc(p.devisNumero)}<br>` : ''}
+           ${livPrevue ? `Livraison prévue le ${fmtDate(livPrevue)}<br>` : ''}
+         </div>
+       </div>
+       <div class="meta-rule"></div>
+       <div class="cmd-section">
+         <div class="cmd-head"><span class="cmd-ref">Rappel de la commande ${esc(orderNumber(o))}${cmdEventBadge(o)}</span><span class="cmd-date">${fmtDate(o.date)||''}</span></div>
+         <div class="cmd-body"><table class="cmd-table"><tbody>
+           ${rows||'<tr><td>—</td><td class="mt"></td></tr>'}
+           ${factPersoLigne(o.persoMacarons, o.persoRemiseEur, true, o)}
+           ${factLogoLignes(o.persoLogoNb, o.forfaitCreationNb, o)}
+           ${R.rabais>0?`<tr class="tc-brut"><td>Total commande sans réduction</td><td class="mt">${euro(R.brutAbsolu)}</td></tr><tr class="tc-remise"><td>Total des remises${R.pct>0?` (−${R.pct}%)`:''}</td><td class="mt">−${euro(R.rabais)}</td></tr>`:''}
+           ${frais>0?`<tr class="liv"><td>Frais de livraison</td><td class="mt">${euro(frais)}</td></tr>`:''}
+           <tr class="cmd-total"><td>Total commande ${esc(orderNumber(o))}</td><td class="mt">${euro(totalCmd)}</td></tr>
+         </tbody></table>${factPersoBox(o.persoMacarons, o.persoCouleurs)}</div>
+       </div>
+       <div class="grand">
+         <div class="lg"><span>Montant total de la commande</span><span>${euro(totalCmd)}</span></div>
+         ${dejaFacture>0 ? `<div class="lg"><span>Acompte(s) déjà facturé(s)</span><span>−${euro(dejaFacture)}</span></div>` : ''}
+         <div class="lg total"><span>Acompte${pct>0?` (${String(pct).replace('.',',')} %)`:''}</span><span>${euro(montant)}</span></div>
+         ${regle
+           ? `<div class="acquit">✔ ACOMPTE ACQUITTÉ — Réglé${pay.date?` le ${fmtDate(pay.date)}`:''}${pay.moyen?` par ${esc(pay.moyen)}`:''}.</div>`
+           : `<div class="lg"><span><b>À régler</b></span><span><b>${euro(montant)}</b></span></div>`}
+         <div class="lg"><span>Solde restant à facturer</span><span>${euro(resteApres)}</span></div>
+       </div>
+       <div class="bas-final">
+         ${factRibAvisCol(e)}
+         <div class="legal-bloc">
+           <div class="tva">TVA non applicable, article 293 B du Code général des impôts.</div>
+           <div class="paiement">Cet acompte sera déduit de la facture de solde de la commande ${esc(orderNumber(o))}.</div>
+           ${(!regle && e.paiement)?`<div class="paiement">${esc(e.paiement)}</div>`:''}
+           ${factMentionsRetardB2B()}
+           ${factMentionMediateur(e)}
+         </div>
+       </div>
+       <div class="pied">${esc(e.nom||'')}${e.siret?' · SIRET '+esc(e.siret):''} · Micro-entreprise · Merci de votre confiance 🍬</div>
+     </div>
+   </div>
+   </body></html>`;
+}
+// Mention reprise sur la FACTURE FINALE : la référence des factures d'acompte de ses commandes.
+// Informative, hors du bloc <!--REGL--> (que la resynchronisation réécrit) : les montants encaissés
+// restent déduits par « Déjà réglé », comme avant — rien n'est soustrait deux fois.
+function factAcomptesMentionHtml(acomptes){
+  const a = (acomptes||[]).filter(docEstAcompte);
+  if(!a.length) return '';
+  const liste = a.map(x => `n° ${esc(x.numero||'—')} du ${fmtDate(x.date)} (${euro(+x.montant||0)})`).join(', ');
+  return `<div class="lg acpt-ref" style="font-size:.86em;opacity:.85"><span>${a.length>1?'Factures d\'acompte':'Facture d\'acompte'} : ${liste} — ${a.length>1?'leurs règlements sont repris':'son règlement est repris'} dans « Déjà réglé ».</span><span></span></div>`;
+}
+
+async function acompteForm(orderId){
+  const o = await db.orders.get(+orderId).catch(()=>null);
+  const docs = await db.documents.toArray().catch(()=>[]);
+  const finale = o ? docFactureVivante(docs.filter(x=>x.type==='facture'), docs.filter(x=>x.type==='avoir'), o.id) : null;
+  const refus = acompteRefus(o, (finale && !docFactureAnnulee(finale, docs.filter(x=>x.type==='avoir'))) ? finale : null);
+  if(refus){ toast(refus); return; }
+  const e = factGetEmetteur();
+  if(!e.nom || !e.siret || !e.adresse){ toast('Renseigne d\'abord tes coordonnées de facturation'); factEmetteurForm(0); return; }
+  const acpts = acomptesDeCommande(docs, o.id);
+  const max = acompteMaxFacturable(o, acpts);
+  if(max<=0.009){ toast('Le montant de la commande est déjà entièrement facturé en acomptes'); return; }
+  const libres = acomptePaiementsLibres(o, acpts).filter(p => money2(+p.montant) <= max + 0.009);
+  window._acompteCtx = { orderId:o.id, max, libres };
+  const optPay = libres.map(p => `<option value="p${p.index}">Encaissement du ${fmtDate(p.date)||'?'} · ${esc(p.moyen||'moyen ?')} · ${euro(+p.montant)}</option>`).join('');
+  const defaut = libres.length ? `p${libres[libres.length-1].index}` : 'nouveau';
+  openModal(`<h3>🧾 Facture d'acompte</h3>
+    <p class="note">Commande <b>${esc(orderNumber(o))}</b> · total <b>${euro(+o.montant||0)}</b>${acpts.length?` · déjà facturé en acompte : <b>${euro(money2((+o.montant||0)-max))}</b> (${acpts.map(a=>esc(a.numero)).join(', ')})`:''}. Montant facturable : <b>${euro(max)}</b>.</p>
+    <div class="field"><label>Acompte concerné</label>
+      <select id="acptSource" onchange="acompteFormMaj()">
+        ${optPay}
+        <option value="nouveau"${defaut==='nouveau'?' selected':''}>Nouveau versement reçu (l'enregistrer sur la commande)</option>
+        <option value="attente">Acompte pas encore reçu (facture « à régler »)</option>
+      </select></div>
+    <div id="acptChamps"></div>
+    <p class="note" style="margin-top:8px">La facture portera le prochain numéro légal (<b>${esc(peekFactureNumero())}</b>), dans la même suite que tes factures. Elle sera <b>définitive</b> : ni modification ni suppression. La facture finale de la commande la citera.</p>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="acompteConfirm()">Émettre la facture d'acompte</button></div>`);
+  const sel = document.getElementById('acptSource'); if(sel) sel.value = defaut;
+  acompteFormMaj();
+}
+function acompteFormMaj(){
+  const ctx = window._acompteCtx; if(!ctx) return;
+  const src = (document.getElementById('acptSource')||{}).value || 'nouveau';
+  const box = document.getElementById('acptChamps'); if(!box) return;
+  if(src.charAt(0)==='p'){
+    const p = ctx.libres.find(x => 'p'+x.index === src);
+    box.innerHTML = p ? `<div class="sum-box"><span>Montant de l'acompte</span><b>${euro(+p.montant)}</b></div>
+      <div class="sum-box"><span>Réglé le</span><b>${fmtDate(p.date)||'—'} · ${esc(p.moyen||'—')}</b></div>` : '';
+    return;
+  }
+  box.innerHTML = `<div class="field"><label>Montant de l'acompte (€)</label>
+      <input type="number" step="0.01" min="0" max="${ctx.max}" id="acptMt" placeholder="max ${euro(ctx.max)}"></div>
+    ${src==='nouveau' ? `<div class="field"><label>Date de règlement</label><input type="date" id="acptDate" value="${today()}" max="${today()}"></div>
+    <div class="field"><label>Mode de paiement</label>
+      <select id="acptMoyen"><option value="">— mode —</option>${PAY_METHODS.map(m=>`<option>${esc(m)}</option>`).join('')}</select></div>
+    <p class="note">Le versement sera aussi enregistré dans les paiements de la commande — ne le saisis pas une seconde fois.</p>`
+    : `<p class="note">Aucun paiement n'est enregistré. Quand le client réglera, encaisse-le normalement depuis la commande.</p>`}`;
+}
+async function acompteConfirm(){
+  const ctx = window._acompteCtx; if(!ctx) return;
+  const src = (document.getElementById('acptSource')||{}).value || 'nouveau';
+  const o = await db.orders.get(ctx.orderId).catch(()=>null);
+  const docs = await db.documents.toArray().catch(()=>[]);
+  const finale = o ? docFactureVivante(docs.filter(x=>x.type==='facture'), docs.filter(x=>x.type==='avoir'), o.id) : null;
+  const refus = acompteRefus(o, (finale && !docFactureAnnulee(finale, docs.filter(x=>x.type==='avoir'))) ? finale : null);
+  if(refus){ toast(refus); return; }
+  const acpts = acomptesDeCommande(docs, o.id);
+  const max = acompteMaxFacturable(o, acpts);        // relu en base : jamais sur la valeur affichée
+  let montant = 0, regle = false, paiement = null, paiementIndex = null, nouveau = null;
+  if(src.charAt(0)==='p'){
+    const p = acomptePaiementsLibres(o, acpts).find(x => 'p'+x.index === src);
+    if(!p){ toast('Ce paiement a déjà sa facture d\'acompte'); return; }
+    montant = money2(+p.montant); regle = true; paiement = { date:p.date||'', moyen:p.moyen||'' }; paiementIndex = p.index;
+  } else {
+    montant = money2(+((document.getElementById('acptMt')||{}).value)||0);
+    if(src==='nouveau'){
+      const date = (document.getElementById('acptDate')||{}).value || '';
+      const moyen = (document.getElementById('acptMoyen')||{}).value || '';
+      if(!date){ toast('Date de règlement obligatoire'); return; }
+      if(date > today()){ toast('⛔ Date dans le futur interdite'); return; }
+      if(!moyen){ toast('Mode de paiement obligatoire'); return; }
+      regle = true; paiement = { date, moyen }; nouveau = { date, montant, moyen, acompte:true };
+    }
+  }
+  if(!(montant > 0)){ toast('Montant de l\'acompte requis'); return; }
+  if(montant > max + 0.009){ toast('Montant trop élevé (max '+euro(max)+')'); return; }
+  if(!confirm(`Émettre la facture d'acompte de ${euro(montant)} ?\n\nElle recevra le numéro légal ${peekFactureNumero()} et sera définitive (ni modification ni suppression).`)) return;
+  // 1) Le versement nouveau, enregistré exactement comme un encaissement depuis la commande.
+  if(nouveau){
+    o.paiements = (o.paiements||[]).concat([nouveau]);
+    paiementIndex = o.paiements.length - 1;
+    syncPaymentFields(o);
+    await figerCoutMatiere(o);
+    caInvalideCache();
+    await db.orders.update(o.id, {paiements:o.paiements, paiement:o.paiement, statutPaiement:o.statutPaiement,
+      soldeDu:o.soldeDu, montantEncaisse:o.montantEncaisse, datePaiement:o.datePaiement, reglement:o.reglement,
+      coutMatFige:o.coutMatFige, coutMatFigeLe:o.coutMatFigeLe});
+  }
+  // 2) Numéro légal, attribué une seule fois, ici.
+  const numero = await nextFactureNumeroDefinitif();
+  const client = o.clientId ? await db.clients.get(o.clientId).catch(()=>null) : null;
+  const devis = docs.find(x => x.type==='devis' && +x.orderId === +o.id);
+  const dateISO = today();
+  const html = factureAcompteHtml({ e:factGetEmetteur(), client, o, devisNumero:devis?devis.numero:'', numero, dateISO,
+    montant, dejaFacture:money2((+o.montant||0)-max), regle, paiement });
+  const doc = { type:'acompte', statut:'emise', numero, orderId:o.id, orderIds:[o.id], clientId:o.clientId||0,
+    date:dateISO, dateValidation:dateISO, montant, montantCommande:money2(+o.montant||0),
+    regle, paiement, paiementIndex, devisNumero:devis?devis.numero:'', html, createdAt:Date.now() };
+  const id = await db.documents.add(doc);
+  if(typeof markUnsaved==='function') markUnsaved();
+  // Fermer le formulaire déclenche un history.back() ASYNCHRONE : son « popstate » arriverait APRÈS
+  // l'ouverture de l'aperçu et le refermerait aussitôt (le retour ferme d'abord un aperçu ouvert).
+  // On attend donc que ce retour soit passé avant d'ouvrir l'aperçu.
+  const _retourEnCours = !!(typeof _histReady!=='undefined' && _histReady && history.state && history.state.kind==='modal');
+  closeModal();
+  if(_retourEnCours){
+    await new Promise(ok => {
+      const fin = () => { window.removeEventListener('popstate', fin); clearTimeout(t); ok(); };
+      const t = setTimeout(fin, 700);
+      window.addEventListener('popstate', fin);
+    });
+  }
+  toast(`✓ Facture d'acompte ${numero} émise (${euro(montant)})`);
+  if(view==='documents') renderDocuments();
+  const libelle = `Facture d'acompte ${numero}`;
+  if(typeof _prepDocPdfMail==='function') _prepDocPdfMail(html, libelle, client, montant, {});
+  openPrintView(html, {title:libelle, extraButtons:(typeof _docMailBtns==='function'?_docMailBtns():'')});
+  return id;
+}
 // Aperçu du PROCHAIN numéro SANS l'attribuer (pour affichage avant validation).
 function peekFactureNumero(){
   const d=new Date();
@@ -12186,7 +12452,9 @@ async function nextFactureNumeroDefinitif(){
   try{
     const factsDef=(await db.documents.where('type').equals('facture').toArray().catch(()=>[]))
       .filter(f=>docEstDefinitif(f) && f.numero);
-    factsDef.forEach(f=>{ const m=(f.numero||'').match(/-(\d+)$/); if(m){ const n=+m[1]; if(n>seq) seq=n; } });
+    // [v1536] les factures d'acompte partagent la suite légale : elles comptent aussi.
+    const acptDef=(await db.documents.where('type').equals('acompte').toArray().catch(()=>[])).filter(a=>docEstAcompte(a) && a.numero);
+    factsDef.concat(acptDef).forEach(f=>{ const m=(f.numero||'').match(/-(\d+)$/); if(m){ const n=+m[1]; if(n>seq) seq=n; } });
   }catch(e){swallow(e,'nextFactureNumeroDefinitif')}
   const next=seq+1;
   _factSeqSet(next);   // persiste AVANT de renvoyer : le numéro est consommé, définitivement
@@ -12196,8 +12464,9 @@ async function nextFactureNumeroDefinitif(){
 // facture définitive (on ne réinitialise jamais une séquence légale en cours). Sert uniquement à
 // caler le démarrage (ex. reprendre à 24) avant la toute première vraie facture.
 async function factCounterReset(){
-  const allFacts=(await db.documents.where('type').equals('facture').toArray().catch(()=>[]));
-  const factsDef=allFacts.filter(f=>docEstDefinitif(f) && f.numero);
+  const allFacts=(await db.documents.where('type').equals('facture').toArray().catch(()=>[]))
+    .concat(await db.documents.where('type').equals('acompte').toArray().catch(()=>[]));   // [v1536] même suite légale
+  const factsDef=allFacts.filter(f=>(docEstDefinitif(f) || docEstAcompte(f)) && f.numero);
   // Si des factures définitives existent, on propose de PURGER les tests (avant la 1re vraie
   // facture seulement). C'est une opération exceptionnelle, clairement présentée comme telle.
   if(factsDef.length){
@@ -12288,6 +12557,7 @@ async function renderDocuments(){
   const clName=id=>(clients.find(c=>c.id===id)||{}).nom||'—';
   const devis = docs.filter(d=>d.type==='devis');
   const factures = docs.filter(d=>d.type==='facture');
+  const acomptesDocs = docs.filter(d=>docEstAcompte(d));   // [v1536]
 
   // --- Répartition actifs / archivés (repliables sous chevron) ---
   const factParOrder = {};
@@ -12350,7 +12620,7 @@ async function renderDocuments(){
      </div>
    </div>
    ${(()=>{
-     const nbDef=factures.filter(f=>docEstDefinitif(f)).length;
+     const nbDef=factures.filter(f=>docEstDefinitif(f)).length + acomptesDocs.length;   // [v1536] même suite légale
      if(nbDef===0){
        return `<div class="panel" style="background:#f8f5ef;border:1px dashed #d8c9a8;margin-bottom:12px">
          <div style="font-size:.82rem;color:#7a6a60">🔢 Prochaine facture : <b>${esc(peekFactureNumero())}</b>. Tant qu'aucune facture n'est validée, tu peux régler le point de départ du compteur.</div>
@@ -12376,6 +12646,10 @@ async function renderDocuments(){
      ${facturesActives.length?facturesActives.map(docCard).join(''):(facturesArchive.length?'':'<div class="empty">Aucune facture enregistrée ici pour l\'instant.</div>')}
      ${archiveBloc(facturesArchive)}
    </div>
+   ${acomptesDocs.length?`<div class="panel">
+     <h2>🧾 Factures d'acompte <span style="color:#9a8a82;font-size:.8rem;font-weight:400">(${acomptesDocs.length})</span></h2>
+     ${acomptesDocs.map(docCard).join('')}
+   </div>`:''}
   `;
 }
 
@@ -12429,6 +12703,15 @@ async function docOpen(id){
   }
   // Avoir(s) émis contre cette facture : accès direct depuis « Documents liés ».
   avoirsDeCetteFacture.forEach(a=>liens.push({label:`Avoir ${a.numero||'—'} (${euro(a.montant)})`, fn:`docOpen(${a.id})`}));
+  // [v1536] Factures d'acompte des mêmes commandes (sauf soi-même).
+  orderIds.forEach(oid => acomptesDeCommande(allDocs, oid).filter(a=>a.id!==d.id)
+    .forEach(a=>liens.push({label:`Facture d'acompte ${a.numero||'—'} (${euro(a.montant)})`, fn:`docOpen(${a.id})`})));
+  if(d.type==='acompte' && d.orderId){
+    const _fin = docFactureVivante(allDocs.filter(x=>x.type==='facture'), allDocs.filter(x=>x.type==='avoir'), d.orderId);
+    if(_fin && _fin.numero) liens.push({label:'Facture finale '+_fin.numero, fn:`docOpen(${_fin.id})`});
+    const _dv = allDocs.find(x=>x.type==='devis' && +x.orderId===+d.orderId);
+    if(_dv) liens.push({label:'Devis '+(_dv.numero||''), fn:`docOpen(${_dv.id})`});
+  }
   // Si je suis un DEVIS : retrouver la facture née de ma commande
   if(d.type==='devis' && d.orderId){
     const fact=docFactureVivante(allDocs.filter(x=>x.type==='facture'), allDocs.filter(x=>x.type==='avoir'), d.orderId);   // [v1522]
@@ -12500,9 +12783,18 @@ async function docOpen(id){
         <p class="note" style="margin-top:6px;font-size:.78rem">Ancienne présentation des totaux ? <a href="#" onclick="docRegenFactureFigee(${d.id});return false;" style="color:#AA7C39;font-weight:600">↻ Régénérer la présentation</a> — montants inchangés, version d'origine archivée.</p>
       `}
     `:''}
+    ${d.type==='acompte'?`
+      <div class="banner" style="background:#f0ecf3;border-color:#cdbcd6;margin-top:10px">🔒 <div><b>Facture d'acompte validée</b> — inaltérable. Ni modification ni suppression possibles (obligation légale). Elle sera citée sur la facture finale de la commande.</div></div>
+      <div class="sum-box" style="margin-top:8px"><span>Total de la commande</span><b>${euro(+d.montantCommande||0)}</b></div>
+      ${d.regle
+        ? `<div class="sum-box" style="border:1px solid #cde8cd;background:#eef6ee"><span>💳 Réglé${d.paiement&&d.paiement.date?` le ${fmtDate(d.paiement.date)}`:''}${d.paiement&&d.paiement.moyen?` · ${esc(d.paiement.moyen)}`:''}</span><b style="color:#2e7d32">${euro(d.montant||0)}</b></div>`
+        : `<div class="sum-box"><span><b>À régler</b> — encaisse-le depuis la commande quand il arrive</span><b style="color:#b3261e">${euro(d.montant||0)}</b></div>`}
+      <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost" onclick="docApercu(${d.id})">👁️ Voir / imprimer</button><button class="btn gold" onclick="docEnvoyerMail(${d.id})">✉️ Envoyer par mail</button></div>
+    `:''}
+    ${(d.type==='devis'&&d.orderId&&d.statut!=='en_attente')?`<button class="btn ghost sm" style="margin-top:8px" onclick="closeModal();acompteForm(${d.orderId})">🧾 Facture d'acompte</button>`:''}
     ${d.type==='devis'?`<div style="margin-top:10px"><button class="btn gold" style="width:100%" onclick="genererDevisDoc(${d.id})">👁️ Visualiser le devis <span style="font-weight:400;opacity:.85">· imprimer / envoyer</span></button></div>`:''}
     <div style="display:flex;gap:8px;margin-top:10px">
-      ${docEstDefinitif(d)?'':`<button class="btn ghost del" onclick="docDelete(${d.id})">Supprimer</button>`}
+      ${(docEstDefinitif(d)||docEstAcompte(d))?'':`<button class="btn ghost del" onclick="docDelete(${d.id})">Supprimer</button>`}
       <button class="btn ghost" onclick="closeModal()">Fermer</button>
     </div>`);
 }
@@ -12791,7 +13083,7 @@ async function cmdToDevisConfirm(id){
 }
 async function docDelete(id){
   const d=await db.documents.get(id);
-  if(docEstDefinitif(d)){ toast('🔒 Une facture validée ne peut pas être supprimée (obligation légale)'); return; }
+  if(docEstDefinitif(d) || docEstAcompte(d)){ toast('🔒 Une facture validée ne peut pas être supprimée (obligation légale)'); return; }
   if(!confirm('Supprimer ce document ?')) return;
   await db.documents.delete(id); closeModal(); toast('Document supprimé'); renderDocuments();
 }
@@ -12805,7 +13097,7 @@ async function docApercu(id){
   if(d.type==='facture' && d.statut==='brouillon' && Array.isArray(d.orderIds) && d.orderIds.length){
     return genererFactureMultiple(d.orderIds);
   }
-  const libelle = `${d.type==='devis'?'Devis':'Facture'} ${d.numero||d.refInterne||''}`.trim();
+  const libelle = `${d.type==='devis'?'Devis':(d.type==='acompte'?'Facture d\'acompte':'Facture')} ${d.numero||d.refInterne||''}`.trim();
   const client = d.clientId ? await db.clients.get(d.clientId).catch(()=>null) : null;
   if(d.html){
     // On prépare le mail (objet + message + signature) pour que l'aperçu propose l'envoi.
@@ -12860,7 +13152,7 @@ async function docRegenFactureFigee(id){
 // objet = n° du document, message soigné + signature. Utilisable depuis la fiche document.
 async function docEnvoyerMail(id){
   const d=await db.documents.get(id); if(!d){ toast('Document introuvable'); return; }
-  const libelle = `${d.type==='devis'?'Devis':'Facture'} ${d.numero||d.refInterne||''}`.trim();
+  const libelle = `${d.type==='devis'?'Devis':(d.type==='acompte'?'Facture d\'acompte':'Facture')} ${d.numero||d.refInterne||''}`.trim();
   const client = d.clientId ? await db.clients.get(d.clientId).catch(()=>null) : null;
   // Prépare l'objet + le message + la signature (renseigne window._lastDocMeta.mailto).
   if(typeof _prepDocPdfMail==='function') _prepDocPdfMail(d.html||'', libelle, client, d.montant, {acompteMention:d.acompteMention, cautionMention:(d.cautionMention!==false)});
@@ -22648,6 +22940,10 @@ async function cmdView(id){
   if(_devisOrig) _docLiens.push({label:'Devis '+_devisOrig.numero, fn:`closeModal();docOpen(${_devisOrig.id})`});
   if(_factOrig)  _docLiens.push({label:'Facture '+_factOrig.numero, fn:`closeModal();docOpen(${_factOrig.id})`});
   _avoirsOrig.forEach(a=>_docLiens.push({label:`Avoir ${a.numero||'—'} (${euro(a.montant)})`, fn:`closeModal();docOpen(${a.id})`}));
+  acomptesDeCommande(_docs, id).forEach(a=>_docLiens.push({label:`Facture d'acompte ${a.numero||'—'} (${euro(a.montant)})`, fn:`closeModal();docOpen(${a.id})`}));   // [v1536]
+  // [v1536] Bouton « Facture d'acompte » : seulement là où elle a un sens (voir acompteRefus).
+  const _acptPossible = !acompteRefus(o, (_factOrig && !docFactureAnnulee(_factOrig, _docs.filter(x=>x.type==='avoir'))) ? _factOrig : null)
+    && acompteMaxFacturable(o, acomptesDeCommande(_docs, id)) > 0.009;
   const _docLiensHtml = _docLiens.length
     ? `<div class="sum-box" style="flex-direction:column;align-items:stretch;gap:6px">
          <span style="font-size:.74rem;color:#7a6a62;text-transform:uppercase;font-weight:600">Documents liés</span>
@@ -22851,6 +23147,7 @@ async function cmdView(id){
        return `<div class="sum-box"><span>Encaissé</span><b>${euro(enc)}</b></div>
          <div class="sum-box"><span><b>Solde restant dû</b> <span class="tag" style="background:${col};color:#fff">${st}</span></span><b style="color:${solde>0?'var(--red,#b3261e)':'#3f7d52'}">${euro(solde)}</b></div>`;})()}
     ${orderPayStatus(o)!=='Payé'?`<button class="btn gold sm" style="margin-top:6px" onclick="markPaid(${id},true)">✓ Solder (${euro(orderBalance(o))})</button>`:''}
+    ${_acptPossible?`<button class="btn ghost sm" style="margin-top:6px" onclick="acompteForm(${id})" title="Émettre la facture d'un acompte reçu (ou à recevoir) sur cette commande">🧾 Facture d'acompte</button>`:''}
     ${(orderPaid(o)>0 || _factOrig)?`<button class="btn ghost sm" style="margin-top:6px" onclick="avoirForm(${id})" title="${orderPaid(o)>0?'Rembourser tout ou partie de cette commande':'Annuler une facture émise, même non encaissée'}">↩︎ ${orderPaid(o)>0?'Créer un avoir':'Annuler la facture'}</button>`:''}
     ${(function(){
       try{
@@ -26408,6 +26705,16 @@ async function cmdDeleteConfirm(id){
       </div>`);
     return;
   }
+  // [v1536] Une facture d'acompte (document légal, inaltérable) cite cette commande : elle ne peut
+  // pas disparaître sous elle — même un acompte « à régler », sans aucun encaissement.
+  try{
+    const _acptDel = acomptesDeCommande(await db.documents.where('type').equals('acompte').toArray().catch(()=>[]), id);
+    if(_acptDel.length){
+      closeModal();
+      toast(`🔒 Suppression impossible : ${_acptDel.length>1?'des factures':'une facture'} d'acompte (${_acptDel.map(a=>a.numero).join(', ')}) porte${_acptDel.length>1?'nt':''} sur cette commande`);
+      return;
+    }
+  }catch(e){ swallow(e,'cmdDeleteConfirm/acompte'); }
   const items = await db.orderItems.where('orderId').equals(id).toArray();
   // [v1480] Meme correction que la purge : `equals` compare avec le TYPE. Ce snapshot sert a
   // RESTAURER les evenements si Ben annule la suppression — s'il ne les retrouve pas, la
@@ -61142,7 +61449,8 @@ function _prepDocPdfMail(html, libelle, client, montant, opts){
   // Mention d'acompte sur le devis : reprise du réglage de la commande (true par défaut).
   const acompteMention = opts.acompteMention !== false;
   // Numéro seul (sans le préfixe « Facture »/« Devis ») pour l'objet et le corps.
-  const numero = libelle.replace(/^(Facture|Devis)\s*/i,'').trim();
+  const estAcompte = /^Facture d['’]acompte/i.test(libelle);   // [v1536]
+  const numero = libelle.replace(/^(Facture d['’]acompte|Facture|Devis)\s*/i,'').trim();
   // Acompte formaté (75% du montant) pour le message devis, si disponible.
   const acompteFmt = (montant!=null && !isNaN(montant))
     ? Number(montant*0.75).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2})
@@ -61153,7 +61461,7 @@ function _prepDocPdfMail(html, libelle, client, montant, opts){
     : '';
   // Signature COURTE, identique au message du devis : « {exploitant} — {enseigne} ».
   const signature = [e.exploitant, (e.nom||'Sensations Macarons')].filter(Boolean).join(' — ') || (e.nom||'Sensations Macarons');
-  const objet = `${estFacture?'Facture':'Devis'} ${numero} — ${e.nom||'Sensations Macarons'}`;
+  const objet = `${estAcompte?'Facture d\'acompte':(estFacture?'Facture':'Devis')} ${numero} — ${e.nom||'Sensations Macarons'}`;
   // Phrases conjuguées selon tutoiement/vouvoiement.
   const phraseAcompte = tu
     ? `Ta commande sera considérée comme validée une fois ton acompte de ${acompteFmt} € versé (75% du montant totalAffiche).`
@@ -61162,7 +61470,7 @@ function _prepDocPdfMail(html, libelle, client, montant, opts){
     `Bonjour${nomClient ? ' '+nomClient : ''},`, '',
     estFacture
       // Message facture = calque du devis (montant, sans mention d'acompte).
-      ? `${tu?'Tu trouveras':'Veuillez trouver'} ci-dessous ${tu?'ta':'votre'} facture n° ${numero}${montantFmt?` d'un montant de ${montantFmt} €`:''}.`.replace(/\s+\./,'.')
+      ? `${tu?'Tu trouveras':'Veuillez trouver'} ci-dessous ${tu?'ta':'votre'} ${estAcompte?'facture d\'acompte':'facture'} n° ${numero}${montantFmt?` d'un montant de ${montantFmt} €`:''}.`.replace(/\s+\./,'.')
       : `${tu?'Tu trouveras':'Veuillez trouver'} ci-dessous ${tu?'ton':'votre'} devis n° ${numero}${montantFmt?` d'un montant de ${montantFmt} €`:''}.`.replace(/\s+\./,'.'),
     // Devis : mention d'acompte seulement si la case n'a pas été décochée ET qu'on a le montant.
     ...(!estFacture && acompteMention && acompteFmt ? [phraseAcompte] : []),
@@ -61549,6 +61857,14 @@ async function genererFactureMultiple(ids){
   // On montre le prochain numéro PRÉVU, clairement marqué « (brouillon) » pour éviter toute
   // confusion avec un numéro définitif.
   const numFact = _factRegenCtx ? _factRegenCtx.numero : `${peekFactureNumero()} (brouillon)`;
+  // [v1536] Factures d'acompte des commandes facturées, émises au plus tard le jour de cette facture.
+  let _acptMention = '';
+  try{
+    const _acptAll = await db.documents.where('type').equals('acompte').toArray().catch(()=>[]);
+    const _oidsF = orders.map(o=>+o.id);
+    _acptMention = factAcomptesMentionHtml(_acptAll.filter(a => docEstAcompte(a) && _oidsF.includes(+a.orderId) && (!a.date || a.date <= _emissionISO))
+      .sort((a,b)=>(a.date||'').localeCompare(b.date||'')));
+  }catch(_e){ _acptMention=''; }
 
   const factureHtml = `<!doctype html><html lang="fr"><head><meta charset="utf-8">
    <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -61590,6 +61906,7 @@ async function genererFactureMultiple(ids){
          ${grandFrais>0?`<div class="lg"><span>Frais de livraison</span><span>${euro(grandFrais)}</span></div>`:''}
          <div class="lg total"><span>Total à payer</span><span>${euro(grandTotal)}</span></div>
          <!--REGL-->${_factReglSlotHtml(grandTotal, totalPaye, _lastPayDate, _lastPayMoyen)}<!--/REGL-->
+         ${_acptMention}
        </div>
        <div class="bas-final">
          ${factRibAvisCol(e)}
