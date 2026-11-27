@@ -86,7 +86,7 @@
 // [v1272] Temps de production : le tableau « Par parfum / recette » (qui débordait à droite sur iPhone) est remplacé par un rendu en CARTES. Une carte par parfum : nom + nb de batches en tête, puis Réel / Actif / Moy./batch en grille 3 colonnes. Aucune donnée ni logique changée (garde-fou actif>réel + ⚠ conservés). Tableaux « Par jour » et « Détail par batch » inchangés.
 // [v1271] Assemblage : le bouton « Assembler » ne démarre plus de session/chrono d'atelier (l'assemblage physique est fait en amont, temps déjà compté). Il matérialise seulement l'action (décrément composants + création lot).
 // [v1270] Section Impot sur le revenu dans la Comptabilite : abattement micro (71%/50%) + taux marginal (30% par defaut) -> impot estime et net reel apres URSSAF+impot. Taux reglable dans Parametres.
-const CACHE = 'sm-iphone-v566';
+const CACHE = 'sm-iphone-v568';
 // [v1533] ESSENTIELS : sans eux l'app ne démarre pas hors-ligne → leur échec fait échouer l'installation (comportement d'avant).
 const ASSETS_ESSENTIELS = ['./', './index.html', './app.js', './dexie.min.js'];
 // [v1533] Tout le reste est mis en cache UN PAR UN, sans bloquer : avant, `addAll` échouait en BLOC dès qu'un seul fichier manquait

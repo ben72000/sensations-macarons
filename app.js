@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1536'; // suite : voir tests/v1536-facture-acompte.test.js
+const APP_VERSION = 'v1538'; // suite : voir tests/v1538-commentaire-client.test.js
 // [v1533] Instant où app.js commence à s'exécuter, en ms depuis l'ouverture de la page : couvre le téléchargement ET la lecture du code.
 const _BOOT_DEBUT_JS = (()=>{ try{ return (typeof performance!=='undefined' && performance.now) ? Math.round(performance.now()) : null; }catch(_){ return null; } })();
 const APP_MAJ = '« CHEQUE DE CAUTION » DEVIENT « EMPREINTE BANCAIRE ». Ben : « le cheque de caution doit se transformer en empreinte bancaire. Peux-tu changer la mention partout ou apparait cheque de caution ? » ⚠️ CE N ETAIT PAS UN SIMPLE RENOMMAGE : le texte associe decrivait des gestes propres a un CHEQUE — il est « remis », il « n est pas encaisse », il est « restitue ». Une empreinte bancaire se PREND, se DEBITE et s ANNULE. Renommer sans adapter les verbes aurait laisse des clauses incoherentes dans les CGV, un document juridique transmis aux clients. Les VERBES ONT DONC ETE ADAPTES partout : sur la ligne du devis et de la facture (« empreinte prise le jour de la livraison, non debitee, annulee apres retour du materiel »), et dans les trois clauses concernees des CGV — 7.1 (prise a la mise a disposition, non debitee, annulee), 7.2 (aucune empreinte exigee du particulier) et 7.4 (l empreinte pourra etre DEBITEE, et non encaissee). La logique juridique est inchangee : montants dus, complement exigible, surplus restitue, engagement sur l honneur du particulier. LES IDENTIFIANTS DE CODE SONT CONSERVES (CAUTION_CHEQUE, cautionRowHtml, cautionMention) : les renommer toucherait des dizaines de references et des donnees DEJA ENREGISTREES, pour zero gain visible. Seul le texte vu par le client change. Les documents deja emis gardent leur redaction d origine, puisqu ils memorisent leur rendu. Suite v1493 : 27 assertions, dont la verification que le vocabulaire du cheque a bien disparu ; un renommage NAIF (terme change mais verbes conserves) fait rougir 5 assertions. La suite v1492 a suivi le nouveau libelle, son mecanisme etant inchange.';
@@ -4586,14 +4586,28 @@ function vracPrixMacaron(ln, grille){
 // sélectionnable, la grille de parfums resterait bloquée. Valeur alignée sur ses voisins (8→4,
 // 16→4) : ni plus stricte que le format juste en dessous, ni plus permissive que celui au-dessus.
 const BOX_FLAVOR_LIMIT = { 6: 3, 8: 4, 10: 4, 16: 4, 25: 5 }; // parfums DIFFÉRENTS inclus
-const FLAVOR_SURCHARGE = 3;     // € par parfum différent supplémentaire
+const FLAVOR_SURCHARGE = 3;     // € par parfum différent supplémentaire — [v1537] ne s'applique plus qu'aux lignes enregistrées AVANT v1537 (historique)
 // [v1509] SUPPLÉMENT PARFUM — UN SEUL ENDROIT. Ben : « 3 macarons à 8 € », « 4 macarons à 10 € »…
 // et, sur sa réponse : « le prix choisi est le prix final ». Un coffret de FORMAT LIBRE (nombre hors
 // 6/8/10/16/25) saisi avec le nouveau sélecteur (`prixLibre:true`) n'a donc AUCUN supplément.
 // ⚠️ PROTECTION DE L'HISTORIQUE : une ligne déjà enregistrée n'a pas `prixLibre` → son calcul reste
 // EXACTEMENT celui d'avant (limite 0 pour un format inconnu), sinon un ancien total bougerait.
 // Les formats standard gardent leur règle (« +3 € par parfum au-delà de la limite »).
-function coffretSupplementParfums(ln, nbDiff){
+// [v1537] Ben : « Je veux que tu enlèves la règle du +3 € par parfum supplémentaire partout où il
+// apparaît. » Plus AUCUN supplément sur une ligne coffret créée ou enregistrée à partir de v1537.
+// ⚠️ PROTECTION DE L'HISTORIQUE (même règle que les gros macarons à 6,50 € le 08/11 : « les commandes et
+// devis déjà enregistrés gardent leurs prix, même rouverts ») : le total d'une ligne enregistrée est
+// RECALCULÉ à chaque lecture (lineTotalStored) — retirer la règle partout aurait fait baisser en silence
+// le montant de commandes, devis et factures déjà émis. Donc :
+//   • ligne ENREGISTRÉE : `sansSupplParfum:true` (posé par cmdLinesToStored depuis v1537) → 0 € ;
+//     sans ce marqueur (ligne d'avant v1537) → calcul d'origine, à l'identique ;
+//   • ligne EN SAISIE (opts.edition) : 0 € par défaut, quel que soit le chemin qui l'a créée ; seule
+//     une ligne rouverte d'avant v1537 (`supplParfumHerite`, posé par _lineToEdit) garde son calcul.
+// BOX_FLAVOR_LIMIT reste : il sert encore de CIBLE au générateur de compositions (nb de parfums visé),
+// plus de seuil de prix.
+function coffretSupplementParfums(ln, nbDiff, opts){
+  if(ln && ln.sansSupplParfum===true) return 0;
+  if(opts && opts.edition && !(ln && ln.supplParfumHerite===true)) return 0;
   const t = +(ln && ln.taille);
   if(BOX_FLAVOR_LIMIT[t]==null && ln && ln.prixLibre===true) return 0;
   const limit = BOX_FLAVOR_LIMIT[t]||0;
@@ -12950,6 +12964,7 @@ async function docConvertToOrder(id){
       ? [{ date:auj, montant:money2(acompte), moyen:(d.acompteMoyen || null), acompte:true }]
       : [],   // [v1157] pas d'acompte → pas de ligne fantôme à 0 €
     statut:'À préparer', notes:(d.notes||'')+`\n(Issu du devis ${d.numero})`,
+    commentaireClient: d.commentaireClient || '',   // [v1538] le commentaire client suit le devis
     type:'multi', taille:0, parfums:[], evQte:0, equip:0, tarif:'', bigItems:[],
     issuDevis:d.numero
   };
@@ -13060,7 +13075,8 @@ async function cmdToDevisConfirm(id){
       grilleId: o.grilleId || undefined,                 // [v1519]
       remiseTarifPro: !!o.remiseTarifPro,
       montant:+o.montant||0, acompte:0, orderId:null,
-      notes:(o.notes||'')+`\n(Repassé en devis depuis la commande ${orderNumber(o)})`
+      notes:(o.notes||'')+`\n(Repassé en devis depuis la commande ${orderNumber(o)})`,
+      commentaireClient: o.commentaireClient || ''   // [v1538]
     };
     await db.transaction('rw', db.documents, db.orders, async()=>{
       // Si un devis d'origine pointait vers cette commande, on le détache (repasse en attente).
@@ -13124,7 +13140,7 @@ async function docRegenFactureFigee(id){
   const oids = d.orderIds || (d.orderId?[d.orderId]:[]);
   if(!oids.length){ toast('Aucune commande liée : régénération impossible.'); return; }
   if(!confirm('Régénérer la PRÉSENTATION de cette facture ?\n\n• Les MONTANTS restent identiques (obligation légale) — seule la mise en page des totaux est modernisée.\n• Le numéro et la date d\'émission sont conservés.\n• La version d\'origine est archivée (audit).\n\nÀ n\'utiliser que si tu le juges approprié (ex. facture non encore transmise). Continuer ?')) return;
-  _factRegenCtx = { numero: d.numero, date: d.date, html:null, total:null };
+  _factRegenCtx = { numero: d.numero, date: d.date, html:null, total:null, commentaireFige: commentaireClientFige(d.html) };   // [v1538]
   try{
     await genererFactureMultiple(oids);
   }catch(e){
@@ -23225,6 +23241,7 @@ async function cmdView(id){
         return `<button class="btn ${cur?'':'ghost'} sm" onclick="setOrderStatus(${id},'${st}')" ${cur?'style="pointer-events:none"':''}>${cur?'● ':''}${st}</button>`;}).join('')}
     </div>
     ${o.notes?`<h3 style="font-size:1rem;margin:16px 0 6px">Notes</h3><p style="font-size:.86rem;white-space:pre-wrap">${esc(o.notes)}</p>`:''}
+    ${o.commentaireClient?`<h3 style="font-size:1rem;margin:16px 0 6px">💬 Commentaire pour le client <span style="font-size:.74rem;font-weight:400;color:#9a8a82">— imprimé sur le devis et la facture</span></h3><p style="font-size:.86rem;white-space:pre-wrap">${esc(o.commentaireClient)}</p>`:''}
     <div class="modal-actions"><button class="btn ghost" style="margin-right:auto" onclick="closeModal()">Fermer</button><button class="btn ghost" onclick="exportOrderText(${id})">⧉ Texte</button><button class="btn ghost" onclick="retroplanningView(${id})" title="Rétroplanning de production">🕘 Rétroplanning</button><button class="btn ghost" onclick="closeModal();pickScanOpen(${id})" title="Préparer cette commande en scannant les lots">📦 Préparer (scan)</button><button class="btn ghost" onclick="printOrderPrepSheet(${id})" title="Imprimer un bon de préparation avec QR (optionnel)">🏷 Bon de prépa (QR)</button>${paiementsDe(o).length?'':`<button class="btn ghost" onclick="cmdToDevis(${id})" title="Repasser cette commande en devis">📝 En devis</button>`}<button class="btn gold" onclick="genererFacture(${id})">🧾 Facture</button><button class="btn" onclick="closeModal();cmdForm(${id})">Modifier</button><button class="btn danger" onclick="cmdDelete(${id})">🗑 Supprimer</button></div>`);
 }
 // Total d'une ligne stockée (parfums/items en tableaux)
@@ -23318,7 +23335,7 @@ function _parfumsToObj(p){
 }
 function _lineToEdit(ln){
   const t=ln.type;
-  if(t==='coffret') return {type:'coffret', tarifRef: ln.tarifRef||null, grilleId: ln.grilleId||null, ancienTarif: !!ln.ancienTarif, taille:ln.taille||6, parfums:_parfumsToObj(ln.parfums), sansParfum:(+ln.sansParfum||0), spMode:ln.spMode||'assortiment', spNbParfums:(+ln.spNbParfums||0), remisePct:+ln.remisePct||0, prixUnitaireApplique: (ln.prixUnitaireApplique!=null?+ln.prixUnitaireApplique:null), embMode:ln.embMode||'standard', embMatId:ln.embMatId||null, prixLibre:(ln.prixLibre===true)};
+  if(t==='coffret') return {type:'coffret', tarifRef: ln.tarifRef||null, grilleId: ln.grilleId||null, ancienTarif: !!ln.ancienTarif, taille:ln.taille||6, parfums:_parfumsToObj(ln.parfums), sansParfum:(+ln.sansParfum||0), spMode:ln.spMode||'assortiment', spNbParfums:(+ln.spNbParfums||0), remisePct:+ln.remisePct||0, prixUnitaireApplique: (ln.prixUnitaireApplique!=null?+ln.prixUnitaireApplique:null), embMode:ln.embMode||'standard', embMatId:ln.embMatId||null, prixLibre:(ln.prixLibre===true), supplParfumHerite:(ln.sansSupplParfum!==true)||undefined};
   if(t==='evenement') return {type:'evenement', tarifRef: ln.tarifRef||null, grilleId: ln.grilleId||null, ancienTarif: !!ln.ancienTarif, evQte:ln.evQte||EVENT_MIN, equip:(ln.equip!=null?ln.equip:EVENT_MIN_EQUIP), evFiltrePyr:(ln.evFiltrePyr!=null?ln.evFiltrePyr:null), parfums:_parfumsToObj(ln.parfums), sansParfum:(+ln.sansParfum||0), spMode:ln.spMode||'assortiment', spNbParfums:(+ln.spNbParfums||0), remisePct:+ln.remisePct||0, pyraVendue:!!ln.pyraVendue, pyraPrixVente:(ln.pyraPrixVente!=null?+ln.pyraPrixVente:null), pyraCoutAchat:(ln.pyraCoutAchat!=null?+ln.pyraCoutAchat:null), accessoireDeco:!!ln.accessoireDeco, _configChoisie:!!ln._configChoisie};
   if(t==='grand') return {type:'grand', tarifRef: ln.tarifRef||null, grilleId: ln.grilleId||null, ancienTarif: !!ln.ancienTarif, tarif:ln.tarif||'particulier', items:_parfumsToObj(ln.items), remisePct:+ln.remisePct||0, embMode:ln.embMode||'reutilisable', embMatId:ln.embMatId||null};
   if(t==='vrac'){
@@ -23383,6 +23400,7 @@ async function cmdForm(id, opts){
               // sinon le devis changerait de grille au premier aller-retour (lecon v1488).
               tarifRef:dv.tarifRef||'', ancienTarif:!!dv.ancienTarif, grilleId:dv.grilleId||'',
               remiseTarifPro:!!dv.remiseTarifPro,
+              commentaireClient:dv.commentaireClient||'',   // [v1538] écrit ET relu (leçon v1488)
               statut:'À préparer', paiement:'En attente'}
             : {date:today(),statut:'À préparer',paiement:'En attente',perso:false};
   } else {
@@ -23579,7 +23597,8 @@ async function cmdForm(id, opts){
    </div>
    <input type="hidden" id="f_pay" value="${esc(o.paiement||'En attente')}">
 
-   <div class="field" style="margin-top:14px"><label>Notes</label><textarea id="f_notes" rows="2" placeholder="Allergies, livraison, demande spéciale…">${esc(o.notes||'')}</textarea></div>
+   <div class="field" style="margin-top:14px"><label>Notes <span style="color:#9a8a82;font-weight:400">— pour toi, jamais imprimées sur le devis ni la facture</span></label><textarea id="f_notes" rows="2" placeholder="Allergies, livraison, demande spéciale…">${esc(o.notes||'')}</textarea></div>
+   <div class="field"><label>💬 Commentaire pour le client <span style="color:#9a8a82;font-weight:400">— imprimé sur le devis et la facture</span></label><textarea id="f_comClient" rows="3" maxlength="${COMMENTAIRE_CLIENT_MAX}" placeholder="ex : Merci pour votre confiance ! Livraison prévue à 14 h à la salle des fêtes.">${esc(o.commentaireClient||'')}</textarea></div>
 
    <p class="note" style="font-size:.78rem;color:#7a6a62;display:flex;gap:6px;align-items:center;margin-top:4px">📅 <span>Cette commande est ajoutée automatiquement au calendrier${(o.dateEvenement||o.date) ? ` le ${fmtDate(o.dateEvenement||o.date)}` : ''}.</span></p>
    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button><button class="btn" onclick="saveCmd(${id||0})">Enregistrer</button></div>`);
@@ -24137,8 +24156,9 @@ function drawCoffretLine(ln,i){
   const sansParfum = +ln.sansParfum||0;
   const totQ = Object.values(ln.parfums).reduce((s,q)=>s+(+q||0),0) + sansParfum;
   const cap = +ln.taille||25;
-  const over = (coffretSupplementParfums(ln,nbDiff)>0) ? Math.max(0, nbDiff-limit) : 0;
+  const over = (coffretSupplementParfums(ln,nbDiff,{edition:true})>0) ? Math.max(0, nbDiff-limit) : 0;
   const _formatLibre = (BOX_FLAVOR_LIMIT[+ln.taille]==null && ln.prixLibre===true);
+  const _supplHerite = ln.supplParfumHerite===true;   // [v1537] seule une ligne d'avant v1537 rouverte garde l'ancienne règle
   // Compteur de remplissage coloré : vert si pile, rouge si dépasse, neutre si en dessous.
   const rempliCol = totQ===cap ? '#2e7d32' : (totQ>cap ? '#b3261e' : '#7a6a62');
   const rempliTxt = totQ>cap ? `${totQ}/${cap} — dépasse de ${totQ-cap} !` : `${totQ}/${cap}`;
@@ -24156,7 +24176,7 @@ function drawCoffretLine(ln,i){
       : `<span style="color:#9a8a82;font-size:.9rem">+ ajouter</span>`}
   </div>`;
   return `<div class="cmd-line">
-    <div class="line-head"><span class="line-type">Coffret <span class="line-sub">${_formatLibre ? 'prix final — sans supplément parfum' : `jusqu'à ${limit} parfum(s) inclus`}</span></span><span class="line-del" onclick="removeLine(${i})">✕ retirer</span></div>
+    <div class="line-head"><span class="line-type">Coffret <span class="line-sub">${(_formatLibre || !_supplHerite) ? 'prix final — sans supplément parfum' : `jusqu'à ${limit} parfum(s) inclus (tarif d'origine de cette commande)`}</span></span><span class="line-del" onclick="removeLine(${i})">✕ retirer</span></div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:-2px 0 10px;font-size:.82rem">
       <span style="color:#6b5b53">⧉ Dupliquer :</span>
       <input type="number" id="dupN_${i}" inputmode="numeric" min="2" max="${CMD_DUP_MAX}" placeholder="10" style="width:64px;padding:4px 6px">
@@ -24407,7 +24427,7 @@ function _compoRentabilite(taille, lignesCompo){
     });
     const parfums = Object.entries(agg).map(([nom,qte])=>({nom, qte}));
     // Ligne coffret draft au format attendu par le moteur (parfums = tableau).
-    const lnDraft = { type:'coffret', taille:+taille||0, parfums };
+    const lnDraft = { type:'coffret', taille:+taille||0, parfums, sansSupplParfum:true };   // [v1537]
     const prix = (typeof coffretUnitPrice==='function') ? coffretUnitPrice(lnDraft) : 0;
     // prixUnitaireApplique : évite que lineTotalStored/coffretUnitPrice reparte sur un autre tarif.
     lnDraft.prixUnitaireApplique = prix;
@@ -24542,18 +24562,20 @@ function _renderCompositionsModale(i, res, taille, dateLiv){
     }).join('');
   }
 
-  // [PARFUMS EN +] Bloc visible UNIQUEMENT en mode strict : rappelle la règle (nb de parfums inclus
-  // pour la taille) et permet d'ajouter volontairement des parfums supplémentaires, chacun facturé
-  // FLAVOR_SURCHARGE (3 €). Le surcoût affiché reprend la tarification réelle de la ligne coffret.
+  // [PARFUMS EN +] Bloc visible UNIQUEMENT en mode strict : rappelle le nombre de parfums visé pour la
+  // taille et permet d'en ajouter volontairement. [v1537] Plus de supplément : « +3 € » n'est affiché que
+  // pour une ligne d'avant v1537 rouverte (qui garde son ancien tarif).
   let strictExtraBloc = '';
   if(mode==='strict'){
+    const _lnC = (typeof cmdLines!=='undefined' && cmdLines) ? cmdLines[i] : null;
+    const _herite = !!(_lnC && _lnC.supplParfumHerite===true);
     const limite = (res && res.meta && res.meta.limiteReglementaire!=null)
       ? res.meta.limiteReglementaire
       : ((typeof BOX_FLAVOR_LIMIT!=='undefined' && BOX_FLAVOR_LIMIT[taille]!=null) ? BOX_FLAVOR_LIMIT[taille] : null);
     const extra = (res && res.meta && res.meta.parfumsEnPlus) ? +res.meta.parfumsEnPlus : 0;
     const surco = (typeof FLAVOR_SURCHARGE!=='undefined' ? FLAVOR_SURCHARGE : 3);
     const maxExtra = Math.max(0, (taille - (limite||0)));   // pas plus de parfums que de macarons
-    const surcoutTxt = extra>0
+    const surcoutTxt = (extra>0 && _herite)
       ? `<span style="color:var(--caramel,#AA7C39);font-weight:600">+${(typeof euro==='function')?euro(extra*surco):(extra*surco)+' €'}</span> (${extra}×${surco} €)`
       : `<span style="color:#9a8a82">aucun supplément</span>`;
     const btn = (delta, lbl, dis) => `<button class="btn ghost sm" ${dis?'disabled style="opacity:.4"':''}
@@ -24561,7 +24583,9 @@ function _renderCompositionsModale(i, res, taille, dateLiv){
       style="min-width:34px;padding:4px 9px;font-size:1rem;line-height:1">${lbl}</button>`;
     strictExtraBloc = `<div style="background:#faf7f1;border:1px solid var(--hair);border-radius:11px;padding:9px 11px;margin:2px 0 8px">
       <div style="font-size:.8rem;color:#6a5a52;margin-bottom:5px">
-        Ce format inclut <b>${limite!=null?limite:'—'} parfum${(limite||0)>1?'s':''}</b>. Tu peux en ajouter (chacun <b>+${surco} €</b>).
+        ${_herite
+          ? `Ce format inclut <b>${limite!=null?limite:'—'} parfum${(limite||0)>1?'s':''}</b>. Tu peux en ajouter (chacun <b>+${surco} €</b>, tarif d'origine de cette commande).`
+          : `Composition proposée sur <b>${limite!=null?limite:'—'} parfum${(limite||0)>1?'s':''}</b>. Tu peux en ajouter, <b>sans supplément</b>.`}
       </div>
       <div style="display:flex;align-items:center;gap:10px">
         ${btn(-1,'−', extra<=0)}
@@ -25319,7 +25343,7 @@ function lineTotalBase(ln){
     const base = coffretUnitPrice(ln);
     const nbDiff = Object.values(ln.parfums||{}).filter(q=>q>0).length;
     // repli : bac à sable de test sans le helper (jamais atteint dans l'app) — ancienne formule, à l'identique
-    const _sup = (typeof coffretSupplementParfums==='function') ? coffretSupplementParfums(ln, nbDiff) : money2(Math.max(0, nbDiff-(BOX_FLAVOR_LIMIT[ln.taille]||0))*FLAVOR_SURCHARGE);
+    const _sup = (typeof coffretSupplementParfums==='function') ? coffretSupplementParfums(ln, nbDiff, {edition:true}) : money2(Math.max(0, nbDiff-(BOX_FLAVOR_LIMIT[ln.taille]||0))*FLAVOR_SURCHARGE);
     return money2(base + _sup);
   }
   if(ln.type==='evenement') return addMoney(addMoney(mulMoney(ln.evQte||0,eventUnitPriceSaisie(ln)), pyraTotalLigne(ln)), accessoireDecoTotal(ln));
@@ -25451,7 +25475,7 @@ function cmdLinesToStored(){
     // CHAQUE enregistrement, sans mémoire d'un choix précédent (c'est déjà elle, et seulement
     // elle, qui a fixé le prix affiché pendant toute la saisie qui vient de se terminer).
     const ancienTarif = _ancien;
-    if(ln.type==='coffret') return {type:'coffret', taille:ln.taille, remisePct:rp, tarifRef, grilleId:(_ancien?undefined:_gid), ancienTarif:ancienTarif||undefined, prixUnitaireApplique: coffretUnitPrice(ln), prixLibre: (ln.prixLibre===true)||undefined, embMode:ln.embMode||'standard', embMatId:ln.embMatId||null, sansParfum:(+ln.sansParfum||0)||undefined, spMode:((+ln.sansParfum||0)>0?(ln.spMode||'assortiment'):undefined), spNbParfums:((+ln.sansParfum||0)>0&&ln.spMode!=='adeterminer'&&+ln.spNbParfums>0?+ln.spNbParfums:undefined), parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
+    if(ln.type==='coffret') return {type:'coffret', taille:ln.taille, remisePct:rp, tarifRef, grilleId:(_ancien?undefined:_gid), ancienTarif:ancienTarif||undefined, prixUnitaireApplique: coffretUnitPrice(ln), prixLibre: (ln.prixLibre===true)||undefined, sansSupplParfum: (ln.supplParfumHerite===true) ? undefined : true, embMode:ln.embMode||'standard', embMatId:ln.embMatId||null, sansParfum:(+ln.sansParfum||0)||undefined, spMode:((+ln.sansParfum||0)>0?(ln.spMode||'assortiment'):undefined), spNbParfums:((+ln.sansParfum||0)>0&&ln.spMode!=='adeterminer'&&+ln.spNbParfums>0?+ln.spNbParfums:undefined), parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
     if(ln.type==='evenement') return {type:'evenement', evQte:ln.evQte, equip:ln.equip, remisePct:rp, tarifRef, grilleId:(_ancien?undefined:_gid), ancienTarif:ancienTarif||undefined, sansParfum:(+ln.sansParfum||0)||undefined, spMode:((+ln.sansParfum||0)>0?(ln.spMode||'assortiment'):undefined), spNbParfums:((+ln.sansParfum||0)>0&&ln.spMode!=='adeterminer'&&+ln.spNbParfums>0?+ln.spNbParfums:undefined), pyraVendue:!!ln.pyraVendue, pyraPrixVente:(ln.pyraPrixVente!=null?+ln.pyraPrixVente:null), pyraCoutAchat:(ln.pyraCoutAchat!=null?+ln.pyraCoutAchat:null), accessoireDeco:(ln.accessoireDeco?true:undefined), parfums:Object.keys(ln.parfums).filter(k=>ln.parfums[k]>0).map(nom=>({nom,qte:ln.parfums[nom]}))};
     if(ln.type==='grand') return {type:'grand', tarif:(_sansPro?'particulier':ln.tarif), remisePct:rp, tarifRef, grilleId:(_ancien?undefined:_gid), ancienTarif:ancienTarif||undefined, embMode:ln.embMode||'reutilisable', embMatId:ln.embMatId||null, items:Object.keys(ln.items).filter(k=>ln.items[k]>0).map(nom=>({nom,qte:ln.items[nom]}))};
     if(ln.type==='vrac'){
@@ -26451,6 +26475,7 @@ async function saveCmd(id){
     paiements,
     dateReglementFinal: val('f_dateFinal')||'',
     statut:val('f_st'), notes:val('f_notes'),
+    commentaireClient: commentaireClientNettoye(val('f_comClient')),   // [v1538] imprimé sur devis/facture
     // [v1407] Rattachement à une commande mère (paiement déjà encaissé ailleurs). Champ absent
     // du formulaire (commande déjà mère, avec des filles) ⇒ on NE TOUCHE PAS à une éventuelle
     // valeur existante, pour ne jamais casser un rattachement en rouvrant/resauvant la fiche.
@@ -26560,6 +26585,7 @@ async function saveCmd(id){
       grilleId: o.grilleId || undefined,
       remiseTarifPro: !!o.remiseTarifPro,
       notes:o.notes,
+      commentaireClient: o.commentaireClient || '',   // [v1538]
       acompte: 0,                           // acompte reçu (déclenche la conversion une fois > 0)
       validiteJours:_validiteJours, expiration:ymdLocal(exp), // [v1269] validité pilotée par la deadline de livraison
       orderId:null, createdAt:Date.now()
@@ -61240,6 +61266,33 @@ function cmdEventBadge(o){
   if(!evt || evt===liv) return '';
   return `<span class="cmd-event">📅 Événement : ${fmtDate(evt)}</span>`;
 }
+// ════════════════════════════════════════════════════════════════════════════
+// [v1538] COMMENTAIRE POUR LE CLIENT, IMPRIMÉ SUR LE DEVIS ET LA FACTURE.
+// Ben : « dans les devis et facture je puisse rajouter un champ libre permettant de laisser un
+// commentaire lisible par le client ». Champ DISTINCT des « Notes » (allergies, livraison… : notes de
+// travail, jamais imprimées sur un document client) : mélanger les deux exposerait au client ce qui ne
+// lui est pas destiné. Saisi sur la commande ou le devis, il suit le devis ↔ commande dans les deux sens.
+// Facture VALIDÉE : son HTML est figé, le commentaire avec (borné par <!--COMCLI--> pour que la
+// régénération de présentation reprenne celui d'origine, jamais un commentaire modifié depuis).
+// ════════════════════════════════════════════════════════════════════════════
+const COMMENTAIRE_CLIENT_MAX = 1000;
+function commentaireClientNettoye(t){
+  return String(t==null?'':t).replace(/\r\n?/g,'\n').replace(/[ \t]+\n/g,'\n').trim().slice(0, COMMENTAIRE_CLIENT_MAX);
+}
+// items : [{ texte, ref }] — ref (ex. « Commande 2026-012 ») seulement quand plusieurs commandes
+// partagent le document (facture groupée). PURE.
+function commentaireClientHtml(items){
+  const lst = (items||[]).map(x => ({ texte: commentaireClientNettoye(x && x.texte), ref: (x && x.ref) || '' })).filter(x => x.texte);
+  if(!lst.length) return '';
+  const plusieurs = lst.length > 1;
+  const corps = lst.map(x => `<div style="white-space:pre-wrap;margin-top:${plusieurs?'6px':'2px'}">${plusieurs&&x.ref?`<b>${esc(x.ref)} :</b> `:''}${esc(x.texte)}</div>`).join('');
+  return `<!--COMCLI--><div class="comm-client" style="margin:14px 0 4px;padding:10px 14px;border-left:3px solid #AA7C39;background:#faf6ef;border-radius:0 8px 8px 0;font-size:.92em;line-height:1.45;break-inside:avoid;page-break-inside:avoid"><div style="font-size:.72em;letter-spacing:.08em;text-transform:uppercase;color:#AA7C39;font-weight:700">Commentaire</div>${corps}</div><!--/COMCLI-->`;
+}
+// Bloc commentaire tel qu'il figure dans un HTML de facture déjà émis ('' s'il n'y en avait pas). PURE.
+function commentaireClientFige(html){
+  const m = /<!--COMCLI-->[\s\S]*?<!--\/COMCLI-->/.exec(String(html||''));
+  return m ? m[0] : '';
+}
 async function genererDevisDoc(docId){
   const d = await db.documents.get(docId);
   if(!d || d.type!=='devis'){ toast('Devis introuvable'); return; }
@@ -61359,6 +61412,7 @@ async function genererDevisDoc(docId){
          ${(()=>{ const R=docRabaisTotal(lignes, d.persoMacarons, totalAffiche, d, d.persoLogoNb, d.forfaitCreationNb); return R.rabais>0?`<div class="lg reduc" style="color:#3f7d52;font-size:.9rem"><span>Rabais totalAffiche consenti${R.pct>0?` (−${R.pct}%)`:''}</span><span>\u2212${euro(R.rabais)}</span></div>`:''; })()}
        </div>
        ${d.acompteMention!==false?`<div class="acompte-mention">⚠ Le versement d'un acompte de 75% (soit ${euro(money2(totalAffiche*0.75))}) est requis pour valider votre devis.</div>`:''}
+       ${commentaireClientHtml([{ texte: d.commentaireClient }])}
        <div class="bas-final">
          ${factRibAvisCol(e)}
          <div class="legal-bloc">
@@ -61386,8 +61440,8 @@ async function genererDevisDoc(docId){
     '',
     `${_tu?'Tu trouveras':'Veuillez trouver'} ci-dessous ${_tu?'ton':'votre'} devis n° ${d.numero||''} d'un montant de ${montantFmt} €.`,
     ...(d.acompteMention!==false ? [ _tu
-        ? `Ta commande sera considérée comme validée une fois ton acompte de ${acompteFmt} € versé (75% du montant totalAffiche).`
-        : `Votre commande sera considérée comme validée une fois votre acompte de ${acompteFmt} € versé (75% du montant totalAffiche).` ] : []),
+        ? `Ta commande sera considérée comme validée une fois ton acompte de ${acompteFmt} € versé (75% du montant total).`
+        : `Votre commande sera considérée comme validée une fois votre acompte de ${acompteFmt} € versé (75% du montant total).` ] : []),
     '',
     _tu ? 'En te remerciant par avance.' : 'Vous remerciant par avance.',
     '',
@@ -61464,8 +61518,8 @@ function _prepDocPdfMail(html, libelle, client, montant, opts){
   const objet = `${estAcompte?'Facture d\'acompte':(estFacture?'Facture':'Devis')} ${numero} — ${e.nom||'Sensations Macarons'}`;
   // Phrases conjuguées selon tutoiement/vouvoiement.
   const phraseAcompte = tu
-    ? `Ta commande sera considérée comme validée une fois ton acompte de ${acompteFmt} € versé (75% du montant totalAffiche).`
-    : `Votre commande sera considérée comme validée une fois votre acompte de ${acompteFmt} € versé (75% du montant totalAffiche).`;
+    ? `Ta commande sera considérée comme validée une fois ton acompte de ${acompteFmt} € versé (75% du montant total).`
+    : `Votre commande sera considérée comme validée une fois votre acompte de ${acompteFmt} € versé (75% du montant total).`;
   const corps = [
     `Bonjour${nomClient ? ' '+nomClient : ''},`, '',
     estFacture
@@ -61857,6 +61911,11 @@ async function genererFactureMultiple(ids){
   // On montre le prochain numéro PRÉVU, clairement marqué « (brouillon) » pour éviter toute
   // confusion avec un numéro définitif.
   const numFact = _factRegenCtx ? _factRegenCtx.numero : `${peekFactureNumero()} (brouillon)`;
+  // [v1538] Commentaire client des commandes facturées. Régénération d'une facture VALIDÉE : on
+  // reprend le bloc figé d'origine (jamais un commentaire saisi après la validation).
+  const _comClientHtml = _factRegenCtx
+    ? (_factRegenCtx.commentaireFige || '')
+    : commentaireClientHtml(orders.map(o => ({ texte: o.commentaireClient, ref: 'Commande ' + orderNumber(o) })));
   // [v1536] Factures d'acompte des commandes facturées, émises au plus tard le jour de cette facture.
   let _acptMention = '';
   try{
@@ -61908,6 +61967,7 @@ async function genererFactureMultiple(ids){
          <!--REGL-->${_factReglSlotHtml(grandTotal, totalPaye, _lastPayDate, _lastPayMoyen)}<!--/REGL-->
          ${_acptMention}
        </div>
+       ${_comClientHtml}
        <div class="bas-final">
          ${factRibAvisCol(e)}
          <div class="legal-bloc">
@@ -70744,7 +70804,7 @@ function _pseudoCommandeDepuisMarche(market, repartition, nbMarchesClos){
     date: String(market.date).slice(0,10),
     heureLivraison,
     _heureSource: hp.source,
-    lignes: [{ type:'coffret', taille:6, parfums }]
+    lignes: [{ type:'coffret', taille:6, parfums, sansSupplParfum:true }]   // [v1537] plus de supplément parfum
   };
 }
 
@@ -71267,8 +71327,8 @@ function _composerCoffrets(dispoParfums, taille, opts){
   // Les DEUX modes utilisent la MÊME mécanique round-robin (aucune duplication) : seul le NOMBRE de
   // parfums visé change.
   //   • STRICT  : on respecte la règle métier BOX_FLAVOR_LIMIT[taille] (6→3, 8→4, 16→4, 25→5), plus
-  //     d'éventuels « parfums en + » choisis volontairement (opts.parfumsEnPlus) — chacun facturé
-  //     FLAVOR_SURCHARGE (3 €) par la tarification existante de la ligne coffret.
+  //     d'éventuels « parfums en + » choisis volontairement (opts.parfumsEnPlus) — [v1537] sans
+  //     supplément de prix (seule une ligne d'avant v1537 rouverte garde l'ancien +3 €).
   //   • FLEXIBLE: le moteur choisit librement le nombre de parfums pour MAXIMISER la faisabilité.
   const limiteReglementaire = (typeof BOX_FLAVOR_LIMIT!=='undefined' && BOX_FLAVOR_LIMIT[taille]!=null)
     ? BOX_FLAVOR_LIMIT[taille]
