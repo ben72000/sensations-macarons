@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1539'; // suite : voir tests/v1539-logo-prix-degressif.test.js
+const APP_VERSION = 'v1541'; // suite : voir tests/v1541-devis-depuis-commande.test.js
 // [v1533] Instant où app.js commence à s'exécuter, en ms depuis l'ouverture de la page : couvre le téléchargement ET la lecture du code.
 const _BOOT_DEBUT_JS = (()=>{ try{ return (typeof performance!=='undefined' && performance.now) ? Math.round(performance.now()) : null; }catch(_){ return null; } })();
 const APP_MAJ = '« CHEQUE DE CAUTION » DEVIENT « EMPREINTE BANCAIRE ». Ben : « le cheque de caution doit se transformer en empreinte bancaire. Peux-tu changer la mention partout ou apparait cheque de caution ? » ⚠️ CE N ETAIT PAS UN SIMPLE RENOMMAGE : le texte associe decrivait des gestes propres a un CHEQUE — il est « remis », il « n est pas encaisse », il est « restitue ». Une empreinte bancaire se PREND, se DEBITE et s ANNULE. Renommer sans adapter les verbes aurait laisse des clauses incoherentes dans les CGV, un document juridique transmis aux clients. Les VERBES ONT DONC ETE ADAPTES partout : sur la ligne du devis et de la facture (« empreinte prise le jour de la livraison, non debitee, annulee apres retour du materiel »), et dans les trois clauses concernees des CGV — 7.1 (prise a la mise a disposition, non debitee, annulee), 7.2 (aucune empreinte exigee du particulier) et 7.4 (l empreinte pourra etre DEBITEE, et non encaissee). La logique juridique est inchangee : montants dus, complement exigible, surplus restitue, engagement sur l honneur du particulier. LES IDENTIFIANTS DE CODE SONT CONSERVES (CAUTION_CHEQUE, cautionRowHtml, cautionMention) : les renommer toucherait des dizaines de references et des donnees DEJA ENREGISTREES, pour zero gain visible. Seul le texte vu par le client change. Les documents deja emis gardent leur redaction d origine, puisqu ils memorisent leur rendu. Suite v1493 : 27 assertions, dont la verification que le vocabulaire du cheque a bien disparu ; un renommage NAIF (terme change mais verbes conserves) fait rougir 5 assertions. La suite v1492 a suivi le nouveau libelle, son mecanisme etant inchange.';
@@ -12871,18 +12871,9 @@ async function devisRegenererDepuisCommande(dvId){
   if(dv.orderId == null){ toast('Ce devis n\'est lié à aucune commande.'); return; }
   const o = await db.orders.get(dv.orderId).catch(() => null);
   if(!o){ toast('Commande liée introuvable.'); return; }
+  // [v1541] Constructeur unique : la régénération oubliait logo, grille, mentions et commentaire client.
   const patch = {
-    clientId: o.clientId || 0,
-    heureLivraison: o.heureLivraison || '', lieuLivraison: o.lieuLivraison || '',
-    dateEvenement: o.dateEvenement || '', dateEvtReel: o.dateEvtReel || '',
-    distanceKm: o.distanceKm || 0, prixCarburant: o.prixCarburant || 0,
-    tempsLivraisonMin: o.tempsLivraisonMin || 0, consoVehicule: (o.consoVehicule != null ? o.consoVehicule : null),
-    fraisLivraison: o.fraisLivraison || 0, sacMatId: o.sacMatId || 0, sacNb: o.sacNb || 0,
-    lignes: Array.isArray(o.lignes) ? o.lignes : [],
-    remiseGlobale: o.remiseGlobale || 0, remiseGlobaleEur: (o.remiseGlobaleEur != null ? +o.remiseGlobaleEur : null), remiseTarifPro: !!o.remiseTarifPro,
-    perso: !!(o.perso || +o.persoMacarons > 0), persoMacarons: +o.persoMacarons || 0,
-    persoCouleurs: Array.isArray(o.persoCouleurs) ? o.persoCouleurs : [], persoRemiseEur: +o.persoRemiseEur || 0,
-    montant: +o.montant || 0,
+    ..._champsDevisDepuisCommande(o, today()),
     perimeCommande: false, regenereTs: Date.now(),
     html: ''   // l'aperçu sera reconstruit à la prochaine visualisation (genererDevisDoc)
   };
@@ -12981,6 +12972,90 @@ async function docConvertToOrder(id){
 // [COMMANDE → DEVIS] Rétrograde une commande SANS paiement en devis (créée par erreur).
 // La commande est transformée : un document devis reprend son contenu, puis la commande est supprimée.
 // Garde-fou : refus si la commande a le moindre paiement (sinon le CA encaissé serait faussé).
+// ════════════════════════════════════════════════════════════════════════════
+// [v1541] CONTENU D'UN DEVIS TIRÉ D'UNE COMMANDE — UNE SEULE SOURCE.
+// Trois chemins écrivent un devis à partir d'une commande : « Repasser en devis » (la commande
+// disparaît), la régénération d'un devis périmé, et désormais « Générer le devis » (la commande
+// reste). L'historique de ce code est celui de champs OUBLIÉS dans l'un des constructeurs (logo
+// v1487, grille v1489/v1499…) ; la régénération en oubliait encore huit (logo, grille, mentions,
+// commentaire client) : un devis régénéré gardait l'ANCIEN logo face au NOUVEAU total. Un seul
+// constructeur pour les trois, et chaque champ ajouté demain l'est partout.
+// ════════════════════════════════════════════════════════════════════════════
+function _champsDevisDepuisCommande(o, auj){
+  return {
+    clientId:o.clientId||0,
+    heureLivraison:o.heureLivraison||'', lieuLivraison:o.lieuLivraison||'', dateEvenement:o.dateEvenement||'', dateEvtReel:o.dateEvtReel||'',
+    distanceKm:o.distanceKm||0, prixCarburant:o.prixCarburant||0,
+    tempsLivraisonMin:o.tempsLivraisonMin||0, consoVehicule:(o.consoVehicule!=null?o.consoVehicule:null),
+    fraisLivraison:o.fraisLivraison||0, sacMatId:o.sacMatId||0, sacNb:o.sacNb||0,
+    lignes:Array.isArray(o.lignes)?o.lignes:[], remiseGlobale:o.remiseGlobale||0, remiseGlobaleEur:(o.remiseGlobaleEur!=null?+o.remiseGlobaleEur:null),
+    perso:!!(o.perso||+o.persoMacarons>0), persoMacarons:+o.persoMacarons||0, persoCouleurs:Array.isArray(o.persoCouleurs)?o.persoCouleurs:[], persoRemiseEur:+o.persoRemiseEur||0, acompteMention:(o.acompteMention!==false), cautionMention:(o.cautionMention!==false),
+    // [v1487] Champs LOGO (oubliés jadis dans les constructeurs).
+    logo:!!(o.logo||+o.persoLogoNb>0||+o.forfaitCreationNb>0),
+    persoLogoNb:+o.persoLogoNb||0, forfaitCreationNb:+o.forfaitCreationNb||0,
+    logoDegressif: o.logoDegressif,   // [v1539]
+    // [v1499] Grille tarifaire : sans ces marqueurs, le devis repartait sur la grille HISTORIQUE.
+    tarifRef: o.tarifRef || o.date || auj,
+    ancienTarif: !!o.ancienTarif,
+    grilleId: o.grilleId || undefined,                 // [v1519]
+    remiseTarifPro: !!o.remiseTarifPro,
+    montant:+o.montant||0,
+    commentaireClient: o.commentaireClient || ''   // [v1538]
+  };
+}
+// [v1541] Ben : « Je veux qu'une commande puisse générer un devis via un bouton sans pour autant
+// enlever la commande. Ainsi en allant dans le menu devis facture elle s'affiche directement via
+// cette génération rapide. »
+// Le devis naît ACCEPTÉ et LIÉ à la commande (orderId) : c'est exactement l'état d'un devis converti.
+// Jamais « en attente » : son bouton « Convertir en commande » créerait un DOUBLON de la commande.
+// Un seul devis par commande : s'il existe déjà, le bouton l'ouvre (et le remet à jour s'il est
+// périmé, par le même chemin que « Régénérer »), au lieu d'en fabriquer un second.
+// La commande n'est jamais touchée : ni paiement, ni production, ni stock ne bloquent.
+function cmdDevisLie(docs, oid){
+  return (docs||[]).find(x => x.type==='devis' && x.orderId!=null && +x.orderId === +oid) || null;
+}
+async function cmdGenererDevis(id){
+  const o = await db.orders.get(+id).catch(()=>null);
+  if(!o){ toast('Commande introuvable'); return; }
+  if(o.commandeMereId!=null){ toast('Sous-commande : génère le devis depuis la commande mère'); return; }
+  const docs = await db.documents.where('type').equals('devis').toArray().catch(()=>[]);
+  const existant = cmdDevisLie(docs, o.id);
+  let dvId;
+  if(existant){
+    dvId = existant.id;
+    if(_devisPerime(existant, o) || existant.perimeCommande){
+      await db.documents.update(dvId, { ..._champsDevisDepuisCommande(o, today()), perimeCommande:false, regenereTs:Date.now(), html:'' });
+      toast(`Devis ${existant.numero||''} remis à jour depuis la commande ✓`);
+    } else {
+      toast(`Cette commande a déjà son devis : ${existant.numero||''}`);
+    }
+  } else {
+    const auj = today();
+    const numero = await nextDocNumero('devis');
+    dvId = await db.documents.add({
+      type:'devis', statut:'accepte', numero, date:auj,
+      ..._champsDevisDepuisCommande(o, auj),
+      acompte:0, orderId:o.id, origine:'commande',
+      notes:(o.notes||'')+`\n(Devis généré depuis la commande ${orderNumber(o)})`
+    });
+    if(typeof markUnsaved==='function') markUnsaved();
+    toast(`✓ Devis ${numero} généré — la commande reste en place`);
+  }
+  // Fermer la fiche lance un history.back() asynchrone : on l'attend avant d'ouvrir l'aperçu (sinon
+  // son popstate le refermerait aussitôt).
+  const _retourEnCours = !!(typeof _histReady!=='undefined' && _histReady && history.state && history.state.kind==='modal');
+  closeModal();
+  if(_retourEnCours){
+    await new Promise(ok => {
+      const fin = () => { window.removeEventListener('popstate', fin); clearTimeout(t); ok(); };
+      const t = setTimeout(fin, 700);
+      window.addEventListener('popstate', fin);
+    });
+  }
+  if(view==='documents' && typeof renderDocuments==='function') renderDocuments();
+  await genererDevisDoc(dvId);
+  return dvId;
+}
 async function cmdToDevis(id){
   const o=await db.orders.get(id);
   if(!o){ toast('Commande introuvable'); return; }
@@ -13048,37 +13123,10 @@ async function cmdToDevisConfirm(id){
                          // fonction globale et s'appelait avant d'être initialisé (zone morte temporelle),
                          // d'où un ReferenceError qui plantait TOUT rebasculement de commande propre en devis.
     const doc={
-      type:'devis', statut:'en_attente', numero,
-      clientId:o.clientId||0, date:o.date||auj,
-      heureLivraison:o.heureLivraison||'', lieuLivraison:o.lieuLivraison||'', dateEvenement:o.dateEvenement||'', dateEvtReel:o.dateEvtReel||'',
-      distanceKm:o.distanceKm||0, prixCarburant:o.prixCarburant||0,
-      tempsLivraisonMin:o.tempsLivraisonMin||0, consoVehicule:(o.consoVehicule!=null?o.consoVehicule:null),
-      fraisLivraison:o.fraisLivraison||0, sacMatId:o.sacMatId||0, sacNb:o.sacNb||0,
-      lignes:o.lignes||[], remiseGlobale:o.remiseGlobale||0, remiseGlobaleEur:(o.remiseGlobaleEur!=null?+o.remiseGlobaleEur:null),
-      perso:!!(o.perso||+o.persoMacarons>0), persoMacarons:+o.persoMacarons||0, persoCouleurs:Array.isArray(o.persoCouleurs)?o.persoCouleurs:[], persoRemiseEur:+o.persoRemiseEur||0, acompteMention:(o.acompteMention!==false), cautionMention:(o.cautionMention!==false),
-      // [v1487] Champs LOGO, oublies dans ce constructeur comme dans les autres.
-      // [v1487] Ben : « quand j'enregistre le devis la personnalisation logo ne se sauvegarde pas ».
-      // CAUSE : les champs LOGO n'ont jamais ete copies dans le document. Ajoutes en v1463,
-      // ils ont ete oublies dans les 3 constructeurs de documents — le commentaire voisin dit
-      // d'ailleurs « personnalisation des COULEURS », la ligne n'a jamais ete etendue.
-      // Sans eux, le devis figeait un supplement a zero alors que la commande le portait.
-      // [v1499] Ces deux lignes étaient écrites DEUX FOIS d'affilée ici (copier-coller lors du
-      // correctif v1487) : sans effet sur le résultat, mais trompeur à la relecture. Dédoublonné.
-      logo:!!(o.logo||+o.persoLogoNb>0||+o.forfaitCreationNb>0),
-      persoLogoNb:+o.persoLogoNb||0, forfaitCreationNb:+o.forfaitCreationNb||0,
-      logoDegressif: o.logoDegressif,   // [v1539]
-      // [v1499] MÊME DÉFAUT QUE LE CHEMIN ALLER (voir docConvertToOrder) : ce constructeur ne
-      // transmettait ni `tarifRef` ni `ancienTarif`. Une commande repassée en devis perdait donc
-      // sa grille et le devis repartait sur la grille HISTORIQUE — options à zéro. Corrigé dans
-      // les deux sens le même jour : les trois constructeurs de documents portent désormais ces
-      // marqueurs, comme les champs logo depuis la v1487.
-      tarifRef: o.tarifRef || o.date || auj,
-      ancienTarif: !!o.ancienTarif,
-      grilleId: o.grilleId || undefined,                 // [v1519]
-      remiseTarifPro: !!o.remiseTarifPro,
-      montant:+o.montant||0, acompte:0, orderId:null,
-      notes:(o.notes||'')+`\n(Repassé en devis depuis la commande ${orderNumber(o)})`,
-      commentaireClient: o.commentaireClient || ''   // [v1538]
+      type:'devis', statut:'en_attente', numero, date:o.date||auj,
+      ..._champsDevisDepuisCommande(o, auj),   // [v1541] constructeur unique (voir sa définition)
+      acompte:0, orderId:null,
+      notes:(o.notes||'')+`\n(Repassé en devis depuis la commande ${orderNumber(o)})`
     };
     await db.transaction('rw', db.documents, db.orders, async()=>{
       // Si un devis d'origine pointait vers cette commande, on le détache (repasse en attente).
@@ -23244,7 +23292,7 @@ async function cmdView(id){
     </div>
     ${o.notes?`<h3 style="font-size:1rem;margin:16px 0 6px">Notes</h3><p style="font-size:.86rem;white-space:pre-wrap">${esc(o.notes)}</p>`:''}
     ${o.commentaireClient?`<h3 style="font-size:1rem;margin:16px 0 6px">💬 Commentaire pour le client <span style="font-size:.74rem;font-weight:400;color:#9a8a82">— imprimé sur le devis et la facture</span></h3><p style="font-size:.86rem;white-space:pre-wrap">${esc(o.commentaireClient)}</p>`:''}
-    <div class="modal-actions"><button class="btn ghost" style="margin-right:auto" onclick="closeModal()">Fermer</button><button class="btn ghost" onclick="exportOrderText(${id})">⧉ Texte</button><button class="btn ghost" onclick="retroplanningView(${id})" title="Rétroplanning de production">🕘 Rétroplanning</button><button class="btn ghost" onclick="closeModal();pickScanOpen(${id})" title="Préparer cette commande en scannant les lots">📦 Préparer (scan)</button><button class="btn ghost" onclick="printOrderPrepSheet(${id})" title="Imprimer un bon de préparation avec QR (optionnel)">🏷 Bon de prépa (QR)</button>${paiementsDe(o).length?'':`<button class="btn ghost" onclick="cmdToDevis(${id})" title="Repasser cette commande en devis">📝 En devis</button>`}<button class="btn gold" onclick="genererFacture(${id})">🧾 Facture</button><button class="btn" onclick="closeModal();cmdForm(${id})">Modifier</button><button class="btn danger" onclick="cmdDelete(${id})">🗑 Supprimer</button></div>`);
+    <div class="modal-actions"><button class="btn ghost" style="margin-right:auto" onclick="closeModal()">Fermer</button><button class="btn ghost" onclick="exportOrderText(${id})">⧉ Texte</button><button class="btn ghost" onclick="retroplanningView(${id})" title="Rétroplanning de production">🕘 Rétroplanning</button><button class="btn ghost" onclick="closeModal();pickScanOpen(${id})" title="Préparer cette commande en scannant les lots">📦 Préparer (scan)</button><button class="btn ghost" onclick="printOrderPrepSheet(${id})" title="Imprimer un bon de préparation avec QR (optionnel)">🏷 Bon de prépa (QR)</button>${o.commandeMereId!=null?'':`<button class="btn ghost" onclick="cmdGenererDevis(${id})" title="Créer (ou ouvrir) le devis de cette commande — la commande reste en place">📄 Devis</button>`}${paiementsDe(o).length?'':`<button class="btn ghost" onclick="cmdToDevis(${id})" title="Repasser cette commande en devis (elle quitte les commandes)">📝 Repasser en devis</button>`}<button class="btn gold" onclick="genererFacture(${id})">🧾 Facture</button><button class="btn" onclick="closeModal();cmdForm(${id})">Modifier</button><button class="btn danger" onclick="cmdDelete(${id})">🗑 Supprimer</button></div>`);
 }
 // Total d'une ligne stockée (parfums/items en tableaux)
 function lineTotalStored(ln){
@@ -61715,7 +61763,13 @@ async function devisGroupeGenerate(){
     const lignes = d.lignes||[];
     const total = (d.montant!=null) ? +d.montant : money2(lignes.reduce((s,ln)=>s+lineTotalStored(ln),0));
     grandTotal += total;
-    const rows = factRowsHtml(lignes, false) + cautionRowHtml(lignes, o);
+    // [v1540] Ben : « quand je fais une sélection multiple ça ne fonctionne pas, ça met un message
+    // d'incident ». CAUSE : ici la variable est `d` (le devis), mais l'appel passait `o` — variable qui
+    // n'existe pas dans cette section (copiée de la section commandes plus bas lors du câblage de la
+    // caution, v1492). ReferenceError dès qu'UN devis était sélectionné → génération impossible.
+    // Le test v1492 comptait les appels « cautionRowHtml(lignes, [do]) » : il ne pouvait pas voir
+    // QUELLE variable était passée ni si elle existait. tests/v1540 exécute vraiment la génération.
+    const rows = factRowsHtml(lignes, false) + cautionRowHtml(lignes, d);
     return `<div class="cmd-section">
       <div class="cmd-head"><span class="cmd-ref">Devis ${esc(d.numero||'brouillon')}${cmdEventBadge(d)}</span><span class="cmd-date">${fmtDate(d.date)||''}</span></div>
       <div class="cmd-body"><table class="cmd-table"><tbody>
@@ -61801,11 +61855,23 @@ async function devisGroupeGenerate(){
      </div>
    </div></body></html>`;
 
-  const win = window.open('', '_blank');
-  if(!win){ toast('Autorise les fenêtres pour générer le document'); return; }
-  win.document.write(devisGroupeHtml); win.document.close();
+  // [v1540] Aperçu DANS l'app (comme devis et factures), plus une fenêtre window.open : sur l'iPhone,
+  // une app installée ouvre mal une fenêtre vierge, et seul l'aperçu interne sait passer par le PDF
+  // + feuille de partage quand iOS refuse d'imprimer (v1535). Fermer la modale lance un
+  // history.back() asynchrone dont le popstate refermerait l'aperçu : on l'attend d'abord.
+  const _retourEnCours = !!(typeof _histReady!=='undefined' && _histReady && history.state && history.state.kind==='modal');
   closeModal();
+  if(_retourEnCours){
+    await new Promise(ok => {
+      const fin = () => { window.removeEventListener('popstate', fin); clearTimeout(t); ok(); };
+      const t = setTimeout(fin, 700);
+      window.addEventListener('popstate', fin);
+    });
+  }
   _docSel.clear(); docUpdateSelBar();
+  const _libelle = 'Devis ' + refInterne;
+  if(typeof _prepDocPdfMail==='function') _prepDocPdfMail(devisGroupeHtml, _libelle, client, grandTotal, { acompteMention:false });
+  openPrintView(devisGroupeHtml, { title: 'Devis groupé ' + refInterne, extraButtons: (typeof _docMailBtns==='function' ? _docMailBtns() : '') });
   toast('✓ Devis groupé généré');
 }
 
