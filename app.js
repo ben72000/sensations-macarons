@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1541'; // suite : voir tests/v1541-devis-depuis-commande.test.js
+const APP_VERSION = 'v1542'; // suite : voir tests/v1542-reductions-documents-groupes.test.js
 // [v1533] Instant où app.js commence à s'exécuter, en ms depuis l'ouverture de la page : couvre le téléchargement ET la lecture du code.
 const _BOOT_DEBUT_JS = (()=>{ try{ return (typeof performance!=='undefined' && performance.now) ? Math.round(performance.now()) : null; }catch(_){ return null; } })();
 const APP_MAJ = '« CHEQUE DE CAUTION » DEVIENT « EMPREINTE BANCAIRE ». Ben : « le cheque de caution doit se transformer en empreinte bancaire. Peux-tu changer la mention partout ou apparait cheque de caution ? » ⚠️ CE N ETAIT PAS UN SIMPLE RENOMMAGE : le texte associe decrivait des gestes propres a un CHEQUE — il est « remis », il « n est pas encaisse », il est « restitue ». Une empreinte bancaire se PREND, se DEBITE et s ANNULE. Renommer sans adapter les verbes aurait laisse des clauses incoherentes dans les CGV, un document juridique transmis aux clients. Les VERBES ONT DONC ETE ADAPTES partout : sur la ligne du devis et de la facture (« empreinte prise le jour de la livraison, non debitee, annulee apres retour du materiel »), et dans les trois clauses concernees des CGV — 7.1 (prise a la mise a disposition, non debitee, annulee), 7.2 (aucune empreinte exigee du particulier) et 7.4 (l empreinte pourra etre DEBITEE, et non encaissee). La logique juridique est inchangee : montants dus, complement exigible, surplus restitue, engagement sur l honneur du particulier. LES IDENTIFIANTS DE CODE SONT CONSERVES (CAUTION_CHEQUE, cautionRowHtml, cautionMention) : les renommer toucherait des dizaines de references et des donnees DEJA ENREGISTREES, pour zero gain visible. Seul le texte vu par le client change. Les documents deja emis gardent leur redaction d origine, puisqu ils memorisent leur rendu. Suite v1493 : 27 assertions, dont la verification que le vocabulaire du cheque a bien disparu ; un renommage NAIF (terme change mais verbes conserves) fait rougir 5 assertions. La suite v1492 a suivi le nouveau libelle, son mecanisme etant inchange.';
@@ -12291,7 +12291,7 @@ function factureAcompteHtml(p){
            ${rows||'<tr><td>—</td><td class="mt"></td></tr>'}
            ${factPersoLigne(o.persoMacarons, o.persoRemiseEur, true, o)}
            ${factLogoLignes(o.persoLogoNb, o.forfaitCreationNb, o)}
-           ${R.rabais>0?`<tr class="tc-brut"><td>Total commande sans réduction</td><td class="mt">${euro(R.brutAbsolu)}</td></tr><tr class="tc-remise"><td>Total des remises${R.pct>0?` (−${R.pct}%)`:''}</td><td class="mt">−${euro(R.rabais)}</td></tr>`:''}
+           ${R.rabais>0?`<tr class="tc-brut"><td>Total commande sans réduction</td><td class="mt">${euro(R.brutAbsolu)}</td></tr><tr class="tc-remise"><td>Total des remises${R.pct>0?` (−${String(R.pct).replace('.',',')}%)`:''}</td><td class="mt">−${euro(R.rabais)}</td></tr>`:''}
            ${frais>0?`<tr class="liv"><td>Frais de livraison</td><td class="mt">${euro(frais)}</td></tr>`:''}
            <tr class="cmd-total"><td>Total commande ${esc(orderNumber(o))}</td><td class="mt">${euro(totalCmd)}</td></tr>
          </tbody></table>${factPersoBox(o.persoMacarons, o.persoCouleurs)}</div>
@@ -60896,7 +60896,7 @@ const FACT_STYLE = `   <style>
      .cmd-table tr.tc-brut td { color:#490F25; font-weight:700; font-size:12.5px; border-bottom:none; padding-top:1mm; padding-bottom:1mm; }
      .cmd-table tr.tc-remise td { color:#2e7d32; font-weight:700; font-size:12.5px; border-bottom:none; padding-top:1mm; padding-bottom:1mm; }
      .cmd-table tr.cmd-total td { font-weight:700; color:#490F25; border-top:1px solid #e0d5c5; border-bottom:none; padding-top:1.4mm; padding-bottom:1.4mm; font-size:14.5px; }
-     .grand { margin-top:4mm; width:100%; }
+     .grand { margin-top:4mm; width:100%; break-inside:avoid; page-break-inside:avoid; }
      .grand .lg { display:flex; justify-content:space-between; padding:1mm 0; font-size:13px; }
      .grand .total { border-top:2px solid #490F25; margin-top:2mm; padding-top:3mm; font-family:'Bellota',cursive; font-weight:700; font-size:19px; color:#490F25; }
      .acquit { margin-top:3mm; padding:2.5mm 4mm; background:#eaf6ea; border:1.4px solid #3f7d52; border-radius:2mm; color:#245a34; font-weight:700; font-size:12.5px; text-align:center; letter-spacing:.02em; }
@@ -61491,7 +61491,7 @@ async function genererDevisDoc(docId){
          ${reductions>0?`<div class="lg brut"><span>Total avant réductions</span><span>${euro(totalBrut)}</span></div><div class="lg reduc"><span>${libelleRemise(reductions, d.remiseTarifPro?_remiseSaisie:0, 'Réductions accordées')}${reducPct>0?` (−${reducPct}%)`:''}</span><span>\u2212${euro(reductions)}</span></div>`:''}
          <div class="lg total"><span>Total du devis</span><span>${euro(totalAffiche)}</span></div>
          ${Math.abs(_ecartInexplique) > 0.01 ? `<div class="note" style="color:#8a6d3b;text-align:right;font-size:.72rem">⚠ Montant recalculé (l'ancien total enregistré différait de ${euro(Math.abs(_ecartInexplique))}) — réenregistre le devis pour le figer.</div>` : ''}
-         ${(()=>{ const R=docRabaisTotal(lignes, d.persoMacarons, totalAffiche, d, d.persoLogoNb, d.forfaitCreationNb); return R.rabais>0?`<div class="lg reduc" style="color:#3f7d52;font-size:.9rem"><span>Rabais totalAffiche consenti${R.pct>0?` (−${R.pct}%)`:''}</span><span>\u2212${euro(R.rabais)}</span></div>`:''; })()}
+         ${(()=>{ const R=docRabaisTotal(lignes, d.persoMacarons, totalAffiche, d, d.persoLogoNb, d.forfaitCreationNb); return R.rabais>0?`<div class="lg reduc" style="color:#3f7d52;font-size:.9rem"><span>Rabais total consenti${R.pct>0?` (−${String(R.pct).replace('.',',')}%)`:''}</span><span>\u2212${euro(R.rabais)}</span></div>`:''; })()}
        </div>
        ${d.acompteMention!==false?`<div class="acompte-mention">⚠ Le versement d'un acompte de 75% (soit ${euro(money2(totalAffiche*0.75))}) est requis pour valider votre devis.</div>`:''}
        ${commentaireClientHtml([{ texte: d.commentaireClient }])}
@@ -61758,11 +61758,22 @@ async function devisGroupeGenerate(){
   const client = (clientIds.length===1 && clientIds[0]) ? clients.find(c=>c.id===clientIds[0]) : null;
 
   let grandTotal = 0;
+  // [v1542] Ben : « je veux que les réductions indiquées en vert sur chaque devis/facture soient
+  // clairement indiquées aussi sur le document généré lors de devis/facture groupé ». Les sections
+  // DEVIS n'affichaient aucune réduction, et le pied aucun récapitulatif : le client voyait des prix
+  // nets sans savoir qu'un geste lui était fait. Même présentation que la facture (groupée ou non) :
+  // par section « Total … sans réduction » + « Total des remises (−x %) » en vert, et au pied
+  // « Total avant réductions » + « Total des remises » en vert, sommés sur tout le document.
+  let grandBrutAbsolu = 0, grandRabais = 0, grandTarifPro = 0;
   // Sections DEVIS (prix NET par ligne — même présentation qu'un devis individuel)
   const sectionsDevis = devisSel.map(d=>{
     const lignes = d.lignes||[];
     const total = (d.montant!=null) ? +d.montant : money2(lignes.reduce((s,ln)=>s+lineTotalStored(ln),0));
     grandTotal += total;
+    const fraisD = +d.fraisLivraison||0;
+    const R = docRabaisTotal(lignes, d.persoMacarons, money2(total - fraisD), d, d.persoLogoNb, d.forfaitCreationNb);
+    grandBrutAbsolu = money2(grandBrutAbsolu + R.brutAbsolu); grandRabais = money2(grandRabais + R.rabais);
+    if(d.remiseTarifPro && d.remiseGlobaleEur!=null) grandTarifPro = money2(grandTarifPro + Math.max(0, +d.remiseGlobaleEur||0));   // même règle que la facture (v1519)
     // [v1540] Ben : « quand je fais une sélection multiple ça ne fonctionne pas, ça met un message
     // d'incident ». CAUSE : ici la variable est `d` (le devis), mais l'appel passait `o` — variable qui
     // n'existe pas dans cette section (copiée de la section commandes plus bas lors du câblage de la
@@ -61776,6 +61787,8 @@ async function devisGroupeGenerate(){
         ${rows||'<tr><td>—</td><td class="mt"></td></tr>'}
         ${factPersoLigne(d.persoMacarons, d.persoRemiseEur, false, d)}
         ${factLogoLignes(d.persoLogoNb, d.forfaitCreationNb, d)}
+        ${R.rabais>0?`<tr class="tc-brut"><td>Total devis sans réduction</td><td class="mt">${euro(R.brutAbsolu)}</td></tr><tr class="tc-remise"><td>${libelleRemise(R.rabais, (d.remiseTarifPro && d.remiseGlobaleEur!=null)?Math.max(0, +d.remiseGlobaleEur||0):0, 'Total des remises')}${R.pct>0?` (−${String(R.pct).replace('.',',')}%)`:''}</td><td class="mt">−${euro(R.rabais)}</td></tr>`:''}
+        ${fraisD>0?`<tr class="liv"><td>Frais de livraison</td><td class="mt">${euro(fraisD)}</td></tr>`:''}
         <tr class="cmd-total"><td>Total devis ${esc(d.numero||'')}</td><td class="mt">${euro(total)}</td></tr>
       </tbody></table>${factPersoBox(d.persoMacarons, d.persoCouleurs)}</div></div>`;
   }).join('');
@@ -61792,6 +61805,8 @@ async function devisGroupeGenerate(){
     const totalCmd = (o.montant!=null) ? +o.montant : money2(brutCmd - money2(brutCmd*gpct/100) + frais);
     grandTotal += totalCmd;
     const R = docRabaisTotal(lignes, o.persoMacarons, money2(totalCmd - frais), o, o.persoLogoNb, o.forfaitCreationNb);
+    grandBrutAbsolu = money2(grandBrutAbsolu + R.brutAbsolu); grandRabais = money2(grandRabais + R.rabais);   // [v1542]
+    if(o.remiseTarifPro && o.remiseGlobaleEur!=null) grandTarifPro = money2(grandTarifPro + Math.max(0, +o.remiseGlobaleEur||0));   // même règle que la facture (v1519)
     const rows = factRowsHtml(lignes, true) + cautionRowHtml(lignes, o);
     return `<div class="cmd-section">
       <div class="cmd-head"><span class="cmd-ref">Commande ${esc(orderNumber(o))}${cmdEventBadge(o)}</span><span class="cmd-date">${fmtDate(o.date)||''}</span></div>
@@ -61799,7 +61814,7 @@ async function devisGroupeGenerate(){
         ${rows||'<tr><td>—</td><td class="mt"></td></tr>'}
         ${factPersoLigne(o.persoMacarons, o.persoRemiseEur, true, o)}
         ${factLogoLignes(o.persoLogoNb, o.forfaitCreationNb, o)}
-        ${R.rabais>0?`<tr class="tc-brut"><td>Total commande sans réduction</td><td class="mt">${euro(R.brutAbsolu)}</td></tr><tr class="tc-remise"><td>Total des remises${R.pct>0?` (−${R.pct}%)`:''}</td><td class="mt">−${euro(R.rabais)}</td></tr>`:''}
+        ${R.rabais>0?`<tr class="tc-brut"><td>Total commande sans réduction</td><td class="mt">${euro(R.brutAbsolu)}</td></tr><tr class="tc-remise"><td>Total des remises${R.pct>0?` (−${String(R.pct).replace('.',',')}%)`:''}</td><td class="mt">−${euro(R.rabais)}</td></tr>`:''}
         ${frais>0?`<tr class="liv"><td>Frais de livraison</td><td class="mt">${euro(frais)}</td></tr>`:''}
         <tr class="cmd-total"><td>Total commande ${esc(orderNumber(o))}</td><td class="mt">${euro(totalCmd)}</td></tr>
       </tbody></table>${factPersoBox(o.persoMacarons, o.persoCouleurs)}</div></div>`;
@@ -61843,6 +61858,7 @@ async function devisGroupeGenerate(){
        <div class="meta-rule"></div>
        ${sectionsDevis}${sectionsOrders}
        <div class="grand">
+         ${grandRabais>0?(()=>{const p=grandBrutAbsolu>0?Math.round(grandRabais/grandBrutAbsolu*1000)/10:0;return `<div class="lg brut"><span>Total avant réductions</span><span>${euro(grandBrutAbsolu)}</span></div><div class="lg reduc"><span>${libelleRemise(grandRabais, grandTarifPro, 'Total des remises')}${p>0?` (−${String(p).replace('.',',')}%)`:''}</span><span>\u2212${euro(grandRabais)}</span></div>`;})():''}
          <div class="lg total"><span>Total groupé (indicatif)</span><span>${euro(grandTotal)}</span></div>
        </div>
        <div class="bas-final">
@@ -61967,7 +61983,7 @@ async function genererFactureMultiple(ids){
             ${rows||'<tr><td>—</td><td class="mt"></td></tr>'}
             ${factPersoLigne(o.persoMacarons, o.persoRemiseEur, true, o)}
         ${factLogoLignes(o.persoLogoNb, o.forfaitCreationNb, o)}
-            ${R.rabais>0?`<tr class="tc-brut"><td>Total commande sans réduction</td><td class="mt">${euro(R.brutAbsolu)}</td></tr><tr class="tc-remise"><td>Total des remises${R.pct>0?` (−${R.pct}%)`:''}</td><td class="mt">−${euro(R.rabais)}</td></tr>`:''}
+            ${R.rabais>0?`<tr class="tc-brut"><td>Total commande sans réduction</td><td class="mt">${euro(R.brutAbsolu)}</td></tr><tr class="tc-remise"><td>Total des remises${R.pct>0?` (−${String(R.pct).replace('.',',')}%)`:''}</td><td class="mt">−${euro(R.rabais)}</td></tr>`:''}
             ${frais>0?`<tr class="liv"><td>Frais de livraison</td><td class="mt">${euro(frais)}</td></tr>`:''}
             <tr class="cmd-total"><td>Total commande ${esc(orderNumber(o))}</td><td class="mt">${euro(totalCmd)}</td></tr>
           </tbody>
@@ -62061,7 +62077,7 @@ async function genererFactureMultiple(ids){
        <div class="meta-rule"></div>
        ${sections}
        <div class="grand">
-         ${grandRabais>0?(()=>{const p=grandBrutAbsolu>0?Math.round(grandRabais/grandBrutAbsolu*1000)/10:0;return `<div class="lg brut"><span>Total avant réductions</span><span>${euro(grandBrutAbsolu)}</span></div><div class="lg reduc"><span>${libelleRemise(grandRabais, grandTarifPro, 'Total des remises')}${p>0?` (−${p}%)`:''}</span><span>\u2212${euro(grandRabais)}</span></div>`;})():''}
+         ${grandRabais>0?(()=>{const p=grandBrutAbsolu>0?Math.round(grandRabais/grandBrutAbsolu*1000)/10:0;return `<div class="lg brut"><span>Total avant réductions</span><span>${euro(grandBrutAbsolu)}</span></div><div class="lg reduc"><span>${libelleRemise(grandRabais, grandTarifPro, 'Total des remises')}${p>0?` (−${String(p).replace('.',',')}%)`:''}</span><span>\u2212${euro(grandRabais)}</span></div>`;})():''}
          ${grandFrais>0?`<div class="lg"><span>Frais de livraison</span><span>${euro(grandFrais)}</span></div>`:''}
          <div class="lg total"><span>Total à payer</span><span>${euro(grandTotal)}</span></div>
          <!--REGL-->${_factReglSlotHtml(grandTotal, totalPaye, _lastPayDate, _lastPayMoyen)}<!--/REGL-->
