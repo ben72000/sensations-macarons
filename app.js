@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1542'; // suite : voir tests/v1542-reductions-documents-groupes.test.js
+const APP_VERSION = 'v1543'; // suite : voir tests/v1543-fiche-commande-perso.test.js
 // [v1533] Instant où app.js commence à s'exécuter, en ms depuis l'ouverture de la page : couvre le téléchargement ET la lecture du code.
 const _BOOT_DEBUT_JS = (()=>{ try{ return (typeof performance!=='undefined' && performance.now) ? Math.round(performance.now()) : null; }catch(_){ return null; } })();
 const APP_MAJ = '« CHEQUE DE CAUTION » DEVIENT « EMPREINTE BANCAIRE ». Ben : « le cheque de caution doit se transformer en empreinte bancaire. Peux-tu changer la mention partout ou apparait cheque de caution ? » ⚠️ CE N ETAIT PAS UN SIMPLE RENOMMAGE : le texte associe decrivait des gestes propres a un CHEQUE — il est « remis », il « n est pas encaisse », il est « restitue ». Une empreinte bancaire se PREND, se DEBITE et s ANNULE. Renommer sans adapter les verbes aurait laisse des clauses incoherentes dans les CGV, un document juridique transmis aux clients. Les VERBES ONT DONC ETE ADAPTES partout : sur la ligne du devis et de la facture (« empreinte prise le jour de la livraison, non debitee, annulee apres retour du materiel »), et dans les trois clauses concernees des CGV — 7.1 (prise a la mise a disposition, non debitee, annulee), 7.2 (aucune empreinte exigee du particulier) et 7.4 (l empreinte pourra etre DEBITEE, et non encaissee). La logique juridique est inchangee : montants dus, complement exigible, surplus restitue, engagement sur l honneur du particulier. LES IDENTIFIANTS DE CODE SONT CONSERVES (CAUTION_CHEQUE, cautionRowHtml, cautionMention) : les renommer toucherait des dizaines de references et des donnees DEJA ENREGISTREES, pour zero gain visible. Seul le texte vu par le client change. Les documents deja emis gardent leur redaction d origine, puisqu ils memorisent leur rendu. Suite v1493 : 27 assertions, dont la verification que le vocabulaire du cheque a bien disparu ; un renommage NAIF (terme change mais verbes conserves) fait rougir 5 assertions. La suite v1492 a suivi le nouveau libelle, son mecanisme etant inchange.';
@@ -22966,6 +22966,54 @@ function _isoWeekKey(dateStr){
 }
 // Sous-séparateur léger : début de la semaine (lundi → dimanche).
 // Vue détail d'une commande (multi-lignes)
+// ════════════════════════════════════════════════════════════════════════════
+// [v1543] ENCART « PERSONNALISATION & COMMENTAIRES » EN HAUT DE LA FICHE COMMANDE.
+// Ben : « Quand je clique sur le détail d'une commande j'aimerais voir présenté en évidence s'il y a
+// des couleurs personnalisées, des logos et si j'ai ajouté un commentaire. En l'état je suis obligé
+// d'appuyer sur Modifier commande pour voir le détail. »
+// Avant : la fiche ne montrait qu'une ligne « Personnalisation couleurs : N macaron(s) » (avec un prix
+// calculé à 0,25 € codé en dur — faux depuis la grille à 0,30 €), RIEN sur le logo ni sur le détail
+// couleur → parfum, et les notes/commentaire tout en bas, sous les paiements et la rentabilité.
+// Désormais : un encart unique juste sous le paiement, affiché seulement s'il y a quelque chose à voir.
+// Montants calculés par les MÊMES fonctions que le devis et la facture (grille de la commande).
+// ════════════════════════════════════════════════════════════════════════════
+function cmdEncartPersoHtml(o){
+  if(!o) return '';
+  const blocs = [];
+  const titre = (ico, txt, sous) => `<div style="font-weight:700;color:var(--bordeaux);font-size:.95rem;margin:2px 0 4px">${ico} ${txt}${sous?` <span style="font-weight:400;font-size:.76rem;color:#9a8a82">— ${sous}</span>`:''}</div>`;
+  // Couleurs
+  const nP = Math.max(0, +o.persoMacarons||0);
+  const coul = Array.isArray(o.persoCouleurs) ? o.persoCouleurs.filter(c => c && (c.couleur||c.parfum)) : [];
+  if(nP>0 || coul.length || o.perso){
+    const mt = nP>0 ? persoMontant(nP, o.persoRemiseEur, o) : 0;
+    const resume = nP>0
+      ? `<b>${nP} macaron${nP>1?'s':''}</b> · ${euro(mt)}${+o.persoRemiseEur>0?` <span style="color:#3f7d52">(remise −${euro(money2(+o.persoRemiseEur))})</span>`:''}`
+      : '<span style="color:#b3261e">quantité non renseignée</span>';
+    const puces = coul.map(c => `<div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:.9rem">${persoPastille(c.couleur||'')}<b>${esc(c.couleur||'—')}</b>${c.parfum?`<span style="color:#9a8a82">→</span><span>${esc(c.parfum)}</span>`:''}</div>`).join('');
+    blocs.push(`<div class="cmd-encart-bloc">${titre('🎨', 'Couleurs personnalisées')}<div style="font-size:.9rem;margin-bottom:${puces?'4px':'0'}">${resume}</div>${puces || (nP>0 ? '<div style="font-size:.82rem;color:#9a8a82">Détail couleur → parfum non renseigné</div>' : '')}</div>`);
+  }
+  // Logo + forfait création
+  const nL = Math.max(0, Math.round(+o.persoLogoNb||0)), nF = Math.max(0, Math.round(+o.forfaitCreationNb||0));
+  if(nL>0 || nF>0 || o.logo){
+    const lignesL = [];
+    if(nL>0){
+      const pu = logoPrixUnitPour(nL, o), mt = logoMontantPour(nL, o);
+      const base = logoPrixUnitPour(1, o);
+      const mode = (o.logoDegressif!==false) ? (pu < base - 0.001 ? '<span style="color:#3f7d52">tarif dégressif</span>' : 'tarif dégressif (pas de palier à cette quantité)') : 'prix de base';
+      lignesL.push(`<b>${nL} macaron${nL>1?'s':''}</b> × ${euro(pu)} = <b>${euro(mt)}</b> · ${mode}`);
+    }
+    if(nF>0) lignesL.push(`Forfait création : <b>${nF} modèle${nF>1?'s':''}</b> · ${euro(forfaitCreationPour(nF, o))}`);
+    if(!lignesL.length) lignesL.push('<span style="color:#b3261e">option cochée, quantité non renseignée</span>');
+    blocs.push(`<div class="cmd-encart-bloc">${titre('🖼️', 'Logo')}<div style="font-size:.9rem;line-height:1.5">${lignesL.join('<br>')}</div></div>`);
+  }
+  // Commentaire client (imprimé) et notes internes
+  if(o.commentaireClient && String(o.commentaireClient).trim())
+    blocs.push(`<div class="cmd-encart-bloc">${titre('💬', 'Commentaire pour le client', 'imprimé sur le devis et la facture')}<div style="font-size:.9rem;white-space:pre-wrap">${esc(o.commentaireClient)}</div></div>`);
+  if(o.notes && String(o.notes).trim())
+    blocs.push(`<div class="cmd-encart-bloc">${titre('📝', 'Notes', 'pour toi, jamais imprimées')}<div style="font-size:.9rem;white-space:pre-wrap">${esc(o.notes)}</div></div>`);
+  if(!blocs.length) return '';
+  return `<div class="cmd-encart-perso" style="border:2px solid #AA7C39;background:#fdf8ef;border-radius:14px;padding:10px 14px;margin-bottom:14px">${blocs.join('<div style="border-top:1px dashed #AA7C3966;margin:8px 0"></div>')}</div>`;
+}
 async function cmdView(id){
   _privacySuspend=1; // détail de commande toujours en clair, même en mode discret
   const o = await db.orders.get(id);
@@ -23190,6 +23238,7 @@ async function cmdView(id){
         ${solde>0.009?`<div style="display:flex;justify-content:space-between;font-size:.9rem;padding-top:2px"><span><b>Reste à encaisser</b></span><b style="color:#b3261e">${euro(solde)}</b></div>`:''}
       </div>`;
     })()}
+    ${cmdEncartPersoHtml(o)}
     ${_reliquatSiMere ? `<div style="border:2px solid var(--bordeaux);background:#fdfaf6;border-radius:14px;padding:12px 14px;margin-bottom:14px">
       <div style="font-weight:800;color:var(--bordeaux);font-size:1rem;margin-bottom:6px">🔗 ${_fillesDeCetteCmd.length} sous-commande${_fillesDeCetteCmd.length>1?'s':''} rattachée${_fillesDeCetteCmd.length>1?'s':''}</div>
       <div style="font-size:.88rem;color:#5a4a52;margin-bottom:8px">Déjà retiré <b>${euro(_reliquatSiMere.montantCouvertParFilles)}</b> · Reste à retirer <b style="color:${_reliquatSiMere.reste>0?'#b3261e':'#3f7d52'}">${euro(_reliquatSiMere.reste)}</b>${_reliquatSiMere.entierementRetiree?' <span style="color:#3f7d52;font-weight:600">✓ soldée</span>':''}</div>
@@ -23199,7 +23248,6 @@ async function cmdView(id){
     ${o.lieuLivraison?`<div class="sum-box"><span>📍 Livraison</span><b>${esc(o.lieuLivraison)}</b></div>`:''}
     ${blocks||'<p class="note">Aucun produit.</p>'}
     ${cmdALocation(lignes)?`<div class="sum-box" style="margin-top:8px;background:#faf7f2;color:#8a7a72;font-size:.82rem"><span>🔖 Empreinte bancaire <span style="font-size:.74rem">(location)</span></span><b>${euro(CAUTION_CHEQUE)} — le jour de la livraison</b></div>`:''}
-    <div class="sum-box"><span>Personnalisation couleurs</span><b>${+o.persoMacarons>0?`${o.persoMacarons} macaron(s) · +${euro(money2(o.persoMacarons*0.25))}${+o.persoRemiseEur>0?` · remise −${euro(money2(+o.persoRemiseEur))}`:''}`:(o.perso?'Oui':'Non')}</b></div>
     ${+o.remiseGlobale>0?`<div class="sum-box"><span>${o.remiseTarifPro?'Remise tarif pro':'Remise globale'}</span><b>−${o.remiseGlobale}%${(o.remiseGlobaleEur!=null&&+o.remiseGlobaleEur>0)?` (−${euro(money2(+o.remiseGlobaleEur))})`:''}</b></div>`:''}
     <div class="sum-box"><span>Montant total${+o.remiseGlobale>0||lignes.some(l=>+l.remisePct>0)?' (TTC, remises incluses)':''}</span><b>${euro(o.montant)}</b></div>
     ${_docLiensHtml}
@@ -23290,8 +23338,7 @@ async function cmdView(id){
       ${ORDER_STATUS.map(st=>{const cur=normStatus(o.statut)===st;
         return `<button class="btn ${cur?'':'ghost'} sm" onclick="setOrderStatus(${id},'${st}')" ${cur?'style="pointer-events:none"':''}>${cur?'● ':''}${st}</button>`;}).join('')}
     </div>
-    ${o.notes?`<h3 style="font-size:1rem;margin:16px 0 6px">Notes</h3><p style="font-size:.86rem;white-space:pre-wrap">${esc(o.notes)}</p>`:''}
-    ${o.commentaireClient?`<h3 style="font-size:1rem;margin:16px 0 6px">💬 Commentaire pour le client <span style="font-size:.74rem;font-weight:400;color:#9a8a82">— imprimé sur le devis et la facture</span></h3><p style="font-size:.86rem;white-space:pre-wrap">${esc(o.commentaireClient)}</p>`:''}
+
     <div class="modal-actions"><button class="btn ghost" style="margin-right:auto" onclick="closeModal()">Fermer</button><button class="btn ghost" onclick="exportOrderText(${id})">⧉ Texte</button><button class="btn ghost" onclick="retroplanningView(${id})" title="Rétroplanning de production">🕘 Rétroplanning</button><button class="btn ghost" onclick="closeModal();pickScanOpen(${id})" title="Préparer cette commande en scannant les lots">📦 Préparer (scan)</button><button class="btn ghost" onclick="printOrderPrepSheet(${id})" title="Imprimer un bon de préparation avec QR (optionnel)">🏷 Bon de prépa (QR)</button>${o.commandeMereId!=null?'':`<button class="btn ghost" onclick="cmdGenererDevis(${id})" title="Créer (ou ouvrir) le devis de cette commande — la commande reste en place">📄 Devis</button>`}${paiementsDe(o).length?'':`<button class="btn ghost" onclick="cmdToDevis(${id})" title="Repasser cette commande en devis (elle quitte les commandes)">📝 Repasser en devis</button>`}<button class="btn gold" onclick="genererFacture(${id})">🧾 Facture</button><button class="btn" onclick="closeModal();cmdForm(${id})">Modifier</button><button class="btn danger" onclick="cmdDelete(${id})">🗑 Supprimer</button></div>`);
 }
 // Total d'une ligne stockée (parfums/items en tableaux)
