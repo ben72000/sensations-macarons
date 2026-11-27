@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1538'; // suite : voir tests/v1538-commentaire-client.test.js
+const APP_VERSION = 'v1539'; // suite : voir tests/v1539-logo-prix-degressif.test.js
 // [v1533] Instant où app.js commence à s'exécuter, en ms depuis l'ouverture de la page : couvre le téléchargement ET la lecture du code.
 const _BOOT_DEBUT_JS = (()=>{ try{ return (typeof performance!=='undefined' && performance.now) ? Math.round(performance.now()) : null; }catch(_){ return null; } })();
 const APP_MAJ = '« CHEQUE DE CAUTION » DEVIENT « EMPREINTE BANCAIRE ». Ben : « le cheque de caution doit se transformer en empreinte bancaire. Peux-tu changer la mention partout ou apparait cheque de caution ? » ⚠️ CE N ETAIT PAS UN SIMPLE RENOMMAGE : le texte associe decrivait des gestes propres a un CHEQUE — il est « remis », il « n est pas encaisse », il est « restitue ». Une empreinte bancaire se PREND, se DEBITE et s ANNULE. Renommer sans adapter les verbes aurait laisse des clauses incoherentes dans les CGV, un document juridique transmis aux clients. Les VERBES ONT DONC ETE ADAPTES partout : sur la ligne du devis et de la facture (« empreinte prise le jour de la livraison, non debitee, annulee apres retour du materiel »), et dans les trois clauses concernees des CGV — 7.1 (prise a la mise a disposition, non debitee, annulee), 7.2 (aucune empreinte exigee du particulier) et 7.4 (l empreinte pourra etre DEBITEE, et non encaissee). La logique juridique est inchangee : montants dus, complement exigible, surplus restitue, engagement sur l honneur du particulier. LES IDENTIFIANTS DE CODE SONT CONSERVES (CAUTION_CHEQUE, cautionRowHtml, cautionMention) : les renommer toucherait des dizaines de references et des donnees DEJA ENREGISTREES, pour zero gain visible. Seul le texte vu par le client change. Les documents deja emis gardent leur redaction d origine, puisqu ils memorisent leur rendu. Suite v1493 : 27 assertions, dont la verification que le vocabulaire du cheque a bien disparu ; un renommage NAIF (terme change mais verbes conserves) fait rougir 5 assertions. La suite v1492 a suivi le nouveau libelle, son mecanisme etant inchange.';
@@ -12917,6 +12917,7 @@ async function docConvertToOrder(id){
     // de logo, et la commande serait repartie a zero.
     logo:!!(d.logo||+d.persoLogoNb>0||+d.forfaitCreationNb>0),
     persoLogoNb:+d.persoLogoNb||0, forfaitCreationNb:+d.forfaitCreationNb||0,
+    logoDegressif: d.logoDegressif,   // [v1539] la commande garde le prix signé sur le devis
     // [v1499] LE DEVIS ET LA COMMANDE NE DISAIENT PAS LA MÊME CHOSE. Ben, après avoir facturé
     // depuis la commande : « d'un côté le devis validé et de l'autre la commande […] pour une
     // raison inconnue les 2 ne disaient pas la même chose […] le détail de la commande, les
@@ -13065,6 +13066,7 @@ async function cmdToDevisConfirm(id){
       // correctif v1487) : sans effet sur le résultat, mais trompeur à la relecture. Dédoublonné.
       logo:!!(o.logo||+o.persoLogoNb>0||+o.forfaitCreationNb>0),
       persoLogoNb:+o.persoLogoNb||0, forfaitCreationNb:+o.forfaitCreationNb||0,
+      logoDegressif: o.logoDegressif,   // [v1539]
       // [v1499] MÊME DÉFAUT QUE LE CHEMIN ALLER (voir docConvertToOrder) : ce constructeur ne
       // transmettait ni `tarifRef` ni `ancienTarif`. Une commande repassée en devis perdait donc
       // sa grille et le devis repartait sur la grille HISTORIQUE — options à zéro. Corrigé dans
@@ -23396,15 +23398,16 @@ async function cmdForm(id, opts){
               // etre ajoute ICI AUSSI, sinon il est perdu au premier aller-retour.
               logo:!!(dv.logo||+dv.persoLogoNb>0||+dv.forfaitCreationNb>0),
               persoLogoNb:+dv.persoLogoNb||0, forfaitCreationNb:+dv.forfaitCreationNb||0,
+              logoDegressif:dv.logoDegressif,   // [v1539] écrit ET relu (leçon v1488)
               // [v1489] Les marqueurs de tarif suivent la meme regle que le reste : ecrits ET relus,
               // sinon le devis changerait de grille au premier aller-retour (lecon v1488).
               tarifRef:dv.tarifRef||'', ancienTarif:!!dv.ancienTarif, grilleId:dv.grilleId||'',
               remiseTarifPro:!!dv.remiseTarifPro,
               commentaireClient:dv.commentaireClient||'',   // [v1538] écrit ET relu (leçon v1488)
               statut:'À préparer', paiement:'En attente'}
-            : {date:today(),statut:'À préparer',paiement:'En attente',perso:false};
+            : {date:today(),statut:'À préparer',paiement:'En attente',perso:false,logoDegressif:false};
   } else {
-    o = id ? await db.orders.get(id) : {date:today(),statut:'À préparer',paiement:'En attente',perso:false};
+    o = id ? await db.orders.get(id) : {date:today(),statut:'À préparer',paiement:'En attente',perso:false,logoDegressif:false};   // [v1539] nouveau : prix de base
   }
   // Préserver les lignes en cours si on rouvre après ajout d'un client
   if(opts.keepLines && Array.isArray(cmdLines)){ /* cmdLines déjà en mémoire, on le garde */ }
@@ -23548,8 +23551,9 @@ async function cmdForm(id, opts){
         pouvaient simplement jamais recevoir de valeur. -->
    <label class="switch-row"><input type="checkbox" id="f_logo" ${(o.logo||+o.persoLogoNb>0||+o.forfaitCreationNb>0)?'checked':''} onchange="cmdLogoToggle()"> Personnalisation logo <span style="color:#9a8a82;font-weight:400">— independante des couleurs</span></label>
    <div class="field" id="f_logoWrap" style="${(o.logo||+o.persoLogoNb>0||+o.forfaitCreationNb>0)?'':'display:none'}">
-     <label>Macarons avec logo <span style="color:#9a8a82;font-weight:400">— tarif dégressif selon la quantité</span></label>
+     <label>Macarons avec logo <span style="color:#9a8a82;font-weight:400">— prix de base, dégressif sur demande</span></label>
      <input type="number" min="0" step="1" id="f_logoNb" value="${o.persoLogoNb||''}" placeholder="ex : 150" oninput="cmdRecalc()">
+     <label class="switch-row" style="margin:6px 0 0"><input type="checkbox" id="f_logoDeg" ${o.logoDegressif!==false?'checked':''} onchange="cmdRecalc()"> Appliquer le prix dégressif <span style="color:#9a8a82;font-weight:400">— ristourne de volume, seulement si le client la demande (${esc(logoPaliersTexte())})</span></label>
      <div id="f_logoHint" class="note" style="margin-top:4px"></div>
      <div class="field" style="margin:8px 0 0"><label style="font-weight:400;color:#7a6a60">Créations graphiques sur mesure <span style="color:#9a8a82">— forfait par logo/modèle</span></label>
        <input type="number" min="0" step="1" id="f_forfaitNb" value="${o.forfaitCreationNb||''}" placeholder="ex : 1" oninput="cmdRecalc()"></div>
@@ -25518,12 +25522,36 @@ const PERSO_PRIX_UNIT = 0.25;   // repli historique — voir TARIF_GRILLES.perso
 // TOTAL de macarons logotés de la commande (une remise de volume se juge sur le volume commandé,
 // pas morceau par morceau) : 150 pièces sont toutes à 0,80 €, pas 99 à 1 € puis 51 à 0,80 €.
 // « de 100 à 300 » inclut les deux bornes → 100 et 300 sont au palier du milieu.
+// [v1539] PRIX DÉGRESSIF À LA DEMANDE. Ben : « Je veux pouvoir facturer 1 € le macaron même avec
+// plusieurs centaines et cocher la case prix dégressif seulement si le client demande une ristourne. »
+// Case décochée → prix du PREMIER palier (1 €) quelle que soit la quantité ; cochée → paliers.
+// ⚠️ HISTORIQUE : le montant logo d'un document enregistré est RECALCULÉ à chaque affichage. Un document
+// d'avant v1539 n'a pas `logoDegressif` → il reste dégressif (son prix ne bouge pas, même rouvert).
+// Les nouveaux portent toujours un booléen explicite (défaut : false, prix de base).
+function _logoDegressifActif(ctx){
+  if(ctx && typeof ctx==='object') return ctx.logoDegressif !== false;
+  const el = (typeof document!=='undefined') ? document.getElementById('f_logoDeg') : null;
+  return el ? !!el.checked : true;
+}
 function logoPrixUnitPour(nb, ctx){
   const g = _grilleOption(ctx);
   const n = Math.max(0, Math.round(+nb||0));
   if(!g || !g.logoPaliers || n<=0) return 0;   // avant le 01/09/2026, cette option n'existait pas
+  if(!_logoDegressifActif(ctx)) return money2(g.logoPaliers[0].prix);   // [v1539] prix de base, sans palier
   const p = g.logoPaliers.find(x => n <= x.jusqua);
   return p ? money2(p.prix) : money2(g.logoPaliers[g.logoPaliers.length-1].prix);
+}
+// [v1539] Paliers en clair pour le libellé de la case (grille en vigueur à la saisie).
+function logoPaliersTexte(ctx){
+  const g = _grilleOption(ctx);
+  const P = (g && g.logoPaliers) || [];
+  if(!P.length) return '';
+  const fr = x => euro(x).replace(/\s*€$/, ' €');
+  return P.map((p, i) => {
+    const de = i === 0 ? 1 : (P[i-1].jusqua + 1);
+    if(p.jusqua === Infinity) return `${fr(p.prix)} au-delà de ${de - 1}`;
+    return i === 0 ? `${fr(p.prix)} jusqu'à ${p.jusqua}` : `${fr(p.prix)} de ${de} à ${p.jusqua}`;
+  }).join(', ');
 }
 // Supplément logo TOTAL d'une commande : nb de macarons logotés × prix du palier correspondant.
 function logoMontantPour(nb, ctx){
@@ -25688,8 +25716,12 @@ function factLogoLignes(nbLogo, nbForfait, ctx){
     const pu = logoPrixUnitPour(n, ctx);
     const mt = logoMontantPour(n, ctx);
     if(mt>0){
+      // [v1539] La ristourne se lit sur le document : « tarif dégressif » quand le palier baisse le prix.
+      const _g = _grilleOption(ctx);
+      const _base = (_g && _g.logoPaliers && _g.logoPaliers.length) ? money2(_g.logoPaliers[0].prix) : pu;
+      const _deg = pu < _base - 0.001;
       out += `<tr><td class="desc"><span class="ln-main">Personnalisation logo</span>`
-           + `<span class="ln-sub">${n} macaron${n>1?'s':''} \u00d7 ${euro(pu)}</span></td>`
+           + `<span class="ln-sub">${n} macaron${n>1?'s':''} \u00d7 ${euro(pu)}${_deg?' (tarif dégressif)':''}</span></td>`
            + `<td class="mt">${euro(mt)}</td></tr>`;
     }
   }
@@ -25858,7 +25890,7 @@ function cmdRecalc(){
       _lh.innerHTML = `<span style="color:var(--red)">⚠ ${logoNb>0 && !(pu>0)?'Logo':'Forfait création'} indisponible aux anciens tarifs de cette commande (option créée après).</span> <span class="act" onclick="cmdPasserTarifsEnVigueur()">Passer aux tarifs en vigueur →</span>`;
     } else
     _lh.innerHTML = logoNb>0
-      ? `${qty(logoNb)} × ${euro(pu)} = <b>${euro(logoSup)}</b>${forfaitNb>0?` · forfait création ${forfaitNb} × ${euro(forfaitCreationPour(1))} = <b>${euro(forfaitSup)}</b>`:''}`
+      ? `${qty(logoNb)} × ${euro(pu)} = <b>${euro(logoSup)}</b>${_logoDegressifActif() ? (logoPrixUnitPour(logoNb) < logoPrixUnitPour(1) - 0.001 ? ' <span style="color:#3f7d52">· prix dégressif</span>' : ' · prix dégressif (pas encore de palier à cette quantité)') : ' · prix de base'}${forfaitNb>0?` · forfait création ${forfaitNb} × ${euro(forfaitCreationPour(1))} = <b>${euro(forfaitSup)}</b>`:''}`
       : (forfaitNb>0 ? `Forfait création ${forfaitNb} × ${euro(forfaitCreationPour(1))} = <b>${euro(forfaitSup)}</b>` : '');
   }
   // La personnalisation (NETTE de sa remise) entre dans la base imposable à la remise globale.
@@ -26462,6 +26494,7 @@ async function saveCmd(id){
     // commande dont l'option est cochee mais les quantites encore vides refermerait le bloc.
     logo: !!(document.getElementById('f_logo')?.checked),
     persoLogoNb: Math.max(0, Math.round(+val('f_logoNb')||0)),
+    logoDegressif: !!(document.getElementById('f_logoDeg')?.checked),   // [v1539] toujours explicite
     forfaitCreationNb: Math.max(0, Math.round(+val('f_forfaitNb')||0)),
     persoCouleurs: cmdPersoCoulCollect(),
     persoRemiseEur: _persoRemRG,
@@ -26572,6 +26605,7 @@ async function saveCmd(id){
       // Sans eux, le devis figeait un supplement a ZERO alors que la commande le portait.
       logo:!!(o.logo||+o.persoLogoNb>0||+o.forfaitCreationNb>0),
       persoLogoNb:+o.persoLogoNb||0, forfaitCreationNb:+o.forfaitCreationNb||0,
+      logoDegressif: o.logoDegressif,   // [v1539] absent (ancien) reste absent → dégressif, comme avant
       // [v1489] Ben : « quand je fais visualiser devis ça disparaît de nouveau. Seule la quantite
       // de macarons reste ». CAUSE : le devis ne portait NI `tarifRef` NI `ancienTarif`. Or
       // `grillePourCommande` traite un contexte sans marqueur comme une commande HERITEE et renvoie
