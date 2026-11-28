@@ -5,7 +5,7 @@
 
 // Version de l'app (affichée discrètement sur l'accueil + utilisée par l'assistant).
 // Déclarée tout en haut pour être disponible partout, y compris au premier rendu.
-const APP_VERSION = 'v1543'; // suite : voir tests/v1543-fiche-commande-perso.test.js
+const APP_VERSION = 'v1545'; // suite : voir tests/v1544-import-demande-site.test.js (tarifs livraison v1545)
 // [v1533] Instant où app.js commence à s'exécuter, en ms depuis l'ouverture de la page : couvre le téléchargement ET la lecture du code.
 const _BOOT_DEBUT_JS = (()=>{ try{ return (typeof performance!=='undefined' && performance.now) ? Math.round(performance.now()) : null; }catch(_){ return null; } })();
 const APP_MAJ = '« CHEQUE DE CAUTION » DEVIENT « EMPREINTE BANCAIRE ». Ben : « le cheque de caution doit se transformer en empreinte bancaire. Peux-tu changer la mention partout ou apparait cheque de caution ? » ⚠️ CE N ETAIT PAS UN SIMPLE RENOMMAGE : le texte associe decrivait des gestes propres a un CHEQUE — il est « remis », il « n est pas encaisse », il est « restitue ». Une empreinte bancaire se PREND, se DEBITE et s ANNULE. Renommer sans adapter les verbes aurait laisse des clauses incoherentes dans les CGV, un document juridique transmis aux clients. Les VERBES ONT DONC ETE ADAPTES partout : sur la ligne du devis et de la facture (« empreinte prise le jour de la livraison, non debitee, annulee apres retour du materiel »), et dans les trois clauses concernees des CGV — 7.1 (prise a la mise a disposition, non debitee, annulee), 7.2 (aucune empreinte exigee du particulier) et 7.4 (l empreinte pourra etre DEBITEE, et non encaissee). La logique juridique est inchangee : montants dus, complement exigible, surplus restitue, engagement sur l honneur du particulier. LES IDENTIFIANTS DE CODE SONT CONSERVES (CAUTION_CHEQUE, cautionRowHtml, cautionMention) : les renommer toucherait des dizaines de references et des donnees DEJA ENREGISTREES, pour zero gain visible. Seul le texte vu par le client change. Les documents deja emis gardent leur redaction d origine, puisqu ils memorisent leur rendu. Suite v1493 : 27 assertions, dont la verification que le vocabulaire du cheque a bien disparu ; un renommage NAIF (terme change mais verbes conserves) fait rougir 5 assertions. La suite v1492 a suivi le nouveau libelle, son mecanisme etant inchange.';
@@ -12621,6 +12621,7 @@ async function renderDocuments(){
 
    <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
      <button class="btn gold" onclick="docNewDevis()">+ Nouveau devis</button>
+     <button class="btn gold" onclick="importSiteForm()" title="Coller le mail d'une demande reçue du site : fiche client + devis pré-rempli + mail type">📥 Demande du site</button>
      <button class="btn ghost" onclick="diagDevis()" title="Montre ce qui est reellement enregistre dans le dernier devis">🔎 Diagnostic</button>
      <button class="btn ghost" onclick="devisGroupeStart()" title="Récapituler plusieurs devis et/ou commandes dans un seul document">📋 Devis groupé</button>
      <button class="btn ghost" onclick="docAuditPaiementsFantomesUI()" title="Vérifie la cohérence du suivi de règlement des factures validées">🔍 Audit règlements</button>
@@ -13167,7 +13168,7 @@ async function docApercu(id){
   const client = d.clientId ? await db.clients.get(d.clientId).catch(()=>null) : null;
   if(d.html){
     // On prépare le mail (objet + message + signature) pour que l'aperçu propose l'envoi.
-    if(typeof _prepDocPdfMail==='function') _prepDocPdfMail(d.html, libelle, client, d.montant, {acompteMention:d.acompteMention, cautionMention:(d.cautionMention!==false)});
+    if(typeof _prepDocPdfMail==='function') _prepDocPdfMail(d.html, libelle, client, d.montant, {acompteMention:d.acompteMention, cautionMention:(d.cautionMention!==false), modeleSite:(d.origine==='site')});
     openPrintView(d.html, {title:libelle, extraButtons:(typeof _docMailBtns==='function'?_docMailBtns():'')});
   }
   else if(d.orderIds&&d.orderIds.length){ genererFactureMultiple(d.orderIds); }
@@ -13211,7 +13212,7 @@ async function docRegenFactureFigee(id){
   toast('Présentation régénérée ✓ — montants inchangés');
   const libelle = `Facture ${d.numero||''}`.trim();
   const client = d.clientId ? await db.clients.get(d.clientId).catch(()=>null) : null;
-  if(typeof _prepDocPdfMail==='function') _prepDocPdfMail(ctx.html, libelle, client, d.montant, {acompteMention:d.acompteMention, cautionMention:(d.cautionMention!==false)});
+  if(typeof _prepDocPdfMail==='function') _prepDocPdfMail(ctx.html, libelle, client, d.montant, {acompteMention:d.acompteMention, cautionMention:(d.cautionMention!==false), modeleSite:(d.origine==='site')});
   openPrintView(ctx.html, {title:libelle, extraButtons:(typeof _docMailBtns==='function'?_docMailBtns():'')});
 }
 // [RACCOURCI MAIL] Envoie directement le document (facture/devis) par mail avec PDF joint,
@@ -13221,7 +13222,7 @@ async function docEnvoyerMail(id){
   const libelle = `${d.type==='devis'?'Devis':(d.type==='acompte'?'Facture d\'acompte':'Facture')} ${d.numero||d.refInterne||''}`.trim();
   const client = d.clientId ? await db.clients.get(d.clientId).catch(()=>null) : null;
   // Prépare l'objet + le message + la signature (renseigne window._lastDocMeta.mailto).
-  if(typeof _prepDocPdfMail==='function') _prepDocPdfMail(d.html||'', libelle, client, d.montant, {acompteMention:d.acompteMention, cautionMention:(d.cautionMention!==false)});
+  if(typeof _prepDocPdfMail==='function') _prepDocPdfMail(d.html||'', libelle, client, d.montant, {acompteMention:d.acompteMention, cautionMention:(d.cautionMention!==false), modeleSite:(d.origine==='site')});
   const meta = window._lastDocMeta||{};
   // On ouvre directement l'appli mail (destinataire + objet + message + signature déjà remplis).
   // La génération PDF automatique n'est pas fiable sur iOS/Safari (canvas « tainted » par le
@@ -23451,6 +23452,269 @@ function orderToEditLines(o){ return orderToLines(o).map(_lineToEdit); }
 
 let _cmdDevisMode = false;   // le formulaire de commande est-il en train de créer/éditer un devis ?
 let _cmdDevisId = null;      // id du devis édité (registre documents)
+// ════════════════════════════════════════════════════════════════════════════
+// [v1544] IMPORT D'UNE DEMANDE DU SITE (mail du formulaire) → CLIENT + DEVIS + MAIL.
+// Ben : « Quand sur le site internet je reçois une commande elle apparaît sous forme de formulaire.
+// Serait-il possible d'intégrer une option me permettant de copier-coller le mail client afin de créer
+// automatiquement une fiche client ainsi que le devis associé avec la date de livraison, la quantité
+// souhaitée, les parfums etc., et ensuite créer un mail type […] »
+// Format réel (capture fournie par Ben) : un intitulé par ligne, sa valeur dessous — « Name », « E-mail »,
+// « Prestations », « Choix du(des) coffret(s) et des parfums » (TEXTE LIBRE du client, fautes comprises :
+// « cofffret », « pop corn », « passion chocolat »…), « Choisissez votre date de livraison » (jj/mm/aaaa),
+// « Choisissez un créneau de livraison » (« 18h à 20h »), « Address ».
+// PRINCIPES :
+//  • Rien n'est créé sans relecture : écran de vérification, champs modifiables, puis formulaire de devis
+//    PRÉ-REMPLI par les mêmes fonctions qu'une saisie à la main (addLine / setCoffretTaille → prix de la
+//    grille) — Ben vérifie et enregistre comme d'habitude.
+//  • Jamais de doublon client : rapprochement par e-mail puis téléphone ; un client existant est réutilisé
+//    et seuls ses champs VIDES sont complétés (jamais écrasés).
+//  • Ce qui n'est pas compris est montré, jamais deviné en silence (parfums non reconnus, texte d'origine
+//    recopié dans les notes du devis).
+// ════════════════════════════════════════════════════════════════════════════
+function _siteNorm(s){
+  return String(s==null?'':s).normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase()
+    .replace(/[’']/g,' ').replace(/[^a-z0-9@.+\s()\/:-]/g,' ').replace(/\s+/g,' ').trim();
+}
+// Intitulés du formulaire (et variantes probables si Ben renomme un champ). Ordre = priorité.
+const SITE_CHAMPS = [
+  { cle:'coffrets', re:/^(choix du ?\(?des\)? ?coffret|choix des? coffrets?|coffrets? et parfums|vos? coffrets?)/ },
+  { cle:'date',     re:/^(choisissez votre date|date de livraison|date souhaitee|date de retrait|date)\b/ },
+  { cle:'creneau',  re:/^(choisissez un creneau|creneau|horaire|heure de livraison)\b/ },
+  { cle:'prestations', re:/^(prestations?|type de demande|service)$/ },
+  { cle:'email',    re:/^(e ?-?mail|email|courriel|adresse e ?-?mail|adresse mail)$/ },
+  { cle:'tel',      re:/^(phone|telephone|tel|tel\.|numero de telephone|portable|mobile|numero)$/ },
+  { cle:'nom',      re:/^(name|nom|nom et prenom|nom prenom|prenom et nom|nom complet|votre nom)$/ },
+  { cle:'adresse',  re:/^(address|adresse|adresse de livraison|adresse postale|lieu de livraison)$/ },
+  { cle:'message',  re:/^(message|commentaires?|precisions?|remarques?|informations complementaires|votre message)$/ },
+];
+function _siteChampDe(ligne){
+  const n = _siteNorm(ligne).replace(/\s*:$/,'');
+  if(!n || n.length > 60) return null;
+  const c = SITE_CHAMPS.find(x => x.re.test(n));
+  return c ? c.cle : null;
+}
+// Parfums : règles dans l'ordre (les plus précises d'abord), sur le texte normalisé du parfum écrit par
+// le client. La cible est cherchée dans la liste RÉELLE des parfums de l'app (FLAVORS).
+const SITE_PARFUMS_REGLES = [
+  [/coco.*(citron|vert)|citron vert/, 'Coco citron vert'],
+  [/coco|raf+a?el+o|rafaello|facon raf/, 'Coco Rafaello'],
+  [/(passion)/, 'Chocolat passion'],
+  [/chocolat.*noir|choco.*noir|^noir|valrhona/, 'Chocolat noir'],
+  [/chocolat.*lait|choco.*lait|^lait$/, 'Chocolat au lait'],
+  [/nocciolata|nociolata|noccio/, 'Nocciolata'],
+  [/cannel+e|canel+e/, 'Cannelle noisette'],
+  [/pralin/, 'Praliné noisette'],
+  [/caramel|beurre sale/, 'Caramel beurre salé'],
+  [/pop ?corn/, 'Popcorn'],
+  [/framboise/, 'Framboise'],
+  [/pistache/, 'Pistache'],
+  [/vanil+e/, 'Vanille'],
+  [/citron/, 'Citron crémeux'],
+  [/cafe|coffee|expresso|espresso/, 'Café'],
+];
+function siteParfumCanon(texte, liste){
+  const L = Array.isArray(liste) && liste.length ? liste : (typeof FLAVORS!=='undefined' ? FLAVORS : []);
+  const n = _siteNorm(texte).replace(/[.()]/g,' ').replace(/\s+/g,' ').trim();
+  if(!n) return null;
+  const exact = L.find(f => _siteNorm(f) === n);
+  if(exact) return exact;
+  for(const [re, cible] of SITE_PARFUMS_REGLES){
+    if(re.test(n)){
+      const f = L.find(x => _siteNorm(x) === _siteNorm(cible)) || L.find(x => _siteNorm(x).startsWith(_siteNorm(cible).split(' ')[0]) && re.test(_siteNorm(x)));
+      if(f) return f;
+    }
+  }
+  return null;
+}
+const _SITE_NOMBRES = { un:1, une:1, deux:2, trois:3, quatre:4, cinq:5, six:6, sept:7, huit:8, neuf:9, dix:10 };
+// « Un coffret de 8 macarons : * praliné, pop corn… » → [{ nb:1, taille:8, parfums:[…], inconnus:[…] }]
+function siteCoffretsDepuisTexte(texte, liste){
+  const brut = String(texte||'');
+  const re = /(?:^|[\s,;*•-])((?:\d+|un|une|deux|trois|quatre|cinq|six|sept|huit|neuf|dix)\s+)?c+o+f+r+e+t+s?\s*(?:de|x|:)?\s*(\d{1,3})\s*(?:macarons?|pi[eè]ces?|mac)?/gi;
+  const ent = []; let m;
+  while((m = re.exec(brut))){
+    const q = m[1] ? m[1].trim().toLowerCase() : '';
+    const nb = q ? (/^\d+$/.test(q) ? +q : (_SITE_NOMBRES[_siteNorm(q)] || 1)) : 1;
+    ent.push({ nb: Math.max(1, Math.min(50, nb)), taille: +m[2], debut: m.index, fin: re.lastIndex });
+  }
+  return ent.map((e, i) => {
+    const bloc = brut.slice(e.fin, i+1 < ent.length ? ent[i+1].debut : brut.length);
+    const morceaux = bloc.replace(/\r/g,'').split(/[\n,;]|\s+et\s+|\s*[*•]\s+|\s+-\s+|\s*\/\s*/i)
+      .map(x => x.replace(/^[\s:*•.-]+|[\s:.!]+$/g,'').trim()).filter(x => x && x.length < 60);
+    const parfums = [], inconnus = [];
+    morceaux.forEach(t => { const f = siteParfumCanon(t, liste); if(f){ if(!parfums.includes(f)) parfums.push(f); } else inconnus.push(t); });
+    return { nb: e.nb, taille: e.taille, parfums, inconnus };
+  }).filter(c => c.taille > 0);
+}
+// Répartition équitable des macarons d'un coffret entre ses parfums (le reste va aux premiers).
+function siteRepartition(taille, parfums){
+  const n = (parfums||[]).length, T = Math.max(0, +taille||0);
+  if(!n || !T) return {};
+  const base = Math.floor(T / n), reste = T - base*n, out = {};
+  parfums.forEach((f, i) => { const q = base + (i < reste ? 1 : 0); if(q > 0) out[f] = q; });
+  return out;
+}
+function siteDateISO(txt){
+  const m = String(txt||'').match(/(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})/);
+  if(m){ const y = m[3].length===2 ? '20'+m[3] : m[3]; return `${y}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`; }
+  const iso = String(txt||'').match(/(\d{4})-(\d{2})-(\d{2})/);
+  return iso ? iso[0] : '';
+}
+function siteHeureDebut(txt){
+  const m = String(txt||'').match(/(\d{1,2})\s*(?:h|:)\s*(\d{2})?/i);
+  return m ? `${m[1].padStart(2,'0')}:${(m[2]||'00')}` : '';
+}
+function siteCodePostal(adresse){ const m = String(adresse||'').match(/\b(\d{5})\b/); return m ? m[1] : ''; }
+// Tarifs de livraison des demandes du site — [v1545] Ben : « livraison à 8 € si l'adresse est 72000 ou
+// 72100 Le Mans. Dans le cas contraire : 12 € » (remplace les 3 zones 5/10/20 € reprises de la boutique).
+// Sert UNIQUEMENT à pré-remplir la ligne « Livraison » du devis — toujours modifiable avant d'enregistrer.
+const SITE_LIVRAISON_LE_MANS = { nom:'Le Mans', prix:8, cp:['72000','72100'] };
+const SITE_LIVRAISON_AUTRE   = { nom:'Hors Le Mans', prix:12 };
+function siteZoneLivraison(adresse){
+  const a = String(adresse||'').trim();
+  if(!a) return null;                                   // pas d'adresse : pas de livraison à chiffrer
+  const cp = siteCodePostal(a);
+  // Le Mans = code postal 72000/72100 ; sans code postal lisible, le nom de la ville suffit.
+  const auMans = cp ? SITE_LIVRAISON_LE_MANS.cp.includes(cp) : /\ble\s*-?\s*mans\b/i.test(_siteNorm(a));
+  const z = auMans ? SITE_LIVRAISON_LE_MANS : SITE_LIVRAISON_AUTRE;
+  return { nom:z.nom, prix:z.prix, codePostal: cp };
+}
+// Analyse complète du mail collé (PURE).
+function parseMailSite(texte, liste){
+  const lignes = String(texte||'').replace(/\r/g,'').split('\n').map(l => l.replace(/ /g,' ').trim());
+  const champs = {}; let cle = null;
+  lignes.forEach(l => {
+    const c = _siteChampDe(l);
+    if(c && !(c in champs)){ cle = c; champs[c] = []; return; }
+    if(cle && l) champs[cle].push(l);
+  });
+  const val = k => (champs[k]||[]).join('\n').trim();
+  const tout = String(texte||'');
+  let email = val('email').split(/\s/)[0] || '';
+  if(!/@/.test(email)){ const m = tout.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/); email = m ? m[0] : ''; }
+  let tel = val('tel');
+  if(!tel){ const m = tout.match(/(?:\+33\s?|0)[1-9](?:[\s.-]?\d{2}){4}/); tel = m ? m[0] : ''; }
+  const choix = val('coffrets');
+  const coffrets = siteCoffretsDepuisTexte(choix, liste);
+  return {
+    nom: val('nom').split('\n')[0] || '',
+    email: email.toLowerCase(), tel: tel.split('\n')[0] || '',
+    adresse: val('adresse').replace(/\n+/g, ', '),
+    prestations: val('prestations'), message: val('message'),
+    choixTexte: choix, coffrets,
+    dateLivraison: siteDateISO(val('date')), creneau: val('creneau').split('\n')[0] || '',
+    heure: siteHeureDebut(val('creneau')),
+    zone: siteZoneLivraison(val('adresse')),
+    reconnu: !!(val('nom') || email) && (coffrets.length > 0 || !!val('date')),
+  };
+}
+// Client déjà connu ? Par e-mail, sinon par téléphone (chiffres seuls, +33 → 0). Jamais par nom seul.
+function siteClientExistant(clients, p){
+  const em = _siteNorm(p && p.email);
+  const tel = String((p && p.tel) || '').replace(/\D/g,'').replace(/^33/, '0');
+  return (clients||[]).find(c => em && _siteNorm(c.email) === em)
+      || (clients||[]).find(c => tel.length >= 9 && String(c.tel||'').replace(/\D/g,'').replace(/^33/,'0') === tel)
+      || null;
+}
+// Mail type de Ben pour un devis issu du site (vouvoiement).
+function mailDevisSiteCorps(nomClient, numero, montantFmt){
+  return [
+    `Bonjour${nomClient ? ' '+nomClient : ''},`, '',
+    `Veuillez trouver ci-dessous votre devis n° ${numero} d'un montant de ${montantFmt} €.`, '',
+    `Le retrait est possible gratuitement à l’adresse indiquée sur le devis. Il suffira de me laisser un message au numéro indiqué sur le devis pour vous signaler lors de votre arrivée. Si vous choisissez cette option, le montant de la livraison est à déduire du montant total lors de votre paiement.`, '',
+    `Toute commande sera considérée comme validée après le versement d’un acompte de 75 % ou règlement complet que vous pouvez effectuer via Wero ou par virement classique grâce aux informations bancaires indiquées sur le devis.`, '',
+    'Vous remerciant par avance.', '',
+    'Bien cordialement,',
+    'Sensations Macarons'
+  ].join('\n');
+}
+
+// ── Écrans ──────────────────────────────────────────────────────────────────
+let _importSiteCtx = null;   // { parse, clientId } pendant la préparation du devis
+function importSiteForm(){
+  openModal(`<h3>📥 Demande reçue du site</h3>
+    <p class="note">Ouvre le mail du formulaire, sélectionne <b>tout le texte</b> (de « Name » jusqu'à l'adresse) et colle-le ici. Rien n'est créé avant ta vérification.</p>
+    <div class="field"><textarea id="f_mailSite" rows="12" placeholder="Name&#10;Jeanne Dupont&#10;E-mail&#10;jeanne@exemple.fr&#10;…"></textarea></div>
+    <div class="modal-actions"><button class="btn ghost" onclick="closeModal()">Annuler</button>
+      <button class="btn gold" onclick="importSiteAnalyser()">Analyser</button></div>`);
+}
+async function importSiteAnalyser(){
+  const txt = (document.getElementById('f_mailSite')||{}).value || '';
+  if(!txt.trim()){ toast('Colle d\'abord le texte du mail'); return; }
+  const p = parseMailSite(txt, FLAVORS);
+  if(!p.reconnu){ toast('Je ne reconnais pas ce mail : vérifie que tout le texte est collé (de « Name » à l\'adresse)'); return; }
+  const clients = await db.clients.toArray().catch(()=>[]);
+  const exist = siteClientExistant(clients, p);
+  _importSiteCtx = { parse:p, existantId: exist ? exist.id : 0, texte: txt };
+  const coffretsHtml = p.coffrets.length
+    ? p.coffrets.map(c => `<div class="sum-box" style="display:block"><b>${c.nb>1?c.nb+' coffrets':'1 coffret'} de ${c.taille}</b>
+        <div style="font-size:.86rem;margin-top:4px">${c.parfums.length ? Object.entries(siteRepartition(c.taille, c.parfums)).map(([f,q])=>`${esc(f)} × ${q}`).join(' · ') : '<span style="color:#b3261e">aucun parfum reconnu</span>'}</div>
+        ${c.inconnus.length?`<div style="font-size:.82rem;color:#b3261e;margin-top:4px">⚠ Non reconnu : ${c.inconnus.map(esc).join(', ')} — à compléter dans le devis</div>`:''}</div>`).join('')
+    : `<div class="banner" style="background:#fdf3e7;border-color:#d98324">⚠ <div>Aucun coffret reconnu dans « Choix du(des) coffret(s) ». Le devis s'ouvrira sans ligne : tu les ajouteras. Texte du client : <i>${esc(p.choixTexte||'—')}</i></div></div>`;
+  const z = p.zone;
+  openModal(`<h3>📥 Vérifier la demande</h3>
+    ${exist ? `<div class="banner" style="background:#eef6ee;border-color:#3f7d52">👤 <div>Client déjà connu : <b>${esc(exist.nom||'')}</b>${exist.tel?' · '+esc(exist.tel):''}. Sa fiche sera réutilisée (seuls ses champs vides seront complétés).</div></div>` : `<p class="note">👤 Nouveau client : une fiche sera créée.</p>`}
+    <div class="field"><label>Nom</label><input id="f_isNom" value="${esc(p.nom)}"></div>
+    <div class="row2"><div class="field"><label>E-mail</label><input id="f_isEmail" type="email" value="${esc(p.email)}"></div>
+      <div class="field"><label>Téléphone</label><input id="f_isTel" type="tel" value="${esc(p.tel)}" placeholder="non fourni par le formulaire"></div></div>
+    <div class="field"><label>Adresse de livraison</label><input id="f_isAdr" value="${esc(p.adresse)}"></div>
+    <div class="row2"><div class="field"><label>Date de livraison</label><input id="f_isDate" type="date" value="${esc(p.dateLivraison)}"></div>
+      <div class="field"><label>Créneau</label><input id="f_isCreneau" value="${esc(p.creneau)}"></div></div>
+    <h3 style="font-size:1rem;margin:12px 0 6px">Commande demandée</h3>
+    ${coffretsHtml}
+    ${z ? `<div class="sum-box"><span>🚚 Livraison${z.codePostal?' '+esc(z.codePostal):''} · ${esc(z.nom)}</span><b>${euro(z.prix)}</b></div>` : '<p class="note">🚚 Pas d\'adresse : pas de ligne livraison.</p>'}
+    ${p.message?`<div class="sum-box" style="display:block"><b>Message du client</b><div style="white-space:pre-wrap;font-size:.86rem;margin-top:4px">${esc(p.message)}</div></div>`:''}
+    <div class="modal-actions"><button class="btn ghost" onclick="importSiteForm()">← Recoller</button>
+      <button class="btn gold" onclick="importSiteCreer()">Créer le client et préparer le devis</button></div>`);
+}
+async function importSiteCreer(){
+  const ctx = _importSiteCtx; if(!ctx) return;
+  const v = id => ((document.getElementById(id)||{}).value || '').trim();
+  const p = { ...ctx.parse, nom:v('f_isNom'), email:v('f_isEmail').toLowerCase(), tel:v('f_isTel'), adresse:v('f_isAdr'), dateLivraison:v('f_isDate'), creneau:v('f_isCreneau') };
+  p.heure = siteHeureDebut(p.creneau); p.zone = siteZoneLivraison(p.adresse);
+  if(!p.nom){ toast('Le nom du client est requis'); return; }
+  // 1) Client : réutilisé (champs vides complétés) ou créé. Revérifié ici (la saisie a pu changer).
+  const clients = await db.clients.toArray().catch(()=>[]);
+  const exist = siteClientExistant(clients, p);
+  let clientId;
+  if(exist){
+    clientId = exist.id;
+    const comp = {};
+    if(!exist.email && p.email) comp.email = p.email;
+    if(!exist.tel && p.tel) comp.tel = p.tel;
+    if(!exist.adresse && p.adresse) comp.adresse = p.adresse;
+    if(Object.keys(comp).length) await db.clients.update(clientId, comp);
+  } else {
+    clientId = await db.clients.add(withSync({ nom:p.nom, prenom:'', societe:'', type:'Particulier', tel:p.tel, email:p.email, ref:'', adresse:p.adresse, politesse:'vous', prenomMail:'', notes:'Client venu du formulaire du site' }, 'app'));
+  }
+  if(typeof markUnsaved==='function') markUnsaved();
+  _importSiteCtx = { ...ctx, parse:p, clientId };
+  // 2) Formulaire de devis pré-rempli, par les fonctions d'une saisie à la main.
+  const notes = ['Demande reçue du formulaire du site.', p.creneau?`Créneau souhaité : ${p.creneau}`:'', p.choixTexte?`Texte du client : ${p.choixTexte}`:'', p.message?`Message : ${p.message}`:''].filter(Boolean).join('\n');
+  await cmdForm(null, { devis:true, clientId, prefill:{ date: p.dateLivraison || today(), heureLivraison: p.heure, lieuLivraison: p.adresse, notes } });
+  for(const c of p.coffrets){
+    for(let k = 0; k < c.nb; k++){
+      addLine('coffret'); const i = cmdLines.length - 1;
+      setCoffretTaille(i, c.taille);
+      cmdLines[i].parfums = siteRepartition(c.taille, c.parfums);
+    }
+  }
+  if(p.zone && p.adresse){
+    addLine('livraison'); const i = cmdLines.length - 1;
+    if(cmdLines[i] && cmdLines[i].isLivraison){
+      cmdLines[i].libelle = `Livraison — ${p.zone.codePostal ? p.zone.codePostal+' ' : ''}(${p.zone.nom})`;
+      cmdLines[i].montantHT = p.zone.prix != null ? p.zone.prix : 0;
+    }
+  }
+  drawLines();
+  if(typeof cmdRecalc==='function') cmdRecalc();
+  toast(exist ? '👤 Client retrouvé — vérifie le devis puis enregistre' : '👤 Client créé — vérifie le devis puis enregistre');
+}
+// Après l'enregistrement d'un devis issu du site : aperçu + mail type prêts.
+async function importSiteApresDevis(devisId){
+  _importSiteCtx = null;
+  await genererDevisDoc(devisId);
+}
 async function cmdForm(id, opts){
   opts = opts || {};
   _cmdEditingId = id || 0;               // id de la commande en cours d'édition (0 = nouvelle) — sert aux
@@ -23504,6 +23768,8 @@ async function cmdForm(id, opts){
   } else {
     o = id ? await db.orders.get(id) : {date:today(),statut:'À préparer',paiement:'En attente',perso:false,logoDegressif:false};   // [v1539] nouveau : prix de base
   }
+  // [v1544] Pré-remplissage d'un NOUVEAU document (import d'une demande du site) : jamais sur un existant.
+  if(opts.prefill && !id && !_cmdDevisId) o = { ...o, ...opts.prefill };
   // Préserver les lignes en cours si on rouvre après ajout d'un client
   if(opts.keepLines && Array.isArray(cmdLines)){ /* cmdLines déjà en mémoire, on le garde */ }
   else { cmdLines = cmdReplierCoffretsSiNombreux(orderToEditLines(o)); }   // forme objet, parfums conservés ; [v1510] 3 coffrets ou + → repliés
@@ -26719,11 +26985,27 @@ async function saveCmd(id){
       validiteJours:_validiteJours, expiration:ymdLocal(exp), // [v1269] validité pilotée par la deadline de livraison
       orderId:null, createdAt:Date.now()
     };
+    // [v1544] Devis préparé depuis une demande du site (même client, nouveau devis) : marqué, puis aperçu
+    // + mail type ouverts dès l'enregistrement.
+    const _depuisSite = !_cmdDevisId && !!(_importSiteCtx && +_importSiteCtx.clientId === +o.clientId);
+    if(_depuisSite) docObj.origine = 'site';
+    let _nouveauDevisId = null;
     if(_cmdDevisId){ await db.documents.update(_cmdDevisId, docObj); }
-    else { await db.documents.add(docObj); }
+    else { _nouveauDevisId = await db.documents.add(docObj); }
     _cmdDevisMode=false; _cmdDevisId=null;
+    const _retourEnCours = _depuisSite && !!(typeof _histReady!=='undefined' && _histReady && history.state && history.state.kind==='modal');
     closeModal(); toast('Devis '+numero+' enregistré ✓');
     if(view==='documents') renderDocuments();
+    if(_depuisSite && _nouveauDevisId){
+      if(_retourEnCours){
+        await new Promise(ok => {
+          const fin = () => { window.removeEventListener('popstate', fin); clearTimeout(t); ok(); };
+          const t = setTimeout(fin, 700);
+          window.addEventListener('popstate', fin);
+        });
+      }
+      await importSiteApresDevis(_nouveauDevisId);
+    }
     return;
   }
   let oid=id;
@@ -61564,7 +61846,7 @@ async function genererDevisDoc(docId){
   const acompteFmt = money2(totalAffiche*0.75).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2});
   const signature = [e.exploitant, e.nom].filter(Boolean).join(' — ') || (e.nom||'Sensations Macarons');
   const _tu = client && client.politesse === 'tu';
-  const corps = [
+  const corps = (d.origine === 'site') ? mailDevisSiteCorps(nomClient, d.numero||'', montantFmt) : [   // [v1544] mail type des demandes du site
     `Bonjour${nomClient ? ' '+nomClient : ''},`,
     '',
     `${_tu?'Tu trouveras':'Veuillez trouver'} ci-dessous ${_tu?'ton':'votre'} devis n° ${d.numero||''} d'un montant de ${montantFmt} €.`,
@@ -61663,11 +61945,13 @@ function _prepDocPdfMail(html, libelle, client, montant, opts){
     'Bien cordialement,',
     signature
   ].join('\n');
+  // [v1544] Devis issu d'une demande du site : mail type de Ben.
+  const corpsFinal = (opts.modeleSite && !estFacture) ? mailDevisSiteCorps(nomClient, numero, montantFmt) : corps;
   // [v1302] Code mort neutralisé (voir plus haut) : seule _lastDocMeta est réellement lue.
   // window._lastDocHtml = html;
   // window._lastDocData = null;
-  window._lastDocMeta = { fileName:libelle, objet, corps,
-    mailto:`mailto:${client&&client.email?encodeURIComponent(client.email):''}?subject=${encodeURIComponent(objet)}&body=${encodeURIComponent(corps)}` };
+  window._lastDocMeta = { fileName:libelle, objet, corps:corpsFinal,
+    mailto:`mailto:${client&&client.email?encodeURIComponent(client.email):''}?subject=${encodeURIComponent(objet)}&body=${encodeURIComponent(corpsFinal)}` };
 }
 
 // Boutons de la barre d'aperçu : envoi PDF (objet maîtrisé) + mail seul (repli).
